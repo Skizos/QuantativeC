@@ -1,6 +1,6 @@
 # 03 — Phase 3: Avanza read-only gateway
 
-- **Status:** in progress (2026-09-25)
+- **Status:** done (2026-09-25). The gate is met; results are at the end of this file.
 - **Scope:** master plan §4 Phase 3; ADR 0002 (accepted 2026-09-25); ADR 0004.
 - **Gate:**
   - fixture tests are green
@@ -217,7 +217,7 @@ After the gate commands pass, I stop and give you the exact read-only commands t
 | Guardrail self-test | 29/29 (6 new money-transfer cases) |
 | Format | `dotnet format --verify-no-changes` and `clang-format --dry-run -Werror` clean |
 | ADR 0004 | recorded (Accepted, 2026-09-25) |
-| **Your manual read-only run** | **2026-09-25, two runs:**<br>• Run 1: drift on accounts, trading accounts and orderbook. Fixed in DTO `.2`.<br>• Run 2: everything OK except marketdata `timeOfLast`, which is Stockholm local time. Fixed, backed by the recording.<br>• The sanitized recording is committed and parsed strictly on every build.<br>• Step 10: `qa quote ERIC-B` succeeded live on 2026-09-25 23:16 Stockholm time (bid/ask, depth, last trade 17:29:40 local, tick 0.02 from 17 bands). Two display fixes followed: upper-case BankID hint codes, and in-place QR redraw without escape codes. |
+| **Your manual read-only run** | **2026-09-25, two runs:**<br>• Run 1: drift on accounts, trading accounts and orderbook. Fixed in DTO `.2`.<br>• Run 2: everything OK except marketdata `timeOfLast`, which is Stockholm local time. Fixed, backed by the recording.<br>• The sanitized recording is committed and parsed strictly on every build.<br>• Step 10: the owner confirmed `qa login`, `qa accounts` and `qa positions` ran without HALT or error, and `qa quote ERIC-B` succeeded live on 2026-09-25 23:16 Stockholm time (bid/ask, depth, last trade 17:29:40 local, tick 0.02 from 17 bands). Two display fixes followed: upper-case BankID hint codes, and in-place QR redraw without escape codes. |
 
 **Test map:**
 
