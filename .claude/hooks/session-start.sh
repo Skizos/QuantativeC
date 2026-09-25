@@ -45,6 +45,7 @@ if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
         echo 'export QE_USE_VCPKG=OFF'
         echo 'export DOTNET_CLI_TELEMETRY_OPTOUT=1'
         echo 'export DOTNET_NOLOGO=1'
+        echo 'export TESTINGPLATFORM_TELEMETRY_OPTOUT=1'
     } >> "$CLAUDE_ENV_FILE"
 fi
 

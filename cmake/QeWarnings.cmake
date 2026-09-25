@@ -2,7 +2,8 @@
 function(qe_set_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE
-            /W4 /permissive- /utf-8 /Zc:__cplusplus
+            /W4 /utf-8
+            $<$<COMPILE_LANGUAGE:CXX>:/permissive- /Zc:__cplusplus>
             $<$<BOOL:${QE_WARNINGS_AS_ERRORS}>:/WX>)
     else()
         target_compile_options(${target} PRIVATE

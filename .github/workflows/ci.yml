@@ -17,6 +17,7 @@ concurrency:
 env:
   DOTNET_NOLOGO: "1"
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: "1"
   VCPKG_COMMIT: 10541e317a660f4165ba4ac2851ab54a8d4577b1 # must equal vcpkg.json builtin-baseline
 
 jobs:

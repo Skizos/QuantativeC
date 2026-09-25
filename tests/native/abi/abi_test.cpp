@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <string>
 #include <thread>
@@ -110,7 +111,8 @@ TEST(Abi, StructLayoutsMatchThisCompiler) {
 TEST(Abi, EngineCreateValidatesArguments) {
     EXPECT_EQ(qe_engine_create(nullptr, nullptr), QE_E_INVALID_ARG);
 
-    qe_engine* engine = reinterpret_cast<qe_engine*>(0x1);
+    // Non-null sentinel: a failed create must reset it to NULL.
+    qe_engine* engine = reinterpret_cast<qe_engine*>(std::uintptr_t{1});
     const qe_engine_config wrong_size{8, 0, 0};
     EXPECT_EQ(qe_engine_create(&wrong_size, &engine), QE_E_INVALID_ARG);
     EXPECT_EQ(engine, nullptr);
