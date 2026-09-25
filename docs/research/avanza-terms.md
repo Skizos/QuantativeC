@@ -50,6 +50,9 @@ These are the documents that govern your account relationship. The user terms ab
 - Rate-limit order actions: at most 5 per minute, at most 20 per day, and at least 5 s between place/cancel on the same instrument. This is also MAR hygiene.
 - Keep a kill switch, and halt on drift so the program never guesses.
 
-## 5. Decision needed from you
+## 5. Decision (recorded)
+
+**Recorded 2026-09-25 in ADR 0004.** The original request follows.
+
 
 Before Phase 3's first live read-only call, record your decision in `docs/adr/` (e.g. ADR 0004 "Authorization to automate"): whether you asked Avanza, what they answered, and which scope you accept. Phase 3 is gated on this.

@@ -36,6 +36,7 @@ base currency SEK.
 - Never log or print passwords, TOTP secrets, TOTP codes, session cookies, security
   tokens, or full account IDs (mask to last 3 digits).
 - Login is attempted at most once per trigger; on failure → stop and alert. Never loop.
+- No money movement: never implement transfer, withdrawal, deposit or payment endpoints (ADR 0004).
 
 ## Avanza gateway rules
 - Avanza has no official API. Before implementing or changing any endpoint, WebFetch the
@@ -43,7 +44,9 @@ base currency SEK.
   constants/routes file) and note the commit URL in docs/research/avanza-endpoints.md.
   Never invent endpoints or fields from memory.
 - All endpoints/paths live in ONE routes file. All JSON goes through versioned DTOs with
-  strict deserialization; unknown/missing required fields ⇒ SchemaDriftException ⇒ halt trading.
+  strict deserialization, tiered per ADR 0002: Tier A (trading-critical) unknown or missing
+  required fields ⇒ SchemaDriftException ⇒ halt trading; Tier B (informational) missing
+  required ⇒ SchemaDriftException (feature disabled), unknown fields logged.
 - Rate-limit outbound calls (token bucket, conservative defaults), jittered backoff on
   429/5xx, circuit breaker. 401/403 ⇒ session expired ⇒ halt order flow, single re-login attempt.
 - Instruments are identified by Avanza orderbookId, mapped to ISIN + ticker in the store.

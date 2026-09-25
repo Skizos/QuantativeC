@@ -33,4 +33,10 @@ if printf '%s' "$input" | grep -Eiq -- "(order-entry/order|rest/order/(new|modif
   deny "command references an Avanza order endpoint."
 fi
 
+# 4) Money movement under Avanza's API (ADR 0004): transfers, withdrawals, deposits, payments.
+#    Matched by keyword because no maintained client documents these paths; "transactions" stays allowed.
+if printf '%s' "$input" | grep -Eiq -- "_api/[A-Za-z0-9/_.-]*(transfer|withdraw|deposit|payment|uttag|overforing|insattning)"; then
+  deny "command references an Avanza money-transfer endpoint (ADR 0004: the program never moves money)."
+fi
+
 exit 0

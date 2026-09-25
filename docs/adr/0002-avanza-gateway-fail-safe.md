@@ -1,6 +1,6 @@
 # ADR 0002 — Avanza gateway and fail-safe design
 
-- **Status:** Proposed (2026-09-25), awaiting approval
+- **Status:** Accepted (2026-09-25). The owner approved the two-port split and the tiered strictness ("split the broker", "Apply the strict"); see `docs/plans/03-phase3-avanza-read.md` for how that answer was read.
 - **Related:** CLAUDE.md "Avanza gateway rules" / "Absolute safety rules", `docs/research/avanza-endpoints.md`, ADR 0003
 
 ## Context
@@ -88,7 +88,7 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
     - covers search, stock details, chart, news, transactions
     - missing required fields → `SchemaDriftException`, which disables the feature but does **not** halt trading unless the DTO feeds a risk check (chart history does not; the tick table is Tier A)
     - unknown extras are logged once per day as `drift.warning`
-  - **Why tiers:** this is a refinement of CLAUDE.md's rule, which needs your approval. The master plan §2 item 8 explains the reasoning.
+  - **Why tiers:** this is a refinement of CLAUDE.md's rule, approved 2026-09-25; CLAUDE.md now states the tiers. The master plan §2 item 8 explains the reasoning.
 - **Mappers:** DTOs map to Core types in one place.
   - Prices are parsed as `decimal`.
   - Volumes that arrive as `"0.00"` are parsed as `decimal`, then validated to be integral.
@@ -142,6 +142,17 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
 - No stop-loss orders in v1. The endpoint exists but the payload has a `orderBookId` casing quirk and is lightly tested; revisit after Phase 8.
 - No reliance on `requestId` for server-side idempotency, since that behaviour is unknown.
 - No scraping of HTML pages. The Go SDK visits `/handla/order.html` during BankID session setup; our username+TOTP flow does not need it.
+
+## Implementation notes (Phase 3)
+
+- **Resilience and rate limiting are our own code,** not `Microsoft.Extensions.Http.Resilience` / `System.Threading.RateLimiting`:
+  - `ReadResilienceHandler`: retry, circuit breaker, attempt timeout
+  - `RateLimitHandler`: token bucket
+
+  Both are small, run on `TimeProvider` so their tests are deterministic, and avoid a Polly dependency in the trading path. The behaviour is the one specified above.
+- **Unknown fields are found by a scanner** that walks the JSON alongside the source-generated metadata. A Tier A drift report therefore lists **every** unknown path, not only the first.
+- **No automatic re-login in Phase 3.** The CLI is a one-shot trigger; the "one re-login attempt" on 401/403 belongs to the long-running `HaltController` (Phase 6).
+- **Deals:** no reference client models the current response, so the DTO waits for your recording (`EndpointNotModelledException` until then).
 
 ## Alternatives considered
 

@@ -35,6 +35,10 @@ check 2 'curl -X POST https://www.avanza.se/_api/trading/order-entry/order/new -
 check 2 'curl https://www.avanza.se/_api/trading-critical/rest/order/modify'
 check 2 'curl https://www.avanza.se/_api/trading-critical/rest/order/delete'
 check 2 'curl https://www.avanza.se/_api/trading/stoploss/new'
+check 2 'curl -X POST https://www.avanza.se/_api/transfer/internal -d {}'
+check 2 'curl https://www.avanza.se/_api/payment/withdrawal/new'
+check 2 'curl https://www.avanza.se/_api/account-overview/Deposit'
+check 2 'curl https://www.avanza.se/_api/konto/uttag'
 
 # Must be allowed
 check 0 'dotnet build QuantAnalyst.sln'
@@ -46,5 +50,7 @@ check 0 'qa --mode Automatic-docs-only-word'
 check 0 'cmake --preset dev && ctest --preset dev --output-on-failure'
 check 0 'git status'
 check 0 'grep -rn "OrderGateway" src/'
+check 0 'grep -rn "_api/transactions/list" docs/'
+check 0 'git log --oneline -- docs/adr/0004-authorization-to-automate.md'
 
 exit "$fail"
