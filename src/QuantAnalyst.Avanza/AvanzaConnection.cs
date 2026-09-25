@@ -1,0 +1,127 @@
+using System.Globalization;
+using System.Net;
+using Microsoft.Extensions.Logging;
+using QuantAnalyst.Avanza.Auth;
+using QuantAnalyst.Avanza.Credentials;
+using QuantAnalyst.Avanza.Http;
+using QuantAnalyst.Avanza.Json;
+using QuantAnalyst.Avanza.Logging;
+using QuantAnalyst.Avanza.Recording;
+using QuantAnalyst.Core.Broker;
+
+namespace QuantAnalyst.Avanza;
+
+/// <summary>
+/// One trigger's worth of Avanza access: a session, the login pipeline and the read pipeline (ADR 0002 §2):
+/// <list type="bullet">
+/// <item>login: Recording → RateLimit → Cookies → primary (no retries, ever)</item>
+/// <item>reads: Recording → ReadResilience → RateLimit → SecurityToken → Cookies → primary</item>
+/// </list>
+/// Create one per CLI invocation; <see cref="Authenticator"/> allows exactly one login per connection.
+/// </summary>
+public sealed class AvanzaConnection : IDisposable
+{
+    private readonly HttpMessageHandler _primary;
+    private readonly bool _ownsPrimary;
+    private readonly HttpClient _authClient;
+    private readonly HttpClient _readClient;
+    private readonly AvanzaGateway _gateway;
+
+    private AvanzaConnection(
+        AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, TimeProvider time, HttpMessageHandler? primary)
+    {
+        options.Validate();
+        _ownsPrimary = primary is null;
+        _primary = primary ?? new SocketsHttpHandler
+        {
+            UseCookies = false, // CookieHandler owns the jar
+            AllowAutoRedirect = false, // a redirect to a login page must surface, not be followed
+            AutomaticDecompression = DecompressionMethods.All,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        };
+
+        var session = new AvanzaSession();
+        var bucket = new TokenBucket(options.RequestsPerSecond, options.Burst, time);
+        Recorder? recorder = null;
+        if (options.RecordingDirectory is { } dir)
+        {
+            string stamp = time.GetUtcNow().ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
+            recorder = new Recorder(Path.Combine(dir, stamp), time, logger);
+            RecordingDirectory = recorder.Directory;
+        }
+
+        _authClient = Client(options, Chain(recorder,
+            new RateLimitHandler(bucket, time, logger),
+            new CookieHandler(session.Cookies)));
+
+        var breaker = new CircuitBreaker(time, options.CircuitWindow, options.CircuitMinimumCalls, options.CircuitFailureRatio, options.CircuitBreakDuration, logger);
+        _readClient = Client(options, Chain(recorder,
+            new ReadResilienceHandler(options, breaker, time, logger, new Random()),
+            new RateLimitHandler(bucket, time, logger),
+            new SecurityTokenHandler(session),
+            new CookieHandler(session.Cookies)));
+
+        var api = new AvanzaApiClient(_readClient, new AvanzaJson(logger));
+        _gateway = new AvanzaGateway(api, time, redactor);
+        Authenticator = new AvanzaAuthenticator(
+            _authClient, session, secrets, new AuthStateStore(options.StateDirectory, time), options, time, logger, redactor);
+        Session = session;
+        Probe = new AvanzaProbe(Authenticator, _gateway, time);
+
+        HttpMessageHandler Chain(Recorder? rec, params DelegatingHandler[] handlers)
+        {
+            DelegatingHandler[] all = rec is null ? handlers : [new RecordingHandler(rec), .. handlers];
+            for (int i = 0; i < all.Length - 1; i++)
+            {
+                all[i].InnerHandler = all[i + 1];
+            }
+
+            all[^1].InnerHandler = _primary;
+            return all[0];
+        }
+    }
+
+    public AvanzaAuthenticator Authenticator { get; }
+
+    public IBrokerGateway Gateway => _gateway;
+
+    public AvanzaProbe Probe { get; }
+
+    /// <summary>The folder this connection records into, or null when recording is off.</summary>
+    public string? RecordingDirectory { get; }
+
+    internal AvanzaSession Session { get; }
+
+    public static AvanzaConnection Create(
+        AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, TimeProvider? time = null) =>
+        new(options, secrets, logger, redactor, time ?? TimeProvider.System, primary: null);
+
+    /// <summary>Test seam: a fake primary handler instead of the network.</summary>
+    internal static AvanzaConnection CreateForTest(
+        AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, TimeProvider time, HttpMessageHandler primary) =>
+        new(options, secrets, logger, redactor, time, primary);
+
+    public void Dispose()
+    {
+        // Chains are not disposed through the clients (disposeHandler: false) so the shared primary handler is released once.
+        _authClient.Dispose();
+        _readClient.Dispose();
+        if (_ownsPrimary)
+        {
+            _primary.Dispose();
+        }
+    }
+
+    private static HttpClient Client(AvanzaOptions options, HttpMessageHandler chain)
+    {
+        var client = new HttpClient(chain, disposeHandler: false)
+        {
+            BaseAddress = options.BaseAddress,
+            Timeout = Timeout.InfiniteTimeSpan, // per-attempt timeouts live in the handlers
+            MaxResponseContentBufferSize = AvanzaApiClient.MaxResponseBytes,
+        };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(options.UserAgent);
+        return client;
+    }
+}

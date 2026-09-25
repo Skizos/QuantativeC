@@ -3,7 +3,7 @@
   <!-- Avanza gateway (read side in Phase 3): auth, HTTP pipeline, tiered strict DTOs, mappers (ADR 0002). -->
   <PropertyGroup>
     <RootNamespace>QuantAnalyst.Avanza</RootNamespace>
-    <!-- Required by [LibraryImport] for the Windows Credential Manager store (Secrets/WindowsCredentialStore.cs). -->
+    <!-- Required by [LibraryImport] for the Windows Credential Manager store (Credentials/WindowsCredentialStore.cs). -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
