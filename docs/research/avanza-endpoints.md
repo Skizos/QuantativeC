@@ -146,7 +146,7 @@ Its replacement is **Server-Sent Events** (Go SDK, `internal/sse/subscription.go
 
 | Stream | Path | Event name | Payload |
 |---|---|---|---|
-| Order depth (per orderbook) | `/_push/order-depth-web-push/{orderbookId}` | `ORDER_DEPTH` | `{orderbookId, levels[{buySide,sellSide}{price,volume,priceString}], marketMakerLevelInBid/Ask}` |
+| Order depth (per orderbook) | `/_push/order-depth-web-push/{orderbookId}` (Referer `https://www.avanza.se/handla/order.html/kop/{orderbookId}`; needs cookies `csid`, `cstoken`, `AZACSRF`) | `ORDER_DEPTH` | `{orderbookId (string), levels[{buyPrice, buyVolume, sellPrice, sellVolume}], marketMakerLevelInAsk, marketMakerLevelInBid}`, a **full snapshot** per event ([`market/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/types.go), [`market/service.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/service.go)). Corrected 2026-09-25: the nested `{buySide, sellSide}` shape listed here before is the **marketdata** REST shape. |
 | Own orders | `/_push/trading/orders/` | `ORDER` | `{id, accountId, orderbook, currentVolume, originalVolume, price, type(side), state{…}, action(NEW/DELETED/…), sum, orderDateTime, eventTimeStamp, uniqueId, detailedCancelStatus}` |
 | Own stop-losses | `/_push/trading/stoploss/` | `STOPLOSS` | stop-loss state |
 
@@ -154,6 +154,9 @@ Its replacement is **Server-Sent Events** (Go SDK, `internal/sse/subscription.go
 - No known SSE channel exists for **last-trade quotes, public trades, own deals, or positions**.
 - **Quote stream:** combine the best bid/ask from `ORDER_DEPTH` with polling `marketdata/{id}` for `last`/`timeOfLast`/volume, at a conservative interval of about 5 s per instrument during market hours. The staleness rule measures age from the newest of `ORDER_DEPTH` and the poll's `updated`.
 - **Own deals and positions:** poll `deals` and `positions` (every 30–60 s and on every `ORDER` event that implies a fill) for reconciliation.
+
+- **Other events:** the Go SDK tests show `event: info` with plain-text data (`connected`, `heartbeat`) on the same stream ([`order_depth_test.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/order_depth_test.go)).
+- **Re-checked 2026-09-25 (Phase 4):** both client HEADs are unchanged (Qluxzz `a6a18a94`, Go SDK `43f39025`).
 
 Open issue: [Qluxzz #140 "Event-stream (SSE)"](https://github.com/Qluxzz/avanza/issues/140) (2025-09-23) has no maintainer answer. The SSE protocol is known from the Go SDK only, so we need our own recorded fixtures (Phase 4) before relying on it.
 

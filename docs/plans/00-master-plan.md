@@ -162,10 +162,10 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - The log scan finds no secrets.
 - **ADR 0004 (authorization to automate) is recorded before your first live run.**
 
-### Phase 4 — Streaming + data store
+### Phase 4 — Streaming + data store (in progress; plan in `docs/plans/04-phase4-streaming-store.md`)
 - **Streaming:** `AvanzaStreamClient` (SSE, `Last-Event-ID`, server `retry`, backoff, 1 MB events) plus `QuoteComposer` (ORDER_DEPTH + polled marketdata ⇒ `Quote` with `asOf` and a stale flag). Fan-out over `Channel<T>`.
 - **Store:** DuckDB with **known-at** timestamps (`valid_from`, `known_at`, `source`, `source_version`), the instrument master, `AvanzaChartImporter`, and `IHistoricalDataProvider` (vendor slot).
-- **Calendar:** `config/market-calendar.XNSA.{2026,2027}.json`, filled and verified by you from Nasdaq's official calendar.
+- **Calendar:** `config/market-calendar.XSTO.{2026,2027}.json` (XSTO is the MIC Avanza reports; an earlier draft said "XNSA" by mistake), filled and verified by you from Nasdaq's official calendar.
 
 *Gate:*
 - Replay tests on recorded SSE fixtures pass.
