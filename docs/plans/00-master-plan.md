@@ -102,14 +102,14 @@ That makes "only `OrderGateway` may reach order methods" a one-line architecture
 
 Every gate is proven by running the listed commands and pasting the output in the session. After every green step: commit and push on the working branch.
 
-### Phase 0 — Kickoff (this session) ✅ pending approval
+### Phase 0 — Kickoff ✅ (2026-09-25)
 Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and ADRs 0001–0003.
 
 *Gate:*
 - `bash tests/hooks/block-live-trading.test.sh` passes (23/23, run 2026-09-25).
 - You approve this plan.
 
-### Phase 1 — Skeleton + interop spine
+### Phase 1 — Skeleton + interop spine ✅ (2026-09-25; results in `docs/plans/01-phase1-skeleton.md`)
 - **Repo scaffolding:**
   - `QuantAnalyst.sln` (see note), `global.json` (10.0.100 + `latestFeature`)
   - `Directory.Build.props` (net10.0, nullable, `TreatWarningsAsErrors`, `AnalysisLevel=latest-recommended`, `AllowUnsafeBlocks` in Native only)

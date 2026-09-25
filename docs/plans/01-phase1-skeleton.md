@@ -1,6 +1,6 @@
 # 01 — Phase 1: skeleton + interop spine
 
-- **Status:** in progress (2026-09-25)
+- **Status:** done in the cloud container (2026-09-25); the Windows leg is proven by CI (`build.ps1` on windows-2025)
 - **Scope:** master plan §4 Phase 1 and ADR 0001.
 
 ## Deliverables
@@ -44,3 +44,21 @@ dotnet build QuantAnalyst.sln && dotnet test --solution QuantAnalyst.sln
 bash tests/hooks/block-live-trading.test.sh
 ```
 The gate also requires the BS reference (call ≈ 10.4506, put ≈ 5.5735, tol 1e-4) to pass through the C# binding, and benchmark results to be saved in `bench/results/`.
+
+## Results (cloud container, clean tree, 2026-09-25)
+
+| Gate | Result |
+|---|---|
+| `ctest --preset dev` | 22/22 passed: 10 unit, 11 ABI, export-list check |
+| `ctest --preset asan` (clang 18, ASan + UBSan, leak detection on) | 22/22 passed. LeakSanitizer was confirmed working with a deliberate leak. |
+| `dotnet build` / `dotnet test --solution` | 0 warnings; 27/27 passed, including the BS reference through the C# binding (call 10.450583572185565, put 5.573526022256971) |
+| Guardrail self-test | 23/23. The live session also refused an `echo` containing a live-mode flag, and blocked one of my own commits whose text quoted it. |
+| `dotnet format --verify-no-changes`, `clang-format --dry-run -Werror` | clean |
+| Benchmarks | `bench/results/` (1e6 BS: 74 ms scalar, 81 ms via ABI, 78.5 ms from C#; bare P/Invoke 10.8 ns) |
+
+## Deviations from the master plan
+- **`dotnet test` needs `--solution`.** xunit.v3 4.x runs on Microsoft.Testing.Platform, which the .NET 10 SDK requires opting into via `global.json`. In that mode `dotnet test` takes the solution through `--solution`. CLAUDE.md's command was updated.
+- **The solution stays `QuantAnalyst.sln`.** The .NET 10 SDK defaults to `.slnx` (verified); I created the `.sln` explicitly with `--format sln`.
+- **ELF exports need a version script.** On Linux, `libqe.so` uses a linker version script (`native/qe.map`), because libstdc++ template instantiations otherwise leak into the dynamic symbol table under clang Debug builds.
+- **Native tests and benchmarks live in `tests/native` and `bench/native`**, following CLAUDE.md's top-level `tests/` and `bench/` layout.
+- **The guardrail is literal:** any Bash command whose text contains a live-mode flag is blocked, including doc edits made through the shell. Edit docs that quote those flags with the file tools.

@@ -1,0 +1,89 @@
+# CI: Windows + Linux, native + managed test suites, sanitizers, format and guardrail checks.
+# No secrets are used or needed; nothing here talks to Avanza (CLAUDE.md: no network in tests).
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  VCPKG_COMMIT: 10541e317a660f4165ba4ac2851ab54a8d4577b1 # must equal vcpkg.json builtin-baseline
+
+jobs:
+  checks:
+    name: format + guardrails
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - name: vcpkg baseline matches CI pin
+        run: |
+          grep -q "\"builtin-baseline\": \"${VCPKG_COMMIT}\"" vcpkg.json
+      - name: Guardrail hook self-test
+        run: bash tests/hooks/block-live-trading.test.sh
+      - name: clang-format
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q clang-format-18
+          git ls-files -- '*.c' '*.cc' '*.cpp' '*.h' '*.hpp' | xargs clang-format-18 --dry-run -Werror
+      - name: dotnet format
+        run: dotnet format QuantAnalyst.sln --verify-no-changes -v q
+
+  build-test:
+    name: build + test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            preset: dev
+          - os: windows-2025
+            preset: msvc-dev
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - uses: lukka/get-cmake@v4.4.2
+        with:
+          cmakeVersion: "~3.31.0"
+          ninjaVersion: "^1.11.1"
+      - uses: lukka/run-vcpkg@v11.6
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+      - name: Build and test (Linux)
+        if: runner.os == 'Linux'
+        run: ./build.sh --preset ${{ matrix.preset }}
+      - name: Build and test (Windows, via build.ps1)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./build.ps1 -Preset ${{ matrix.preset }}
+
+  sanitizers:
+    name: ASan + UBSan (clang, Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: lukka/get-cmake@v4.4.2
+        with:
+          cmakeVersion: "~3.31.0"
+          ninjaVersion: "^1.11.1"
+      - name: clang sanitizer runtimes
+        run: sudo apt-get update -q && sudo apt-get install -y -q clang-18 libclang-rt-18-dev
+      - uses: lukka/run-vcpkg@v11.6
+        with:
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+      - name: Native tests under ASan + UBSan
+        run: ./build.sh --preset asan --no-managed
