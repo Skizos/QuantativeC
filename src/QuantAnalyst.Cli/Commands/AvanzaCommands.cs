@@ -360,7 +360,7 @@ internal static class AvanzaCommands
                 return 0;
             }
 
-            output.WriteLine($"{p.TickerSymbol ?? "?"}  {p.Name}  (orderbook {p.OrderbookId}, {p.Isin}, {p.MarketPlace}, {p.Currency}, status {p.OrderbookStatus ?? "-"})");
+            output.WriteLine($"{p.TickerSymbol ?? "?"}  {p.Name}  (orderbook {p.OrderbookId}, {p.Isin}, {p.MarketPlace}, {p.Currency}{(p.OrderbookStatus is { } status ? ", " + status : string.Empty)})");
             output.WriteLine($"bid {Opt(m.Bid)}  ask {Opt(m.Ask)}  last {Opt(m.Last)}  high {Opt(m.High)}  low {Opt(m.Low)}  change {Opt(m.ChangePercent)} %");
             output.WriteLine($"last trade {(m.TimeOfLastUtc is { } t ? Local(t) : "-")}  updated {(m.UpdatedUtc is { } u ? Local(u) : "-")}  volume {Num(m.TotalVolumeTraded)}");
             output.WriteLine($"tick size at last {Opt(tick)}  lot {p.TradingUnit}  volume factor {p.VolumeFactor}  ({p.TickSizes.Bands.Count} tick band(s) from Avanza)");

@@ -151,6 +151,17 @@ public sealed class BankIdLoginTests
     }
 
     [Theory]
+    [InlineData("userSign", "Confirm the login in the BankID app.")]
+    [InlineData("USERSIGN", "Confirm the login in the BankID app.")] // live spelling, 2026-09-25
+    [InlineData("OUTSTANDING_TRANSACTION", "Open the BankID app and scan the QR code.")]
+    [InlineData("outstandingTransaction", "Open the BankID app and scan the QR code.")]
+    [InlineData(null, "Open the BankID app and scan the QR code.")]
+    [InlineData("USER_CANCEL", "The login was cancelled in the BankID app.")]
+    [InlineData("SOMETHING_NEW 42 <x>", "BankID status: SOMETHINGNEWx")]
+    public void HintCodes_AreMatchedWithoutCaseOrUnderscores(string? hint, string expected) =>
+        Assert.Equal(expected, AvanzaAuthenticator.DescribeHint(hint));
+
+    [Theory]
     [InlineData("/_api/authentication/v2/sessions/bankid/tx-1/cust-1", true)]
     [InlineData("/_api/authentication/v2/sessions/bankid/abc", true)]
     [InlineData("/_api/authentication/v2/sessions/bankid/", false)]

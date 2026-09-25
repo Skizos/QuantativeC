@@ -81,7 +81,7 @@ public sealed class CliAvanzaTests : IDisposable
         const string payload = "bankid.67df3917-fa0d-44e5-b327-edcc928297f8.0.dc69358e712458a66a7525beef148ae8526b1c71610eff2c16cdffb4cdac9bf8";
         using var generator = new QRCoder.QRCodeGenerator();
         using QRCoder.QRCodeData data = generator.CreateQrCode(payload, QRCoder.QRCodeGenerator.ECCLevel.L);
-        IReadOnlyList<string> lines = QuantAnalyst.Cli.Output.ConsoleBankIdPrompt.Render(payload, ansiColours: false);
+        IReadOnlyList<string> lines = QuantAnalyst.Cli.Output.ConsoleBankIdPrompt.Render(payload);
 
         int n = data.ModuleMatrix.Count;
         Assert.Equal((n + 1) / 2, lines.Count);
@@ -134,7 +134,7 @@ public sealed class CliAvanzaTests : IDisposable
 
         (code, output, error) = Qa("quote", "ERIC-B");
         Assert.True(code == 0, error);
-        Assert.Contains("ERIC B  Ericsson B  (orderbook 5240", output, StringComparison.Ordinal);
+        Assert.Contains("ERIC B  Ericsson B  (orderbook 5240, SE0000108656, XSTO, SEK)", output, StringComparison.Ordinal); // no status field live
         Assert.Contains("bid 70.84  ask 70.86", output, StringComparison.Ordinal);
         Assert.Contains("tick size at last 0.02", output, StringComparison.Ordinal);
 

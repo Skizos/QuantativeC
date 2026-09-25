@@ -285,18 +285,23 @@ public sealed partial class AvanzaAuthenticator
     private static SchemaDriftException BankIdDrift(AvanzaRoute route, string path, string detail) =>
         new(route.Name, AuthDtoVersion, DtoTier.A, [path], detail);
 
-    /// <summary>Hint codes are BankID's public RP API values; anything else is shown only as sanitized letters.</summary>
-    internal static string DescribeHint(string? hintCode) => hintCode switch
-    {
-        null or "" or "outstandingTransaction" or "noClient" or "started" => "Open the BankID app and scan the QR code.",
-        "userSign" or "userMrtd" or "userCallConfirm" => "Confirm the login in the BankID app.",
-        "userCancel" => "The login was cancelled in the BankID app.",
-        "cancelled" => "The BankID request was cancelled (another login may have started).",
-        "expiredTransaction" => "The BankID request expired.",
-        "startFailed" => "The QR code was not scanned in time.",
-        "certificateErr" => "BankID reported a certificate problem; check your BankID.",
-        _ => $"BankID status: {SafeHint(hintCode)}",
-    };
+    /// <summary>
+    /// Hint codes are BankID's public RP API values. Avanza sends them in either spelling ("userSign" in the RP
+    /// API, "USERSIGN" live on 2026-09-25), so they are matched without case or underscores. Anything else is
+    /// shown only as sanitized letters.
+    /// </summary>
+    internal static string DescribeHint(string? hintCode) =>
+        (hintCode ?? string.Empty).Replace("_", string.Empty, StringComparison.Ordinal).ToUpperInvariant() switch
+        {
+            "" or "OUTSTANDINGTRANSACTION" or "NOCLIENT" or "STARTED" => "Open the BankID app and scan the QR code.",
+            "USERSIGN" or "USERMRTD" or "USERCALLCONFIRM" => "Confirm the login in the BankID app.",
+            "USERCANCEL" => "The login was cancelled in the BankID app.",
+            "CANCELLED" => "The BankID request was cancelled (another login may have started).",
+            "EXPIREDTRANSACTION" => "The BankID request expired.",
+            "STARTFAILED" => "The QR code was not scanned in time.",
+            "CERTIFICATEERR" => "BankID reported a certificate problem; check your BankID.",
+            _ => $"BankID status: {SafeHint(hintCode)}",
+        };
 
     private static string SafeHint(string? hintCode) =>
         string.IsNullOrEmpty(hintCode) ? "none" : new string([.. hintCode.Where(char.IsAsciiLetter).Take(40)]);
