@@ -140,7 +140,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 
 *Note:* CLAUDE.md names `QuantAnalyst.sln`. The .NET 10 SDK also supports `.slnx`, the newer XML solution format; Phase 1 will check which one `dotnet new sln` produces. I'll use `QuantAnalyst.sln` unless you prefer `.slnx`, and update CLAUDE.md if you do.
 
-### Phase 2 — Pricing, risk, portfolio (C++)
+### Phase 2 — Pricing, risk, portfolio (C++) ✅ (2026-09-25; results in `docs/plans/02-phase2-numerics.md`)
 - **Pricing (`qe::pricing`):** BSM + Greeks, implied vol (Brent), CRR American, MC (antithetic + control variate, SE, Sobol option).
 - **Risk (`qe::risk`):** historical/parametric/MC VaR & ES; covariance (sample, EWMA, Ledoit-Wolf); stress (OMXS30 −10 %, SEK ±5 %).
 - **Portfolio (`qe::portfolio`):** MV with bounds, min-var, risk parity, HRP, integer-lot rebalance solver (lot = `volumeFactor`/`tradingUnit` from Avanza orderbook).

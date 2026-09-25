@@ -1,6 +1,6 @@
 # 02 — Phase 2: pricing, risk, portfolio (C++)
 
-- **Status:** in progress (2026-09-25)
+- **Status:** done (2026-09-25). Gate results are at the end of this file.
 - **Scope:** master plan §4 Phase 2 and the `<modules>` NATIVE section of the spec.
 - **Gate:** every numerical item in `<verification_requirements>` passes, with seeds recorded.
 
@@ -110,3 +110,41 @@ Every trade is a lot multiple, final quantities are ≥ 0, cash after trades is 
 - Knock-out/turbo payoffs. The MC already supports multiple steps; barrier payoffs arrive with warrant analysis.
 - Multithreading. The block structure keeps results independent of the thread count once it is added.
 - A QuantLib cross-check (optional vcpkg feature, still off).
+
+## Results (clean tree, cloud container, 2026-09-25)
+
+| Gate | Result |
+|---|---|
+| `ctest --preset dev` | 107/107 (native unit + ABI 1.0/1.1 + export list) |
+| `ctest --preset asan` (clang 18, ASan + UBSan, leak detection) | 107/107 |
+| `dotnet build` / `dotnet test --solution QuantAnalyst.sln` | 0 warnings; 89/89 (61 binding + 28 Analytics/CLI) |
+| Guardrail self-test | 23/23 |
+| `dotnet format --verify-no-changes`, `clang-format --dry-run -Werror` | clean |
+| CI (Eigen 5.0.1 via vcpkg; GCC, clang ASan, MSVC) | green on `e67f0a5` ([run 36171749352](https://github.com/Skizos/QuantativeC/actions/runs/36171749352)); final push re-checked |
+
+### `<verification_requirements>`, mapped to tests
+
+| Requirement | Test(s) | Seed |
+|---|---|---|
+| BS reference call ≈ 10.4506, put ≈ 5.5735 (1e-4) | `BlackScholes.SpecReferenceCallAndPut`; C#: `SpecReference_CallAndPut_ThroughBinding` | – |
+| Put-call parity 1e-10 | `BlackScholes.PutCallParityHoldsOnGrid`; C#: `PutCallParity_HoldsAcrossGrid` | – |
+| Greeks vs finite differences | `Greeks.MatchCentralFiniteDifferences` (Δ, Γ, vega, ρ, θ; calls and puts) | – |
+| Implied-vol round trip | `ImpliedVol.RoundTripsAcrossGrid` (1e-9), ABI + C# round trips | – |
+| American ≥ European | `Crr.AmericanIsAtLeastEuropean`; Hull 5-step anchor 4.49; numpy lattice to 1e-10 | – |
+| MC within 3 SE | `Estimators/McWithinThreeSe.*` (plain, antithetic, control, both, Sobol, Sobol+antithetic, Sobol+control) | 20260925 |
+| Seed determinism | `MonteCarlo.SeedDeterminism`, `MonteCarloVarEs.ConvergesToParametricAndIsDeterministic`, `Rng.*` | 99, 20260925 |
+| ES ≥ VaR | `HistoricalVarEs.EsIsNeverBelowVar` (50 random samples × 4 levels), all report lines | 3 |
+| Hand-computed quantile test | `HistoricalVarEs.HandComputedHundredLosses` (VaR 0.95 / ES 0.975), `HandComputedFiveReturns`; `Quantile.MatchesNumpyLinear` | – |
+| Covariance SPD | `Covariance.AllEstimatorsArePositiveDefinite`, `LedoitWolfIsPositiveDefiniteWhenSampleIsSingular` | – |
+| Optimizer weights sum to 1 and respect bounds | `MeanVariance.RespectsBudgetBoundsAndKkt` (KKT), `MinVariance.MatchesClosedForm…`, ABI + C# `Optimize_*` | – |
+| Rebalance respects integer lots | `Rebalance.*` (lots, no shorts, min trade, fees, cash buffer) | – |
+| Benchmark: 1e5-path MC | `bench/results/phase2-cloud-linux-x64-native.json` (7.4 ms plain, 5.3 ms antithetic+CV, 6.2 ms Sobol) | 1 |
+
+Independent references: numpy/scipy/scikit-learn values (`tools/reference/phase2_reference.py`), plus Hull textbook anchors.
+
+## Deviations and notes
+- **Open design questions don't affect Phase 2.** These are the two-interface broker split, tiered DTO strictness, and no order endpoints in the local API. They still need your yes/no before Phase 3.
+- **Optimize uses Ledoit-Wolf covariance by default** in `qa optimize`, because shrinkage is better conditioned. `qa risk` also defaults to `lw`, and both print the estimator used.
+- **Eigen:** the ADR 0001 open item is resolved (keep 5.0.1).
+- **Google Benchmark 1.8.3 pitfall** with `DoNotOptimize(double&)` under GCC: see `bench/results/README.md`.
+- **Performance to revisit:** HRP's single linkage is naive O(N³), 20 ms at N = 300, fine for OMXS30. MC VaR spends most of its time in the inverse normal CDF. Neither is a bottleneck at the OMXS30 scale.
