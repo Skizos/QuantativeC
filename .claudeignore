@@ -1,0 +1,11 @@
+bin/
+obj/
+build/
+out/
+vcpkg_installed/
+data/
+*.parquet
+*.duckdb
+.env*
+secrets/
+recordings/live/

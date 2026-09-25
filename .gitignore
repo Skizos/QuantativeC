@@ -1,0 +1,35 @@
+# Build outputs
+bin/
+obj/
+build/
+out/
+vcpkg_installed/
+.vs/
+.vscode/
+.idea/
+*.user
+CMakeUserPresets.json
+BenchmarkDotNet.Artifacts/
+
+# Data and results (never committed; research outputs go through the TrialLedger)
+data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+
+# Secrets and live recordings: never in the repo
+.env
+.env.*
+secrets/
+recordings/live/
+*.pfx
+*.key
+
+# Runtime state
+KILL
+promotion/*.local.json
+logs/
+audit/
+
+# Claude Code local overrides
+.claude/settings.local.json
