@@ -39,7 +39,7 @@ public sealed class RecordedFixtureTests
         var json = new AvanzaJson(log);
         DateTimeOffset now = DateTimeOffset.UnixEpoch;
         int checkedFiles = 0;
-        foreach (string file in Directory.GetFiles(Path.Combine(Root, folder), "*.json").Order(StringComparer.Ordinal))
+        foreach (string file in Directory.GetFiles(Path.Combine(Root, folder), "*.json").Order(StringComparer.Ordinal).Where(f => !IsStreamRecording(f)))
         {
             (string route, int status, JsonElement body) = Load(file);
             if (status is < 200 or >= 300)
@@ -74,7 +74,7 @@ public sealed class RecordedFixtureTests
     {
         string dir = Path.Combine(Root, "2026-09-25");
         var json = new AvanzaJson(new CapturingLogger());
-        JsonElement Body(string route) => Directory.GetFiles(dir, $"*-{route}.json").Order(StringComparer.Ordinal).Select(Load).First(x => x.Route == route).Body;
+        JsonElement Body(string route) => Directory.GetFiles(dir, $"*-{route}.json").Order(StringComparer.Ordinal).Where(f => !IsStreamRecording(f)).Select(Load).First(x => x.Route == route).Body;
 
         IReadOnlyList<Account> accounts = AvanzaMapper.ToAccounts(Parse(json, Body("accounts-overview"), AvanzaTierAContext.Default.AccountsOverviewDto, "a", "v", DtoTier.A));
         Assert.Equal(3, accounts.Count);
@@ -113,7 +113,7 @@ public sealed class RecordedFixtureTests
     public void Recording20260925_ConfirmsTheBankIdFieldNamesTheLoginRelieson()
     {
         string dir = Path.Combine(Root, "2026-09-25");
-        var bodies = Directory.GetFiles(dir, "*.json").Order(StringComparer.Ordinal).Select(Load).ToList();
+        var bodies = Directory.GetFiles(dir, "*.json").Order(StringComparer.Ordinal).Where(f => !IsStreamRecording(f)).Select(Load).ToList();
 
         JsonElement start = bodies.First(b => b.Route == "auth.bankid.start").Body;
         Assert.True(start.TryGetProperty("qrToken", out _));
@@ -158,6 +158,9 @@ public sealed class RecordedFixtureTests
         Assert.False(MarketTime.TryStockholmToUtc(new DateTime(2026, 3, 29, 2, 30, 0), out _)); // spring forward: doesn't exist
         Assert.False(MarketTime.TryStockholmToUtc(new DateTime(2026, 10, 25, 2, 30, 0), out _)); // fall back: ambiguous
     }
+
+    /// <summary>Stream recordings (qa-stream-recording/1) are replayed by <see cref="StreamReplayTests"/> instead.</summary>
+    private static bool IsStreamRecording(string file) => File.ReadAllText(file).Contains("\"qa-stream-recording/1\"", StringComparison.Ordinal);
 
     private static (string Route, int Status, JsonElement Body) Load(string file)
     {

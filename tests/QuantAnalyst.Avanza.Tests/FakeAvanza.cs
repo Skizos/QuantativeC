@@ -352,6 +352,11 @@ internal sealed class TestRig : IDisposable
             CircuitMinimumCalls = Options.CircuitMinimumCalls,
             CircuitFailureRatio = Options.CircuitFailureRatio,
             CircuitBreakDuration = Options.CircuitBreakDuration,
+            StreamMinRetry = Options.StreamMinRetry,
+            StreamMaxBackoff = Options.StreamMaxBackoff,
+            StreamIdleTimeout = Options.StreamIdleTimeout,
+            StreamMaxEventChars = Options.StreamMaxEventChars,
+            StreamBufferCapacity = Options.StreamBufferCapacity,
             StateDirectory = Path.Combine(Root, "state"),
             RecordingDirectory = record ? Path.Combine(Root, "recordings") : null,
         };

@@ -14,6 +14,7 @@ These payloads were **written by hand** from the reference clients' models. They
 | `search-eric.json` | `POST /_api/search/filtered-search` | Qluxzz `models/search_result.py`, Go `market.SearchResponse` |
 | `price-chart-5240.json` | `GET /_api/price-chart/stock/{id}` | Go `market.StockPriceChart` |
 | `transactions.json` | `GET /_api/transactions/list` | Go `accounts.TransactionsResponse` |
+| `order-depth-stream-5240.json` (format `qa-stream-recording/1`) | SSE `GET /_push/order-depth-web-push/{id}` | Go `market.OrderDepthData` and the event sequence in its `order_depth_test.go` (`info` + `ORDER_DEPTH`, `retry: 1000`); `info` data is kept as a length placeholder, like real recordings |
 
 Client commits: Qluxzz/avanza `a6a18a948f88cb7e340051e480b203b2ee917eed`; vmorsell/avanza-sdk-go `43f39025751c05ff73a85e708dadee4bfa9da2ca` (MIT). See `docs/research/avanza-endpoints.md`.
 

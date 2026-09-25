@@ -87,9 +87,9 @@ public static partial class RecordingSanitizer
         {
             JsonNode node = JsonNode.Parse(File.ReadAllText(f))
                             ?? throw new InvalidDataException($"{Path.GetFileName(f)}: empty recording.");
-            if (node["format"]?.GetValue<string>() != Recorder.Format)
+            if (node["format"]?.GetValue<string>() is not (Recorder.Format or StreamRecording.Format))
             {
-                throw new InvalidDataException($"{Path.GetFileName(f)}: not a {Recorder.Format} file.");
+                throw new InvalidDataException($"{Path.GetFileName(f)}: not a {Recorder.Format} or {StreamRecording.Format} file.");
             }
 
             documents.Add((Path.GetFileName(f), node));
@@ -100,12 +100,21 @@ public static partial class RecordingSanitizer
         var urlKeys = new SortedSet<string>(StringComparer.Ordinal);
         var names = new SortedSet<string>(StringComparer.Ordinal);
         var recordIds = new SortedSet<string>(StringComparer.Ordinal);
+        var eventIds = new Dictionary<string, string>(StringComparer.Ordinal); // stream event ids, in order of appearance
         foreach ((_, JsonNode node) in documents)
         {
             bool personal = PersonalRoutes.Contains(node["route"]?.GetValue<string>() ?? string.Empty);
             var sets = new IdSets(accountIds, urlKeys, names, personal ? recordIds : null);
             Collect(node["response"]?["body"], null, sets);
             Collect(node["request"]?["body"], null, sets);
+            foreach (JsonObject e in StreamEvents(node))
+            {
+                Collect(e["data"], null, sets);
+                if (e["id"] is JsonValue idValue && idValue.TryGetValue(out string? eventId) && eventId.Length > 0)
+                {
+                    eventIds.TryAdd(eventId, string.Create(CultureInfo.InvariantCulture, $"ev-{eventIds.Count + 1}"));
+                }
+            }
         }
 
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -160,6 +169,23 @@ public static partial class RecordingSanitizer
                 }
             }
 
+            // Stream recordings: event data like a response body; event ids (opaque, server-chosen) become ev-N.
+            foreach (JsonObject e in StreamEvents(node))
+            {
+                JsonNode? data = e["data"];
+                JsonNode? rewritten = Rewrite(data, null, "$", ctx);
+                if (!ReferenceEquals(data, rewritten))
+                {
+                    e["data"] = rewritten;
+                }
+
+                if (e["id"] is JsonValue idValue && idValue.TryGetValue(out string? eventId) && eventIds.TryGetValue(eventId, out string? mappedId))
+                {
+                    e["id"] = mappedId;
+                    ctx.Count("event-id");
+                }
+            }
+
             node["sanitized"] = new JsonObject
             {
                 ["tool"] = "qa recordings sanitize",
@@ -211,6 +237,11 @@ public static partial class RecordingSanitizer
 
         return new SanitizeReport(output.Count, counts, problems);
     }
+
+    private static IEnumerable<JsonObject> StreamEvents(JsonNode node) =>
+        node["format"]?.GetValue<string>() == StreamRecording.Format && node["events"] is JsonArray events
+            ? events.OfType<JsonObject>()
+            : [];
 
     private sealed record Context(Dictionary<string, string> Map, Dictionary<string, int> Counts, bool Scramble, string Route)
     {

@@ -1,0 +1,63 @@
+{
+  "format": "qa-stream-recording/1",
+  "routesVersion": "2026-09-25.2",
+  "route": "order-depth-stream",
+  "tier": "A",
+  "recordedAtUtc": "2026-09-25T07:30:00+00:00",
+  "request": {
+    "method": "GET",
+    "path": "/_push/order-depth-web-push/5240",
+    "headerNames": ["Accept", "aza-do-not-touch-session", "Cache-Control", "Cookie", "Referer", "User-Agent", "X-SecurityToken"],
+    "lastEventIdSent": false
+  },
+  "response": {
+    "status": 200,
+    "contentType": "text/event-stream",
+    "headerNames": ["Cache-Control", "Connection"],
+    "setCookieNames": []
+  },
+  "end": {
+    "reason": "server closed the stream",
+    "durationMs": 2500,
+    "eventsDropped": 0
+  },
+  "events": [
+    { "offsetMs": 0, "event": "info", "id": "ev-1", "retry": 1000, "data": "<text, 9 chars>" },
+    {
+      "offsetMs": 40,
+      "event": "ORDER_DEPTH",
+      "id": "ev-2",
+      "retry": 1000,
+      "data": {
+        "orderbookId": "5240",
+        "levels": [
+          { "buyPrice": 70.84, "buyVolume": 1200, "sellPrice": 70.86, "sellVolume": 800 },
+          { "buyPrice": 70.82, "buyVolume": 2500, "sellPrice": 70.88, "sellVolume": 1500 },
+          { "buyPrice": 70.8, "buyVolume": 400, "sellPrice": 0, "sellVolume": 0 }
+        ],
+        "marketMakerLevelInAsk": 0,
+        "marketMakerLevelInBid": 1
+      }
+    },
+    { "offsetMs": 1000, "event": "info", "id": "ev-3", "retry": 1000, "data": "<text, 9 chars>" },
+    {
+      "offsetMs": 2100,
+      "event": "ORDER_DEPTH",
+      "id": "ev-4",
+      "retry": 1000,
+      "data": {
+        "orderbookId": "5240",
+        "levels": [
+          { "buyPrice": 70.86, "buyVolume": 300, "sellPrice": 70.88, "sellVolume": 1500 },
+          { "buyPrice": 70.84, "buyVolume": 1200, "sellPrice": 70.9, "sellVolume": 700 }
+        ],
+        "marketMakerLevelInAsk": 0,
+        "marketMakerLevelInBid": 0
+      }
+    }
+  ],
+  "sanitized": {
+    "tool": "hand-written",
+    "amountsReplaced": false
+  }
+}
