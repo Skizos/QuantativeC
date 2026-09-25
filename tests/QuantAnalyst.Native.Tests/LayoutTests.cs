@@ -29,6 +29,56 @@ public sealed class LayoutTests
             typeof(QeStructLayoutInfo).AssemblyQualifiedName!,
             ["Size", "Alignment", "FieldCount", "Reserved", "Offsets"]
         },
+        {
+            (int)QeStructId.BsGreeks,
+            typeof(BlackScholesGreeks).AssemblyQualifiedName!,
+            ["price", "delta", "gamma", "vega", "theta", "rho", "status", "reserved"]
+        },
+        {
+            (int)QeStructId.IvInput,
+            typeof(ImpliedVolInput).AssemblyQualifiedName!,
+            ["spot", "strike", "rate", "dividendYield", "expiryYears", "price", "optionType", "reserved"]
+        },
+        { (int)QeStructId.IvOutput, typeof(ImpliedVolOutput).AssemblyQualifiedName!, ["volatility", "status", "iterations"] },
+        { (int)QeStructId.LatticeInput, typeof(LatticeInput).AssemblyQualifiedName!, ["option", "steps", "exercise"] },
+        {
+            (int)QeStructId.McConfig,
+            typeof(QeMcConfig).AssemblyQualifiedName!,
+            ["StructSize", "Flags", "Paths", "Seed", "Replications", "Steps"]
+        },
+        { (int)QeStructId.McResult, typeof(MonteCarloResult).AssemblyQualifiedName!, ["price", "stdError", "paths", "seed"] },
+        { (int)QeStructId.CovConfig, typeof(QeCovConfig).AssemblyQualifiedName!, ["StructSize", "Method", "EwmaLambda"] },
+        {
+            (int)QeStructId.VarEs,
+            typeof(VarEsResult).AssemblyQualifiedName!,
+            ["valueAtRisk", "expectedShortfall", "observations", "seed"]
+        },
+        {
+            (int)QeStructId.OptConfig,
+            typeof(QeOptConfig).AssemblyQualifiedName!,
+            ["StructSize", "Method", "RiskAversion", "Tolerance", "MaxIterations", "Reserved"]
+        },
+        { (int)QeStructId.OptResult, typeof(QeOptResult).AssemblyQualifiedName!, ["Objective", "Iterations", "Converged"] },
+        {
+            (int)QeStructId.RebalanceAsset,
+            typeof(RebalanceAsset).AssemblyQualifiedName!,
+            ["price", "targetWeight", "currentQuantity", "lotSize"]
+        },
+        {
+            (int)QeStructId.RebalanceConfig,
+            typeof(QeRebalanceConfig).AssemblyQualifiedName!,
+            ["StructSize", "Reserved", "Cash", "CashBuffer", "MinTradeValue", "FeeMin", "FeeRate"]
+        },
+        {
+            (int)QeStructId.RebalanceTrade,
+            typeof(RebalanceTrade).AssemblyQualifiedName!,
+            ["targetQuantity", "tradeQuantity", "tradeValue", "fee", "finalWeight"]
+        },
+        {
+            (int)QeStructId.RebalanceSummary,
+            typeof(RebalanceSummary).AssemblyQualifiedName!,
+            ["portfolioValue", "cashAfter", "totalFees", "trackingError", "trades", "feasible"]
+        },
     };
 
     [Theory]

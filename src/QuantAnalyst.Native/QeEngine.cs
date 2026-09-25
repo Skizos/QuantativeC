@@ -5,7 +5,7 @@ namespace QuantAnalyst.Native;
 /// <summary>
 /// A native QuantEngine instance. Thread-safe for concurrent pricing calls; dispose once.
 /// </summary>
-public sealed class QeEngine : IDisposable
+public sealed partial class QeEngine : IDisposable
 {
     private readonly QeEngineHandle handle;
 
@@ -62,4 +62,31 @@ public sealed class QeEngine : IDisposable
 
     /// <inheritdoc/>
     public void Dispose() => handle.Dispose();
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(handle.IsClosed, this);
+
+    private static void RequireSameLength(int inputs, int outputs, string outputName)
+    {
+        if (inputs != outputs)
+        {
+            throw new ArgumentException($"{outputName}.Length ({outputs}) must equal inputs.Length ({inputs}).", outputName);
+        }
+    }
+
+    private static void RequireLength(int actual, int expected, string name)
+    {
+        if (actual != expected)
+        {
+            throw new ArgumentException($"{name} must have {expected} elements, got {actual}.", name);
+        }
+    }
+
+    private static void RequireSquare(DenseMatrix matrix, int n, string name)
+    {
+        ArgumentNullException.ThrowIfNull(matrix, name);
+        if (matrix.Rows != n || matrix.Columns != n)
+        {
+            throw new ArgumentException($"{name} must be {n}x{n}, got {matrix.Rows}x{matrix.Columns}.", name);
+        }
+    }
 }

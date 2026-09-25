@@ -9,7 +9,7 @@ public static class QeAbi
     public const int ExpectedMajor = 1;
 
     /// <summary>The minimum <c>QE_ABI_MINOR</c> this assembly requires.</summary>
-    public const int ExpectedMinor = 0;
+    public const int ExpectedMinor = 1;
 
     private static readonly Lazy<Version> NativeVersionLazy = new(ReadNativeVersion);
 

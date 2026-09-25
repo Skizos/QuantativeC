@@ -43,4 +43,52 @@ internal static unsafe partial class QeNative
         BlackScholesOutput* outputs,
         long count,
         long* failedCount);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_bs_greeks_batch")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus BsGreeksBatch(QeEngineHandle engine, BlackScholesInput* inputs, BlackScholesGreeks* outputs, long count, long* failedCount);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_implied_vol_batch")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus ImpliedVolBatch(QeEngineHandle engine, ImpliedVolInput* inputs, ImpliedVolOutput* outputs, long count, long* failedCount);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_lattice_batch")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus LatticeBatch(QeEngineHandle engine, LatticeInput* inputs, BlackScholesOutput* outputs, long count, long* failedCount);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_mc_european")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus McEuropean(QeEngineHandle engine, QeMcConfig* config, BlackScholesInput* option, MonteCarloResult* result);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_covariance")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus Covariance(QeEngineHandle engine, QeCovConfig* config, double* returns, long observations, long assets, double* outCov, double* outShrinkage);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_var_es_historical")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus VarEsHistorical(double* returns, long count, double confidence, VarEsResult* result);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_var_es_parametric")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus VarEsParametric(double* weights, double* mean, double* cov, long assets, double confidence, VarEsResult* result);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_var_es_monte_carlo")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus VarEsMonteCarlo(QeEngineHandle engine, double* weights, double* mean, double* cov, long assets, long paths, ulong seed, double confidence, VarEsResult* result);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_betas")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus Betas(double* returns, double* index, long observations, long assets, double* outBetas);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_stress_pnl")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus StressPnl(double* values, double* shocks, long assets, long scenarios, double* outPnl);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_optimize")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus Optimize(QeEngineHandle engine, QeOptConfig* config, double* mu, double* cov, double* lower, double* upper, long assets, double* outWeights, QeOptResult* outResult);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_rebalance")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus Rebalance(QeRebalanceConfig* config, RebalanceAsset* assets, long count, RebalanceTrade* outTrades, RebalanceSummary* outSummary);
 }
