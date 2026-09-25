@@ -29,13 +29,15 @@ public sealed class BankIdLoginTests
         Assert.Contains("Confirm the login in the BankID app.", rig.Prompt.Statuses);
         Assert.Equal(1, rig.Prompt.Completions);
 
-        // Exactly one transaction; the login path, its same-origin redirect and the trading page were visited.
+        // Exactly one transaction; start page + its same-origin redirect, login path and trading page were visited.
         Assert.Equal(1, Count(rig.Server, AvanzaRoutes.BankIdStart.Path()));
         Assert.Equal(3, Count(rig.Server, AvanzaRoutes.BankIdCollect.Path()));
+        Assert.Equal(1, Count(rig.Server, rig.Server.StartPageRedirect, "GET"));
         Assert.Equal(1, Count(rig.Server, rig.Server.BankIdLoginPath, "GET"));
-        Assert.Equal(1, Count(rig.Server, rig.Server.BankIdLoginRedirect, "GET"));
         Assert.Equal(1, Count(rig.Server, AvanzaRoutes.TradingPage.Path(), "GET"));
-        Assert.Contains("hop-cookie", rig.Server.Requests.Last(r => r.PathAndQuery == AvanzaRoutes.TradingPage.Path()).Headers["Cookie"], StringComparison.Ordinal);
+        string cookies = rig.Server.Requests.Last(r => r.PathAndQuery == AvanzaRoutes.TradingPage.Path()).Headers["Cookie"];
+        Assert.Contains(FakeSecrets.SessionCookie, cookies, StringComparison.Ordinal); // set on the 302 hop
+        Assert.Contains("hop-cookie", cookies, StringComparison.Ordinal); // set by the login path
 
         // Reads now carry the token.
         Assert.True((await rig.Connection.Gateway.GetSessionHealthAsync(Ct)).LoggedIn);
@@ -85,7 +87,7 @@ public sealed class BankIdLoginTests
     [Fact]
     public async Task BankId_CrossOriginRedirectIsNotFollowed()
     {
-        var server = new FakeAvanza { BankIdLoginRedirect = "https://evil.example/steal" };
+        var server = new FakeAvanza { StartPageRedirect = "https://evil.example/steal" };
         using TestRig rig = Rig(server);
         await Assert.ThrowsAsync<LoginFailedException>(() => rig.Run(() => rig.Connection.Authenticator.LoginAsync(Ct)));
         Assert.DoesNotContain(server.Requests, r => r.PathAndQuery.Contains("steal", StringComparison.Ordinal));

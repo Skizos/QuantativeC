@@ -149,7 +149,8 @@ public sealed class CliAvanzaTests : IDisposable
         string live = Path.Combine(_root, "live");
         (int code, string output, string error) = Qa("probe", "--record-dir", live);
         Assert.True(code == 0, output + error);
-        Assert.Contains("RECORDED", output, StringComparison.Ordinal);
+        Assert.Contains("0 deal(s)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("DRIFT", output, StringComparison.Ordinal);
         Assert.Contains("Next: qa recordings sanitize", output, StringComparison.Ordinal);
 
         string recorded = Directory.GetDirectories(live).Single();

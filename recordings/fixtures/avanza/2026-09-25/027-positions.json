@@ -135,7 +135,7 @@
               "decimalPrecision": 2
             }
           },
-          "id": "900003193-346549",
+          "id": "rec-1",
           "superInterestApproved": false,
           "volume": {
             "value": 435,
@@ -191,7 +191,7 @@
             "unitType": "MONETARY",
             "decimalPrecision": 4
           },
-          "id": "900003193-SEK"
+          "id": "rec-2"
         }
       ],
       "withCreditAccount": false
@@ -199,6 +199,7 @@
   },
   "sanitized": {
     "tool": "qa recordings sanitize",
-    "amountsReplaced": true
+    "amountsReplaced": true,
+    "recordIdsReplaced": true
   }
 }

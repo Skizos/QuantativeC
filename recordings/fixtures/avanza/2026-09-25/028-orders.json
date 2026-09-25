@@ -41,6 +41,7 @@
   },
   "sanitized": {
     "tool": "qa recordings sanitize",
-    "amountsReplaced": true
+    "amountsReplaced": true,
+    "recordIdsReplaced": true
   }
 }

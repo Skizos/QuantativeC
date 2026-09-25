@@ -16,7 +16,7 @@ namespace QuantAnalyst.Avanza.Mapping;
 /// timestamps become UTC. Values the DTO allows but the domain cannot interpret (an unknown side, a non-integral
 /// volume, an unparseable date) raise <see cref="SchemaDriftException"/> with the JSON path — never a guess.
 /// </summary>
-internal static class AvanzaMapper
+internal static partial class AvanzaMapper
 {
     public static SessionHealth ToSessionHealth(SessionInfoDto dto, DateTimeOffset now) => new(dto.User.LoggedIn, now);
 
@@ -39,7 +39,16 @@ internal static class AvanzaMapper
             a.AvailableForPurchase,
             a.IsTradable,
             a.HasCredit,
+            a.IsDiscretionaryAccount,
             [.. (a.CurrencyBalances ?? []).Select(c => new CurrencyBalance(c.Currency, c.Balance))]))];
+
+    /// <summary>Only an empty deal list can be mapped until a recording shows what a deal looks like.</summary>
+    public static IReadOnlyList<BrokerDeal> ToDeals(DealsDto dto) =>
+        dto.Deals.Count == 0
+            ? []
+            : throw new EndpointNotModelledException(
+                AvanzaRoutes.Deals.Name,
+                $"{dto.Deals.Count} deal(s) returned, but the deal fields have not been recorded yet; run 'qa probe' and share the sanitized recording");
 
     public static PortfolioSnapshot ToPortfolio(PositionsDto dto, AccountId? filter, DateTimeOffset now)
     {
@@ -163,8 +172,8 @@ internal static class AvanzaMapper
             PositiveOrNull(q.VolumeWeightedAveragePrice),
             q.TotalVolumeTraded ?? 0m,
             q.TotalValueTraded ?? 0m,
-            ParseTimestamp(q.TimeOfLast, route, MarketDataDto.Version, "$.quote.timeOfLast"),
-            ParseTimestamp(q.Updated, route, MarketDataDto.Version, "$.quote.updated"),
+            ParseTimestamp(q.TimeOfLast, route, MarketDataDto.Version, "$.quote.timeOfLast", naiveIsStockholm: true),
+            ParseTimestamp(q.Updated, route, MarketDataDto.Version, "$.quote.updated", naiveIsStockholm: true),
             depth,
             ParseTimestamp(dto.OrderDepth.ReceivedTime, route, MarketDataDto.Version, "$.orderDepth.receivedTime"),
             now);
@@ -241,8 +250,13 @@ internal static class AvanzaMapper
             ? (int)value
             : throw Drift(route, version, DtoTier.A, path, "expected a positive whole number");
 
-    /// <summary>Epoch milliseconds (number) or ISO-8601 with an explicit offset; null/absent ⇒ null; anything else ⇒ drift.</summary>
-    internal static DateTimeOffset? ParseTimestamp(JsonElement? element, AvanzaRoute route, string version, string path)
+    /// <summary>
+    /// Epoch milliseconds (number) or ISO-8601 with an explicit offset. With <paramref name="naiveZone"/> set, an ISO
+    /// timestamp without an offset is read in that zone. This is only done for routes where a recording proved the
+    /// zone (marketdata: Europe/Stockholm, see <see cref="MarketTime"/>). null/absent ⇒ null; anything else ⇒ drift.
+    /// </summary>
+    internal static DateTimeOffset? ParseTimestamp(
+        JsonElement? element, AvanzaRoute route, string version, string path, bool naiveIsStockholm = false)
     {
         if (element is not { } e || e.ValueKind == JsonValueKind.Null)
         {
@@ -261,7 +275,19 @@ internal static class AvanzaMapper
             return parsed.ToUniversalTime();
         }
 
-        throw Drift(route, version, DtoTier.A, path, "expected epoch milliseconds or an ISO-8601 timestamp with offset");
+        if (naiveIsStockholm
+            && e.ValueKind == JsonValueKind.String
+            && DateTime.TryParseExact(e.GetString(), NaiveIsoFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime local))
+        {
+            return MarketTime.TryStockholmToUtc(local, out DateTimeOffset utc)
+                ? utc
+                : throw Drift(route, version, DtoTier.A, path, "Stockholm local time is ambiguous or invalid (DST change)");
+        }
+
+        throw Drift(route, version, DtoTier.A, path,
+            naiveIsStockholm
+                ? "expected epoch milliseconds or an ISO-8601 timestamp (with offset, or Stockholm local time)"
+                : "expected epoch milliseconds or an ISO-8601 timestamp with offset");
     }
 
     /// <summary>yyyy-MM-dd, or an ISO timestamp whose date part is used; null/absent ⇒ null; anything else ⇒ drift.</summary>
@@ -310,9 +336,34 @@ internal static class AvanzaMapper
         return time.EndsWith('Z') || time.Contains('+', StringComparison.Ordinal) || time.Contains('-', StringComparison.Ordinal);
     }
 
-    /// <summary>Tier B string numbers ("194.55", "null", ""): parsed with invariant culture, else null.</summary>
-    private static decimal? ParseLooseDecimal(string? text) =>
-        decimal.TryParse(text, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal v) ? v : null;
+    private static readonly string[] NaiveIsoFormats =
+        ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.f", "yyyy-MM-dd'T'HH:mm:ss.ff", "yyyy-MM-dd'T'HH:mm:ss.fff", "yyyy-MM-dd'T'HH:mm:ss.ffffff"];
+
+    /// <summary>
+    /// Tier B string numbers. Search prices come Swedish-formatted ("94,96", seen live 2026-09-25) or with a dot.
+    /// Only <c>-?digits[,|.]digits</c> is accepted (spaces removed); "null", "" or anything ambiguous ⇒ null, never a
+    /// silently wrong value such as 9496.
+    /// </summary>
+    internal static decimal? ParseLooseDecimal(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        string s = text.Replace(" ", string.Empty, StringComparison.Ordinal).Replace("\u00a0", string.Empty, StringComparison.Ordinal);
+        if (!LooseDecimal().IsMatch(s))
+        {
+            return null;
+        }
+
+        return decimal.TryParse(s.Replace(',', '.'), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal v)
+            ? v
+            : null;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^-?[0-9]+([.,][0-9]+)?$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex LooseDecimal();
 
     internal static SchemaDriftException Drift(AvanzaRoute route, string version, DtoTier tier, string path, string detail) =>
         new(route.Name, version, tier, [path], detail);

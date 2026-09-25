@@ -11,7 +11,10 @@ public sealed record Account(
     decimal TotalValue,
     decimal BuyingPower);
 
-/// <summary>A tradable account with what is available for purchase (the cash check input).</summary>
+/// <summary>
+/// A tradable account with what is available for purchase (the cash check input). <see cref="IsDiscretionary"/>
+/// is null when the broker didn't say; the order path (Phase 6) treats null like true and refuses to trade.
+/// </summary>
 public sealed record TradingAccount(
     AccountId Id,
     string Name,
@@ -19,6 +22,7 @@ public sealed record TradingAccount(
     decimal AvailableForPurchase,
     bool IsTradable,
     bool HasCredit,
+    bool? IsDiscretionary,
     IReadOnlyList<CurrencyBalance> CurrencyBalances);
 
 public sealed record CurrencyBalance(string Currency, decimal Balance);

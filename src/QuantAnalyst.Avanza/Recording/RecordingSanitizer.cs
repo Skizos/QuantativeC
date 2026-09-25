@@ -58,6 +58,10 @@ public static partial class RecordingSanitizer
         "accounts-overview", "trading-accounts", "positions", "orders", "deals", "transactions",
     };
 
+    // Identifiers of the owner's own records (transactions, positions, orders, deals) on personal routes. Instrument
+    // and orderbook ids are public and stay; account ids have their own mapping.
+    private static readonly HashSet<string> RecordIdKeys = new(StringComparer.Ordinal) { "id", "orderId", "dealId" };
+
     // Structural numbers kept even on personal routes.
     private static readonly HashSet<string> KeepNumberKeys = new(StringComparer.Ordinal)
     {
@@ -95,10 +99,13 @@ public static partial class RecordingSanitizer
         var accountIds = new SortedSet<string>(StringComparer.Ordinal);
         var urlKeys = new SortedSet<string>(StringComparer.Ordinal);
         var names = new SortedSet<string>(StringComparer.Ordinal);
+        var recordIds = new SortedSet<string>(StringComparer.Ordinal);
         foreach ((_, JsonNode node) in documents)
         {
-            Collect(node["response"]?["body"], null, accountIds, urlKeys, names);
-            Collect(node["request"]?["body"], null, accountIds, urlKeys, names);
+            bool personal = PersonalRoutes.Contains(node["route"]?.GetValue<string>() ?? string.Empty);
+            var sets = new IdSets(accountIds, urlKeys, names, personal ? recordIds : null);
+            Collect(node["response"]?["body"], null, sets);
+            Collect(node["request"]?["body"], null, sets);
         }
 
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -119,6 +126,12 @@ public static partial class RecordingSanitizer
         foreach (string name in names)
         {
             map.TryAdd(name, string.Create(CultureInfo.InvariantCulture, $"Account {++n}"));
+        }
+
+        n = 0;
+        foreach (string id in recordIds)
+        {
+            map.TryAdd(id, string.Create(CultureInfo.InvariantCulture, $"rec-{++n}"));
         }
 
         // Pass 2: rewrite.
@@ -167,7 +180,8 @@ public static partial class RecordingSanitizer
                 }
             }
 
-            foreach (string id in accountIds)
+            // An id that maps to itself is already a sanitized fake (re-sanitizing a fixture folder is idempotent).
+            foreach (string id in accountIds.Where(id => map[id] != id))
             {
                 if (id.Length >= 4 && text.Contains(id, StringComparison.Ordinal))
                 {
@@ -203,8 +217,13 @@ public static partial class RecordingSanitizer
         public void Count(string rule) => Counts[rule] = Counts.GetValueOrDefault(rule) + 1;
     }
 
-    private static void Collect(JsonNode? node, string? key, SortedSet<string> accountIds, SortedSet<string> urlKeys, SortedSet<string> names)
+    private sealed record IdSets(SortedSet<string> AccountIds, SortedSet<string> UrlKeys, SortedSet<string> Names, SortedSet<string>? RecordIds);
+
+    private static void Collect(JsonNode? node, string? key, IdSets sets)
     {
+        SortedSet<string> accountIds = sets.AccountIds;
+        SortedSet<string> urlKeys = sets.UrlKeys;
+        SortedSet<string> names = sets.Names;
         switch (node)
         {
             case JsonObject obj:
@@ -225,6 +244,10 @@ public static partial class RecordingSanitizer
                         {
                             names.Add(s);
                         }
+                        else if (sets.RecordIds is not null && RecordIdKeys.Contains(k) && key is not ("instrument" or "orderbook"))
+                        {
+                            sets.RecordIds.Add(s);
+                        }
                     }
                     else if (k == "accountIds" && v is JsonArray ids)
                     {
@@ -241,7 +264,7 @@ public static partial class RecordingSanitizer
                         names.Add(accountName); // orders: account.name = { value }
                     }
 
-                    Collect(v, k, accountIds, urlKeys, names);
+                    Collect(v, k, sets);
                 }
 
                 break;
@@ -249,7 +272,7 @@ public static partial class RecordingSanitizer
                 foreach (JsonNode? item in arr)
                 {
                     // Root arrays of accounts (trading-accounts) carry accountId directly.
-                    Collect(item, key ?? "accounts", accountIds, urlKeys, names);
+                    Collect(item, key ?? "accounts", sets);
                 }
 
                 break;

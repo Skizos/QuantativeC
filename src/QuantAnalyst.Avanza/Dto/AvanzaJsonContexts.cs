@@ -18,6 +18,7 @@ namespace QuantAnalyst.Avanza.Dto;
 [JsonSerializable(typeof(List<TradingAccountDto>))]
 [JsonSerializable(typeof(PositionsDto))]
 [JsonSerializable(typeof(OrdersDto))]
+[JsonSerializable(typeof(DealsDto))]
 [JsonSerializable(typeof(OrderbookDto))]
 [JsonSerializable(typeof(MarketDataDto))]
 internal sealed partial class AvanzaTierAContext : JsonSerializerContext;

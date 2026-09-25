@@ -107,6 +107,19 @@ This is the first contact with the real API. The list below has **field names on
 | `trading-critical/rest/orderbook/{id}` | drift | `orderbookStatus` is **absent** (it was required in the Go model) |
 | marketdata, price chart | not reached | the probe used to stop at an orderbook failure; it now continues with the search hit |
 
+**Second run and sanitized recording** (`recordings/fixtures/avanza/2026-09-25/`, parsed strictly on every build by `RecordedFixtureTests`):
+- **Account fields:** `autoDistribution` and `isDiscretionaryAccount` are booleans. `interestRates` is `{currency: {deposit, loan}}` of value objects. `creditAccountClearingAccountNumber` was null everywhere.
+- **Account names:** `name.defaultName` is the account number, and the sanitizer replaces it.
+- **Timestamps:** marketdata `quote.timeOfLast`/`updated` are ISO **without offset**, in **Europe/Stockholm local time**. Proof: `timeOfLast` "17:29:40" equals `orderDepth.receivedTime` and `trades[].dealTime` (epoch ms) of 15:29:40Z. Transaction `date` is `yyyy-MM-ddT00:00:00`.
+- **Search prices** are Swedish-formatted strings (`"94,96"`). The search response also echoes `searchFilter`.
+- **Deals:** `{"deals": [], "fundDeals": []}`. The element fields are still unknown until the first fill.
+- **ERIC B orderbook:** 17 tick bands (0.02 at 50–99.98 SEK).
+- **BankID:**
+  - `GET /` answers **302** plus `AZAPERSISTENCE`.
+  - Start returns 202 plus an `AZABANKIDTRANSID` cookie.
+  - Pending collect carries `hint` (not `hintCode`), `rfa` and `state`.
+  - **The login path sets `AZACSRF`** (plus `csid`, `cstoken`) and `X-SecurityToken`. The trading page sets no cookie, although the reference client visits it; we keep that visit.
+
 ## 4. Order endpoints (Phase 6 fixtures only; Claude never calls them)
 
 | Purpose | Method + path | Source / date | Body |

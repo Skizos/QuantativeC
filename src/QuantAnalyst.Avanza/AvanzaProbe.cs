@@ -91,8 +91,14 @@ public sealed class AvanzaProbe
             (AvanzaRoutes.Orders.Name, async () => $"{(await _gateway.GetOpenOrdersAsync(ct).ConfigureAwait(false)).Count} open order(s)"),
             (AvanzaRoutes.Deals.Name, async () =>
             {
-                byte[] raw = await _gateway.GetRawAsync(AvanzaRoutes.Deals, ct).ConfigureAwait(false);
-                return $"RECORDED {raw.Length} bytes (not modelled yet)";
+                try
+                {
+                    return $"{(await _gateway.GetDealsAsync(ct).ConfigureAwait(false)).Count} deal(s)";
+                }
+                catch (EndpointNotModelledException ex)
+                {
+                    return $"RECORDED ({ex.Message})";
+                }
             }),
             (AvanzaRoutes.Transactions.Name, async () => $"{(await _gateway.GetTransactionsAsync(today.AddDays(-30), today, ct).ConfigureAwait(false)).Count} transaction(s) in 30 days"),
             (AvanzaRoutes.Search.Name, async () =>

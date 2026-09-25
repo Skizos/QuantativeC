@@ -78,7 +78,9 @@ public sealed partial class AvanzaAuthenticator
                     EnsureBankIdStep(collected, "collect");
                     using JsonDocument doc = await ReadJsonAsync(collected, AvanzaRoutes.BankIdCollect, ct).ConfigureAwait(false);
                     string state = RequireString(doc.RootElement, "state", AvanzaRoutes.BankIdCollect);
-                    string? hint = OptionalString(doc.RootElement, "hintCode");
+                    // Live pending responses carry "hint" rather than "hintCode" (recording 2026-09-25); both are
+                    // only ever mapped to fixed texts via DescribeHint, never printed raw.
+                    string? hint = OptionalString(doc.RootElement, "hintCode") ?? OptionalString(doc.RootElement, "hint");
                     switch (state)
                     {
                         case "COMPLETE":

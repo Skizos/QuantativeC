@@ -44,7 +44,6 @@ internal static class AvanzaCommands
 {
     public const int ExitHalt = 3;
     public const int ExitLocked = 4;
-    private static readonly TimeZoneInfo Stockholm = FindStockholm();
 
     private sealed class Common
     {
@@ -610,17 +609,5 @@ internal static class AvanzaCommands
     private static string Opt(decimal? value) => value is { } v ? Num(v) : "-";
 
     private static string Local(DateTimeOffset utc) =>
-        TimeZoneInfo.ConvertTime(utc, Stockholm).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-
-    private static TimeZoneInfo FindStockholm()
-    {
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById("Europe/Stockholm");
-        }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
-        {
-            return TimeZoneInfo.Utc;
-        }
-    }
+        MarketTime.ToStockholm(utc).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
 }

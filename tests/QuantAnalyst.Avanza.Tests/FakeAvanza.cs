@@ -75,8 +75,8 @@ internal sealed class FakeAvanza : HttpMessageHandler
 
     public string BankIdLoginPath { get; set; } = "/_api/authentication/v2/sessions/bankid/tx-1/" + FakeSecrets.CustomerId;
 
-    /// <summary>Where the login path redirects (a same-origin hop by default).</summary>
-    public string BankIdLoginRedirect { get; set; } = "/min-ekonomi/oversikt.html";
+    /// <summary>Where the start page redirects (live: a same-origin 302 that sets AZAPERSISTENCE first).</summary>
+    public string StartPageRedirect { get; set; } = "/start";
 
     private int _collects;
     private int _restarts;
@@ -162,9 +162,19 @@ internal sealed class FakeAvanza : HttpMessageHandler
             return r;
         }
 
+        // Mirrors the owner's recording (recordings/fixtures/avanza/2026-09-25): "/" answers 302 + AZAPERSISTENCE,
+        // the login path answers 200 + AZACSRF/csid/cstoken + X-SecurityToken, the trading page sets no cookie.
         if (request.Method == HttpMethod.Get && path == AvanzaRoutes.StartPage.Path())
         {
-            return Html($"AZAPERSISTENCE={FakeSecrets.SessionCookie}; Path=/; Secure; HttpOnly");
+            var r = new HttpResponseMessage(HttpStatusCode.Found) { Content = new StringContent("moved", Encoding.UTF8, "text/html") };
+            r.Headers.Location = new Uri(StartPageRedirect, UriKind.RelativeOrAbsolute);
+            r.Headers.Add("Set-Cookie", $"AZAPERSISTENCE={FakeSecrets.SessionCookie}; Path=/; Secure; HttpOnly");
+            return r;
+        }
+
+        if (request.Method == HttpMethod.Get && path == StartPageRedirect)
+        {
+            return Html();
         }
 
         if (path == AvanzaRoutes.BankIdStart.Path())
@@ -200,21 +210,19 @@ internal sealed class FakeAvanza : HttpMessageHandler
 
         if (request.Method == HttpMethod.Get && path == BankIdLoginPath)
         {
-            var r = new HttpResponseMessage(HttpStatusCode.Found);
-            r.Headers.Location = new Uri(BankIdLoginRedirect, UriKind.RelativeOrAbsolute);
+            _bankIdLoggedIn = true;
+            HttpResponseMessage r = Json($$"""
+                {"pushSubscriptionId":"{{FakeSecrets.PushSubscriptionId}}","customerSessionToken":"cst-FAKE","authenticationSession":"{{FakeSecrets.AuthenticationSession}}","customerId":"{{FakeSecrets.CustomerId}}","registrationComplete":true}
+                """);
+            r.Headers.Add("Set-Cookie", $"AZACSRF={FakeSecrets.CsrfCookie}; Path=/; Secure");
             r.Headers.Add("Set-Cookie", "csid=hop-cookie; Path=/");
+            r.Headers.Add("X-SecurityToken", FakeSecrets.CsrfCookie);
             return r;
-        }
-
-        if (request.Method == HttpMethod.Get && path == BankIdLoginRedirect)
-        {
-            return Html();
         }
 
         if (request.Method == HttpMethod.Get && path == AvanzaRoutes.TradingPage.Path())
         {
-            _bankIdLoggedIn = true;
-            return Html($"AZACSRF={FakeSecrets.CsrfCookie}; Path=/; Secure");
+            return Html();
         }
 
         return null;
@@ -276,7 +284,7 @@ internal sealed class FakeAvanza : HttpMessageHandler
             _ when p == AvanzaRoutes.TradingAccounts.Path() => Json(Fixtures.Bytes("trading-accounts.json")),
             _ when p == AvanzaRoutes.Positions.Path() => Json(Fixtures.Bytes("positions.json")),
             _ when p == AvanzaRoutes.Orders.Path() => Json(Fixtures.Bytes("orders.json")),
-            _ when p == AvanzaRoutes.Deals.Path() => Json("""{"deals":[{"dealId":"d-1","accountId":"9990001"}]}"""),
+            _ when p == AvanzaRoutes.Deals.Path() => Json("""{"deals":[],"fundDeals":[]}"""), // as recorded 2026-09-25
             _ when p == AvanzaRoutes.Transactions.Path() => Json(Fixtures.Bytes("transactions.json")),
             _ when p == AvanzaRoutes.Search.Path() => Json(Fixtures.Bytes("search-eric.json")),
             _ when p == AvanzaRoutes.Orderbook.Path("5240") => Json(Fixtures.Bytes("orderbook-5240.json")),

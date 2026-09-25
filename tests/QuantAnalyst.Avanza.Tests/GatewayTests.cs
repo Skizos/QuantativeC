@@ -74,11 +74,15 @@ public sealed class GatewayTests
     }
 
     [Fact]
-    public async Task Deals_AreNotModelledYet()
+    public async Task Deals_EmptyListMaps_NonEmptyIsNotModelledYet()
     {
         using var rig = new TestRig();
-        await Assert.ThrowsAsync<EndpointNotModelledException>(() => rig.Connection.Gateway.GetDealsAsync(Ct));
-        Assert.Empty(rig.Server.Requests);
+        await rig.Connection.Authenticator.LoginAsync(Ct);
+        Assert.Empty(await rig.Connection.Gateway.GetDealsAsync(Ct));
+
+        rig.Server.On(AvanzaRoutes.Deals, _ => FakeAvanza.Json("""{"deals":[{"dealId":"d-1"}],"fundDeals":[]}"""));
+        var ex = await Assert.ThrowsAsync<EndpointNotModelledException>(() => rig.Connection.Gateway.GetDealsAsync(Ct));
+        Assert.Contains("1 deal(s)", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -103,8 +107,8 @@ public sealed class GatewayTests
         ProbeResult positions = results.Single(r => r.Route == "positions");
         Assert.Equal(ProbeStatus.Drift, positions.Status);
         Assert.Contains("$.brandNewField", positions.Detail, StringComparison.Ordinal);
-        Assert.Equal(ProbeStatus.Recorded, results.Single(r => r.Route == "deals").Status);
-        Assert.All(results.Where(r => r.Route is not ("positions" or "deals")), r => Assert.Equal(ProbeStatus.Ok, r.Status));
+        Assert.Equal("0 deal(s)", results.Single(r => r.Route == "deals").Detail);
+        Assert.All(results.Where(r => r.Route is not "positions"), r => Assert.Equal(ProbeStatus.Ok, r.Status));
     }
 
     [Fact]
@@ -159,6 +163,7 @@ public sealed class GatewayTests
         Assert.Contains(files, f => f.EndsWith("001-auth.usercredentials.json", StringComparison.Ordinal));
         Assert.Contains(files, f => f.EndsWith("-positions.json", StringComparison.Ordinal));
         Assert.Contains(files, f => f.EndsWith("-deals.json", StringComparison.Ordinal));
+        Assert.Contains(files, f => f.EndsWith("-transactions.json", StringComparison.Ordinal));
 
         using (JsonDocument login = JsonDocument.Parse(File.ReadAllText(files[0])))
         {

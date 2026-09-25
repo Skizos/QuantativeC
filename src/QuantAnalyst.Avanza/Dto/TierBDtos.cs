@@ -31,7 +31,7 @@ internal sealed class SearchPaginationDto
 
 internal sealed class SearchResponseDto
 {
-    public const string Version = "search/2026-09-25";
+    public const string Version = "search/2026-09-25.2";
 
     public int? TotalNumberOfHits { get; init; }
 
@@ -42,6 +42,9 @@ internal sealed class SearchResponseDto
     public JsonElement? Facets { get; init; }
 
     public JsonElement? Pagination { get; init; }
+
+    // Echo of the request filter; seen live 2026-09-25.
+    public JsonElement? SearchFilter { get; init; }
 }
 
 internal sealed class SearchHitDto
@@ -85,7 +88,7 @@ internal sealed class SearchHitDto
     public string? HighlightedSubType { get; init; }
 }
 
-/// <summary>Search prices arrive as strings (Qluxzz: "most values are returned as strings").</summary>
+/// <summary>Search prices arrive as Swedish-formatted strings, e.g. "94,96" (live 2026-09-25); see ParseLooseDecimal.</summary>
 internal sealed class SearchPriceDto
 {
     public string? Last { get; init; }

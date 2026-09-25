@@ -211,13 +211,13 @@ After the gate commands pass, I stop and give you the exact read-only commands t
 
 | Gate item | Result |
 |---|---|
-| Fixture tests | green: `dotnet test --solution QuantAnalyst.sln` 252 passed + 1 skipped (the skipped one is the Windows Credential Manager round trip, which runs on the Windows CI job). Breakdown: Core 25, Avanza 139 (23 of them for BankID), Native 61, Analytics/CLI 28. |
+| Fixture tests | green: `dotnet test --solution QuantAnalyst.sln` 268 passed + 1 skipped (the skipped one is the Windows Credential Manager round trip, which runs on the Windows CI job). Breakdown: Core 25, Avanza 155 (incl. 23 BankID and 15 on the real recording), Native 61, Analytics/CLI 28. |
 | Native unchanged | `ctest --preset dev` 107/107 |
 | Log scan | green: `GatewayTests.LogScan_TraceLogsOfAFullRunContainNoSecretsOrFullAccountIds`, `Recording_KeepsStructureButNeverCredentialsTokensOrCookieValues`, and every `CliAvanzaTests` run scans stdout/stderr |
 | Guardrail self-test | 29/29 (6 new money-transfer cases) |
 | Format | `dotnet format --verify-no-changes` and `clang-format --dry-run -Werror` clean |
 | ADR 0004 | recorded (Accepted, 2026-09-25) |
-| **Your manual read-only run** | **first run done 2026-09-25**: BankID login, session, positions, orders and transactions OK; drift on accounts, trading accounts and orderbook (avanza-endpoints.md §3a). DTOs updated to `.2`. Waiting for the second run plus sanitized recordings. |
+| **Your manual read-only run** | **2026-09-25, two runs:**<br>• Run 1: drift on accounts, trading accounts and orderbook. Fixed in DTO `.2`.<br>• Run 2: everything OK except marketdata `timeOfLast`, which is Stockholm local time. Fixed, backed by the recording.<br>• The sanitized recording is committed and parsed strictly on every build. The step-10 commands are still to run on the final code. |
 
 **Test map:**
 
@@ -233,4 +233,5 @@ After the gate commands pass, I stop and give you the exact read-only commands t
 | `/_api/` only in routes, no order/stop-loss/transfer routes, DTOs internal | `ArchitectureTests` |
 | CLI verbs, exit codes, output masking | `CliAvanzaTests` |
 | BankID: refreshing QR, one transaction, cancel/expiry, loginPath validation, cross-origin redirect refused, unknown state = drift, personal data never logged or recorded, independence from the TOTP lock | `BankIdLoginTests` |
+| The owner's real recording parses strictly and maps: Stockholm-local timestamps, "94,96" prices, empty deals, 17-band tick table, BankID field names | `RecordedFixtureTests` |
 | QR drawing reproduces the QR module matrix exactly. QRCoder's own output was decoded once with zxing-cpp (an independent decoder) and gave the exact payload at EC level L. | `CliAvanzaTests.BankIdQrRendering_ReproducesTheQrModulesExactly` |

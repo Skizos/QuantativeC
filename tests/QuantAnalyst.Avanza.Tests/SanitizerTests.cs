@@ -32,7 +32,7 @@ public sealed class SanitizerTests
             Assert.Equal(Directory.GetFiles(live).Length, files.Length);
             string all = string.Join('\n', files.Select(File.ReadAllText));
 
-            foreach (string raw in new[] { "9990001", "9990002", "Algo ISK", "url-1", "url-2", "10629.0", "12345.67", "CLR-FAKE-4411", "8327-9" })
+            foreach (string raw in new[] { "9990001", "9990002", "Algo ISK", "url-1", "url-2", "10629.0", "12345.67", "CLR-FAKE-4411", "8327-9", "\"tx-1\"", "pos-1", "700000001" })
             {
                 Assert.DoesNotContain(raw, all, StringComparison.Ordinal);
             }
@@ -40,6 +40,8 @@ public sealed class SanitizerTests
             Assert.Contains("900001001", all, StringComparison.Ordinal); // fake id keeps the last 3 digits
             Assert.Contains("Account ", all, StringComparison.Ordinal);
             Assert.Contains("SE0000108656", all, StringComparison.Ordinal); // instruments are not personal
+            Assert.Contains("inst-5240", all, StringComparison.Ordinal); // instrument ids stay
+            Assert.Contains("\"rec-", all, StringComparison.Ordinal); // own record ids are replaced
 
             string market = File.ReadAllText(files.Single(f => f.EndsWith("-marketdata.json", StringComparison.Ordinal)));
             Assert.Contains("70.84", market, StringComparison.Ordinal);
@@ -78,9 +80,10 @@ public sealed class SanitizerTests
         var server = new FakeAvanza();
         server.On(AvanzaRoutes.Positions, _ => FakeAvanza.Json(Fixtures.Mutate("positions.json", n =>
         {
-            n["withOrderbook"]![0]!["id"] = FakeSecrets.Password; // pretend a secret ended up in a body
-            n["cashPositions"]![0]!["id"] = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.c2lnbmF0dXJl";
-            n["cashPositions"]![1]!["id"] = "Qm9vbXRva2VuVGhhdExvb2tzUmFuZG9tMTIzNDU2Nzg5MEFCQ0RFRg==";
+            // Pretend secrets ended up in fields no sanitizer rule knows (ids would be replaced anyway).
+            n["withOrderbook"]![0]!["note"] = FakeSecrets.Password;
+            n["cashPositions"]![0]!["token"] = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.c2lnbmF0dXJl";
+            n["cashPositions"]![1]!["blob"] = "Qm9vbXRva2VuVGhhdExvb2tzUmFuZG9tMTIzNDU2Nzg5MEFCQ0RFRg==";
         })));
         (TestRig rig, string live) = await RecordProbe(server);
         using (rig)

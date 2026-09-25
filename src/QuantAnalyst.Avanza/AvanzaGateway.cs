@@ -73,10 +73,12 @@ internal sealed class AvanzaGateway(AvanzaApiClient api, TimeProvider time, Reda
         return AvanzaMapper.ToOrders(dto);
     }
 
-    public Task<IReadOnlyList<BrokerDeal>> GetDealsAsync(CancellationToken ct) =>
-        throw new EndpointNotModelledException(
-            AvanzaRoutes.Deals.Name,
-            "no maintained client models the current response; run 'qa probe' to record it so the DTO can be written");
+    public async Task<IReadOnlyList<BrokerDeal>> GetDealsAsync(CancellationToken ct)
+    {
+        DealsDto dto = await api.GetAsync(
+            AvanzaRoutes.Deals, AvanzaRoutes.Deals.Path(), AvanzaTierAContext.Default.DealsDto, DealsDto.Version, ct).ConfigureAwait(false);
+        return AvanzaMapper.ToDeals(dto);
+    }
 
     public async Task<IReadOnlyList<BrokerTransaction>> GetTransactionsAsync(DateOnly fromDate, DateOnly toDate, CancellationToken ct)
     {
@@ -129,9 +131,6 @@ internal sealed class AvanzaGateway(AvanzaApiClient api, TimeProvider time, Reda
             AvanzaRoutes.PriceChart, AvanzaRoutes.PriceChart.Path(id) + query, AvanzaTierBContext.Default.PriceChartDto, PriceChartDto.Version, ct).ConfigureAwait(false);
         return AvanzaMapper.ToBars(dto);
     }
-
-    /// <summary>Raw GET for routes that are recorded but not modelled yet (deals). Used by the probe only.</summary>
-    internal Task<byte[]> GetRawAsync(AvanzaRoute route, CancellationToken ct) => api.SendAsync(route, route.Path(), null, ct);
 
     /// <summary>"OneMonth" → "one_month", "FiveMinutes" → "five_minutes" (lower snake case, as the clients send).</summary>
     internal static string WireName(string pascal)

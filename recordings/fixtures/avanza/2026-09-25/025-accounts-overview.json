@@ -36,7 +36,7 @@
     "body": {
       "categories": [
         {
-          "id": "SPARANDE",
+          "id": "rec-9",
           "name": "Account 3ande",
           "totalValue": {
             "value": 562.1728,
@@ -147,7 +147,7 @@
           "savingsGoalView": null
         },
         {
-          "id": "BUFFERT",
+          "id": "rec-7",
           "name": "Buffert",
           "totalValue": {
             "value": 3.0000,
@@ -258,7 +258,7 @@
           "savingsGoalView": null
         },
         {
-          "id": "PENSION",
+          "id": "rec-8",
           "name": "Pension",
           "totalValue": {
             "value": 6,
@@ -270,7 +270,7 @@
           "savingsGoalView": null
         },
         {
-          "id": "BARN",
+          "id": "rec-5",
           "name": "Barnspar",
           "totalValue": {
             "value": 4,
@@ -282,7 +282,7 @@
           "savingsGoalView": null
         },
         {
-          "id": "BOENDE",
+          "id": "rec-6",
           "name": "Boende",
           "totalValue": {
             "value": 8,
@@ -297,7 +297,7 @@
       "accounts": [
         {
           "id": "900001987",
-          "categoryId": "SPARANDE",
+          "categoryId": "rec-9",
           "balance": {
             "value": 9.0000,
             "unit": "SEK",
@@ -493,7 +493,7 @@
         },
         {
           "id": "900003193",
-          "categoryId": "SPARANDE",
+          "categoryId": "rec-9",
           "balance": {
             "value": 8.7354,
             "unit": "SEK",
@@ -689,7 +689,7 @@
         },
         {
           "id": "900002019",
-          "categoryId": "BUFFERT",
+          "categoryId": "rec-7",
           "balance": {
             "value": 2.0000,
             "unit": "SEK",
@@ -889,6 +889,7 @@
   },
   "sanitized": {
     "tool": "qa recordings sanitize",
-    "amountsReplaced": true
+    "amountsReplaced": true,
+    "recordIdsReplaced": true
   }
 }
