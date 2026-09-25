@@ -1,6 +1,14 @@
 # qe_impl: all C++ engine code as a static library (unit tests link it directly).
 add_library(qe_impl STATIC
+    src/qe/core/interp.cpp
+    src/qe/core/math.cpp
+    src/qe/core/rng.cpp
+    src/qe/core/sobol.cpp
+    src/qe/core/stats.cpp
+    src/qe/pricing/binomial.cpp
     src/qe/pricing/black_scholes.cpp
+    src/qe/pricing/implied_vol.cpp
+    src/qe/pricing/monte_carlo.cpp
 )
 target_include_directories(qe_impl PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_features(qe_impl PUBLIC cxx_std_20)

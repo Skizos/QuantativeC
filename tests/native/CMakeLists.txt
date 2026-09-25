@@ -3,9 +3,18 @@ include(GoogleTest)
 
 # Unit tests for C++ internals (static qe_impl).
 add_executable(qe_unit_tests
+    core/math_test.cpp
+    core/root_test.cpp
+    core/rng_test.cpp
+    core/sobol_test.cpp
+    core/stats_test.cpp
     pricing/black_scholes_test.cpp
+    pricing/greeks_iv_test.cpp
+    pricing/lattice_mc_test.cpp
 )
 target_link_libraries(qe_unit_tests PRIVATE qe_impl GTest::gtest_main)
+# Generated reference values (tools/reference/phase2_reference.py) live under tests/native/reference.
+target_include_directories(qe_unit_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 qe_set_warnings(qe_unit_tests)
 gtest_discover_tests(qe_unit_tests DISCOVERY_MODE PRE_TEST TEST_PREFIX "unit.")
 

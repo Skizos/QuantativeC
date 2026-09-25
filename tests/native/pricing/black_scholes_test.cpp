@@ -9,7 +9,6 @@ namespace {
 
 using qe::pricing::bs_price;
 using qe::pricing::BsParams;
-using qe::pricing::norm_cdf;
 using qe::pricing::OptionType;
 using qe::pricing::validate;
 
@@ -122,16 +121,6 @@ TEST(BlackScholes, ValidateRejectsOutOfDomainInputs) {
     bad = ok;
     bad.type = static_cast<OptionType>(7);
     EXPECT_TRUE(validate(bad).has_value());
-}
-
-TEST(NormCdf, KnownValuesAndSymmetry) {
-    EXPECT_DOUBLE_EQ(norm_cdf(0.0), 0.5);
-    EXPECT_NEAR(norm_cdf(1.959963984540054), 0.975, 1e-15);
-    for (const double x : {0.1, 0.7, 1.3, 2.9, 5.0}) {
-        EXPECT_NEAR(norm_cdf(x) + norm_cdf(-x), 1.0, 1e-15);
-    }
-    // Lower tail keeps relative precision (erfc, not 1 + erf): N(-10) ≈ 7.6199e-24.
-    EXPECT_NEAR(norm_cdf(-10.0) / 7.619853024160527e-24, 1.0, 1e-12);
 }
 
 } // namespace
