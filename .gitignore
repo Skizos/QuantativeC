@@ -3,6 +3,7 @@ bin/
 obj/
 build/
 out/
+artifacts/
 vcpkg_installed/
 .vs/
 .vscode/

@@ -1,0 +1,93 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 28, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Dev (Debug, host compiler)",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (host compiler)",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "asan",
+      "displayName": "ASan + UBSan (clang, Debug)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "QE_SANITIZE": "ON",
+        "QE_STAGE_NATIVE": "OFF",
+        "QE_BUILD_BENCHMARKS": "OFF"
+      },
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "msvc-base",
+      "hidden": true,
+      "inherits": "base",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "msvc-dev",
+      "displayName": "MSVC Debug (run from a VS x64 developer shell; build.ps1 does this)",
+      "inherits": "msvc-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "msvc-release",
+      "displayName": "MSVC Release",
+      "inherits": "msvc-base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "asan", "configurePreset": "asan" },
+    { "name": "msvc-dev", "configurePreset": "msvc-dev" },
+    { "name": "msvc-release", "configurePreset": "msvc-release" }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    { "name": "dev", "inherits": "test-base", "configurePreset": "dev" },
+    { "name": "release", "inherits": "test-base", "configurePreset": "release" },
+    {
+      "name": "asan",
+      "inherits": "test-base",
+      "configurePreset": "asan",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=1:abort_on_error=1:strict_string_checks=1:detect_stack_use_after_return=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+      }
+    },
+    { "name": "msvc-dev", "inherits": "test-base", "configurePreset": "msvc-dev" },
+    { "name": "msvc-release", "inherits": "test-base", "configurePreset": "msvc-release" }
+  ]
+}

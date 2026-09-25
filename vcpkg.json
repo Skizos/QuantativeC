@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "quantengine",
+  "version": "0.1.0",
+  "description": "QuantAnalyst native engine (C++20) dependencies",
+  "builtin-baseline": "10541e317a660f4165ba4ac2851ab54a8d4577b1",
+  "dependencies": [
+    "gtest",
+    "benchmark"
+  ],
+  "features": {
+    "quantlib": {
+      "description": "QuantLib cross-checks for pricing tests (optional, heavy build)",
+      "dependencies": [
+        "quantlib"
+      ]
+    }
+  }
+}

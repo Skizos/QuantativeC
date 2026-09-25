@@ -1,0 +1,10 @@
+# Global sanitizer flags for the asan preset (applies to every target, including tests).
+if(QE_SANITIZE)
+    if(MSVC)
+        message(FATAL_ERROR "QE_SANITIZE is supported with clang/gcc only; use the asan preset on Linux.")
+    endif()
+    set(_qe_san_flags -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+    add_compile_options(${_qe_san_flags})
+    add_link_options(-fsanitize=address,undefined)
+    message(STATUS "QuantEngine: AddressSanitizer + UndefinedBehaviorSanitizer enabled")
+endif()

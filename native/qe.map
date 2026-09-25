@@ -1,0 +1,9 @@
+/* ELF version script: the qe shared library exports ONLY the qe_* C ABI (native/include/qe_api.h).
+   Everything else, including libstdc++ template instantiations that default to public visibility,
+   stays local. Verified by tests/native/check_exports.cmake. */
+{
+  global:
+    qe_*;
+  local:
+    *;
+};

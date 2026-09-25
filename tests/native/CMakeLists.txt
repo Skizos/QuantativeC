@@ -1,0 +1,30 @@
+find_package(GTest CONFIG REQUIRED)
+include(GoogleTest)
+
+# Unit tests for C++ internals (static qe_impl).
+add_executable(qe_unit_tests
+    pricing/black_scholes_test.cpp
+)
+target_link_libraries(qe_unit_tests PRIVATE qe_impl GTest::gtest_main)
+qe_set_warnings(qe_unit_tests)
+gtest_discover_tests(qe_unit_tests DISCOVERY_MODE PRE_TEST TEST_PREFIX "unit.")
+
+# ABI tests: only qe_api.h + the shared library, exactly like the .NET side sees it.
+# header_c_compat.c proves qe_api.h is valid C11.
+add_executable(qe_abi_tests
+    abi/abi_test.cpp
+    abi/header_c_compat.c
+)
+target_link_libraries(qe_abi_tests PRIVATE qe GTest::gtest_main)
+qe_set_warnings(qe_abi_tests)
+gtest_discover_tests(qe_abi_tests DISCOVERY_MODE PRE_TEST TEST_PREFIX "abi.")
+
+# Export surface check (ELF only): the dynamic symbol table must match qe_api.h exactly.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_NM)
+    add_test(NAME abi.exported_symbols_match_header
+        COMMAND "${CMAKE_COMMAND}"
+            "-DNM=${CMAKE_NM}"
+            "-DLIBRARY=$<TARGET_FILE:qe>"
+            "-DHEADER=${PROJECT_SOURCE_DIR}/native/include/qe_api.h"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/check_exports.cmake")
+endif()
