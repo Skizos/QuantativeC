@@ -1,0 +1,10 @@
+{
+  "ohlc": [
+    { "timestamp": 1790200800000, "open": 70.1, "close": 70.44, "low": 69.9, "high": 70.6, "totalVolumeTraded": 3100000 },
+    { "timestamp": 1790287200000, "open": 70.44, "close": 70.86, "low": 70.1, "high": 71.2, "totalVolumeTraded": 3456789.0 }
+  ],
+  "metadata": { "resolution": { "chartResolution": "DAY", "availableResolutions": [ "DAY", "WEEK" ] } },
+  "from": "2026-09-24",
+  "to": "2026-09-25",
+  "previousClosingPrice": 70.1
+}

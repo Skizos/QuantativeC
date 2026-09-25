@@ -1,0 +1,37 @@
+{
+  "transactions": [
+    {
+      "id": "tx-1",
+      "date": "2026-09-24",
+      "settlementDate": "2026-09-26",
+      "availabilityDate": null,
+      "tradeDate": "2026-09-24",
+      "account": { "id": "9990001", "name": "Algo ISK", "type": "INVESTERINGSSPARKONTO", "urlParameterId": "url-1" },
+      "orderbook": { "id": "5240", "flagCode": "SE", "name": "Ericsson B", "marketplace": "XSTO", "type": "STOCK", "currency": "SEK", "isin": "SE0000108656", "volumeFactor": 1 },
+      "instrumentName": "Ericsson B",
+      "description": "Köp",
+      "type": "BUY",
+      "backofficeType": "BUY",
+      "backofficeTypeText": "Köp",
+      "volume": { "value": 150, "unit": "st", "unitType": "NUMBER", "decimalPrecision": 0 },
+      "priceInTradedCurrency": { "value": 65.1234, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 4 },
+      "amount": { "value": -9768.51, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "onCreditAccount": false,
+      "commission": { "value": 39.0, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "currencyRate": null,
+      "noteId": "<redacted>",
+      "priceInTransactionCurrency": null,
+      "intraday": false,
+      "foreignTaxRate": null,
+      "isin": "SE0000108656",
+      "result": null,
+      "volumeFactor": 1,
+      "cancelled": false,
+      "cancelDate": null,
+      "verificationNumber": "<redacted>"
+    }
+  ],
+  "transactionsAfterFiltering": 1,
+  "transactionsFilter": null,
+  "firstTransactionDate": "2020-01-02"
+}

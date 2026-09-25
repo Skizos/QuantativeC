@@ -1,0 +1,57 @@
+{
+  "categories": [
+    {
+      "id": "cat-1",
+      "name": "Sparande",
+      "totalValue": { "value": 152340.55, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "performance": {},
+      "savingsGoalView": null
+    }
+  ],
+  "accounts": [
+    {
+      "id": "9990001",
+      "categoryId": "cat-1",
+      "balance": { "value": 12345.67, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "profit": {
+        "absolute": { "value": 1200.5, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+        "relative": { "value": 0.84, "unit": "percentage", "unitType": "PERCENTAGE", "decimalPrecision": 2 }
+      },
+      "type": "INVESTERINGSSPARKONTO",
+      "totalValue": { "value": 142340.55, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "buyingPower": { "value": 12345.67, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "buyingPowerWithoutCredit": { "value": 12345.67, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "depositInterestRate": null,
+      "loanInterestRate": null,
+      "credit": null,
+      "name": { "defaultName": "ISK", "userDefinedName": "Algo ISK" },
+      "status": "ACTIVE",
+      "errorStatus": "NO_ERROR",
+      "overmortgaged": false,
+      "currencyBalances": [],
+      "overdrawn": [],
+      "performance": {},
+      "settings": { "IS_HIDDEN": false },
+      "clearingAccountNumber": "9552",
+      "accountType24": false,
+      "discretionaryPortfolio": false,
+      "urlParameterId": "url-1",
+      "owner": true
+    },
+    {
+      "id": "9990002",
+      "categoryId": "cat-1",
+      "balance": { "value": 500.0, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "profit": null,
+      "type": "AKTIEFONDKONTO",
+      "totalValue": { "value": 10000.0, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "buyingPower": { "value": 500.0, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "name": { "defaultName": "AF", "userDefinedName": null },
+      "status": "ACTIVE",
+      "errorStatus": "NO_ERROR",
+      "urlParameterId": "url-2",
+      "owner": true
+    }
+  ],
+  "loans": []
+}

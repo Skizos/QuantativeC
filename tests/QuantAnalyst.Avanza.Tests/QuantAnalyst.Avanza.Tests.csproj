@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>QuantAnalyst.Avanza.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\QuantAnalyst.Avanza\QuantAnalyst.Avanza.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <!-- Sanitized/provisional fixtures only (CLAUDE.md: no network in tests). -->
+    <None Include="..\..\recordings\fixtures\avanza\**\*.json" LinkBase="fixtures\avanza" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

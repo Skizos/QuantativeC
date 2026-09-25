@@ -1,0 +1,27 @@
+{
+  "quote": {
+    "buy": 70.84,
+    "sell": 70.86,
+    "last": 70.86,
+    "highest": 71.2,
+    "lowest": 70.1,
+    "change": 0.42,
+    "changePercent": 0.6,
+    "spread": 0.03,
+    "timeOfLast": 1790337598123,
+    "totalValueTraded": 244000000.12,
+    "totalVolumeTraded": 3456789.0,
+    "updated": 1790337599000,
+    "volumeWeightedAveragePrice": 70.61,
+    "isRealTime": true
+  },
+  "orderDepth": {
+    "receivedTime": 1790337599000,
+    "levels": [
+      { "buySide": { "price": 70.84, "volume": 1200, "priceString": "70.84" }, "sellSide": { "price": 70.86, "volume": 800, "priceString": "70.86" } },
+      { "buySide": { "price": 70.82, "volume": "0.00", "priceString": "70.82" }, "sellSide": { "price": 0, "volume": 0, "priceString": "" } }
+    ],
+    "marketMakerExpected": false
+  },
+  "trades": []
+}

@@ -1,0 +1,74 @@
+{
+  "withOrderbook": [
+    {
+      "account": { "id": "9990001", "type": "INVESTERINGSSPARKONTO", "name": "Algo ISK", "urlParameterId": "url-1", "hasCredit": false, "hasAutoDistribution": false },
+      "instrument": {
+        "id": "inst-5240",
+        "type": "STOCK",
+        "name": "Ericsson B",
+        "orderbook": {
+          "id": "5240",
+          "flagCode": "SE",
+          "name": "Ericsson B",
+          "type": "STOCK",
+          "tradeStatus": "BUYABLE_AND_SELLABLE",
+          "quote": {
+            "highest": { "value": 71.2, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+            "lowest": { "value": 70.1, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+            "buy": { "value": 70.84, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+            "sell": { "value": 70.86, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+            "latest": { "value": 70.86, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+            "change": { "value": 0.42, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+            "changePercent": { "value": 0.6, "unit": "percentage", "unitType": "PERCENTAGE", "decimalPrecision": 2 },
+            "updated": "2026-09-25T13:59:58.123+02:00"
+          },
+          "turnover": {
+            "volume": { "value": 3456789, "unit": "", "unitType": "NUMBER", "decimalPrecision": 0 },
+            "value": { "value": 244000000.12, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 }
+          },
+          "lastDeal": { "date": "2026-09-25", "time": "13:59:58" }
+        },
+        "currency": "SEK",
+        "isin": "SE0000108656",
+        "volumeFactor": 1
+      },
+      "volume": { "value": 150, "unit": "st", "unitType": "NUMBER", "decimalPrecision": 0 },
+      "value": { "value": 10629.0, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "averageAcquiredPrice": { "value": 65.1234, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 4 },
+      "averageAcquiredPriceInstrumentCurrency": { "value": 65.1234, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 4 },
+      "acquiredValue": { "value": 9768.51, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "lastTradingDayPerformance": {
+        "absolute": { "value": 63.0, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+        "relative": { "value": 0.6, "unit": "percentage", "unitType": "PERCENTAGE", "decimalPrecision": 2 }
+      },
+      "id": "pos-1",
+      "superInterestApproved": false,
+      "collateralFactor": { "value": 0.8, "unit": "percentage", "unitType": "PERCENTAGE", "decimalPrecision": 2 }
+    }
+  ],
+  "withoutOrderbook": [
+    {
+      "account": { "id": "9990002", "type": "AKTIEFONDKONTO", "name": "AF", "urlParameterId": "url-2", "hasCredit": false },
+      "instrument": { "type": "FUND", "name": "Global Index Fund", "currency": "SEK", "isin": "SE0000000001", "volumeFactor": 1 },
+      "volume": { "value": 12.3456, "unit": "st", "unitType": "NUMBER", "decimalPrecision": 4 },
+      "value": { "value": 9500.0, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "averageAcquiredPrice": { "value": 700.0, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "acquiredValue": { "value": 8641.92, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "lastTradingDayPerformance": null,
+      "id": "pos-2"
+    }
+  ],
+  "cashPositions": [
+    {
+      "account": { "id": "9990001", "type": "INVESTERINGSSPARKONTO", "name": "Algo ISK", "urlParameterId": "url-1", "hasCredit": false },
+      "totalBalance": { "value": 12345.67, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "id": "cash-1"
+    },
+    {
+      "account": { "id": "9990002", "type": "AKTIEFONDKONTO", "name": "AF", "urlParameterId": "url-2", "hasCredit": false },
+      "totalBalance": { "value": 500.0, "unit": "SEK", "unitType": "MONETARY", "decimalPrecision": 2 },
+      "id": "cash-2"
+    }
+  ],
+  "withCreditAccount": false
+}

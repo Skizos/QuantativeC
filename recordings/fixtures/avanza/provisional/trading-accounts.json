@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Algo ISK",
+    "accountId": "9990001",
+    "accountTypeName": "ISK",
+    "accountType": "INVESTERINGSSPARKONTO",
+    "availableForPurchase": 12345.67,
+    "availableForPurchaseWithoutCredit": 12345.67,
+    "availableCredit": 0,
+    "hasCredit": false,
+    "isTradable": true,
+    "isShortSellable": false,
+    "isOvermortgaged": false,
+    "isOverdrawn": false,
+    "isHidden": false,
+    "positions": [],
+    "currencyBalances": [ { "currency": "SEK", "countryCode": "SE", "balance": 12345.67 } ],
+    "urlParameterId": "url-1"
+  }
+]

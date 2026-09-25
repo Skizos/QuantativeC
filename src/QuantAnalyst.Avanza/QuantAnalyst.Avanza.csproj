@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Avanza gateway (read side in Phase 3): auth, HTTP pipeline, tiered strict DTOs, mappers (ADR 0002). -->
+  <PropertyGroup>
+    <RootNamespace>QuantAnalyst.Avanza</RootNamespace>
+    <!-- Required by [LibraryImport] for the Windows Credential Manager store (Secrets/WindowsCredentialStore.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="QuantAnalyst.Avanza.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QuantAnalyst.Core\QuantAnalyst.Core.csproj" />
+  </ItemGroup>
+
+</Project>
