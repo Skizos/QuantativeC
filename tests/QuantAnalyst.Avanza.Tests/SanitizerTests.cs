@@ -32,7 +32,7 @@ public sealed class SanitizerTests
             Assert.Equal(Directory.GetFiles(live).Length, files.Length);
             string all = string.Join('\n', files.Select(File.ReadAllText));
 
-            foreach (string raw in new[] { "9990001", "9990002", "Algo ISK", "url-1", "url-2", "10629.0", "12345.67" })
+            foreach (string raw in new[] { "9990001", "9990002", "Algo ISK", "url-1", "url-2", "10629.0", "12345.67", "CLR-FAKE-4411", "8327-9" })
             {
                 Assert.DoesNotContain(raw, all, StringComparison.Ordinal);
             }
@@ -108,6 +108,32 @@ public sealed class SanitizerTests
             File.WriteAllText(Path.Combine(root, "in", "a.json"), """{"format":"something-else"}""");
             Assert.Throws<IOException>(() => RecordingSanitizer.Sanitize(Path.Combine(root, "in"), Path.Combine(root, "out")));
             Assert.Throws<InvalidDataException>(() => RecordingSanitizer.Sanitize(Path.Combine(root, "in"), Path.Combine(root, "out2")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Sanitize_RedactsBankingAndPersonalIdentifiersByKeyPattern()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "qa-sanitize-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "in"));
+            File.WriteAllText(Path.Combine(root, "in", "001-search.json"), """
+                {"format":"qa-recording/1","route":"search","request":{"body":null},
+                 "response":{"body":{"newIbanField":"SE35 5000 0000 0549 1000 0003","contactEmail":"a@b.example",
+                                     "someClearingNo":"8327-9","ok":"keep me"}}}
+                """);
+            SanitizeReport report = RecordingSanitizer.Sanitize(Path.Combine(root, "in"), Path.Combine(root, "out"));
+            Assert.True(report.Succeeded, string.Join("; ", report.Problems));
+            string text = File.ReadAllText(Path.Combine(root, "out", "001-search.json"));
+            Assert.DoesNotContain("SE35", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("a@b.example", text, StringComparison.Ordinal);
+            Assert.DoesNotContain("8327-9", text, StringComparison.Ordinal);
+            Assert.Contains("keep me", text, StringComparison.Ordinal);
         }
         finally
         {

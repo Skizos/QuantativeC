@@ -95,7 +95,14 @@ public sealed class AvanzaProbe
                 return $"RECORDED {raw.Length} bytes (not modelled yet)";
             }),
             (AvanzaRoutes.Transactions.Name, async () => $"{(await _gateway.GetTransactionsAsync(today.AddDays(-30), today, ct).ConfigureAwait(false)).Count} transaction(s) in 30 days"),
-            (AvanzaRoutes.Search.Name + "+" + AvanzaRoutes.Orderbook.Name, async () =>
+            (AvanzaRoutes.Search.Name, async () =>
+            {
+                // The first hit is the fallback id for marketdata/chart, so an orderbook drift doesn't hide them.
+                IReadOnlyList<InstrumentSearchHit> hits = await _gateway.SearchStocksAsync(TickerResolver.Normalize(ticker), 10, ct).ConfigureAwait(false);
+                id = hits.Count > 0 ? hits[0].OrderbookId : null;
+                return hits.Count > 0 ? $"{hits.Count} hit(s); first: {hits[0].Name} (orderbook {hits[0].OrderbookId})" : "0 hits";
+            }),
+            (AvanzaRoutes.Orderbook.Name, async () =>
             {
                 InstrumentTradingParams p = await TickerResolver.ResolveAsync(_gateway, ticker, ct).ConfigureAwait(false);
                 id = p.OrderbookId;
@@ -105,7 +112,7 @@ public sealed class AvanzaProbe
             {
                 if (id is null)
                 {
-                    throw new SkipException("no orderbook id (search/orderbook step failed)");
+                    throw new SkipException("no orderbook id (search found nothing)");
                 }
 
                 MarketSnapshot m = await _gateway.GetMarketSnapshotAsync(id.Value, ct).ConfigureAwait(false);
@@ -115,7 +122,7 @@ public sealed class AvanzaProbe
             {
                 if (id is null)
                 {
-                    throw new SkipException("no orderbook id (search/orderbook step failed)");
+                    throw new SkipException("no orderbook id (search found nothing)");
                 }
 
                 return $"{(await _gateway.GetPriceHistoryAsync(id.Value, ChartPeriod.OneMonth, ChartResolution.Day, ct).ConfigureAwait(false)).Count} daily bar(s)";

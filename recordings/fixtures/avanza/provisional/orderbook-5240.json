@@ -21,7 +21,6 @@
   },
   "collateralValue": 0.8,
   "currency": "SEK",
-  "orderbookStatus": "OPEN",
   "minValidUntil": "2026-09-25",
   "maxValidUntil": "2026-10-23",
   "instrumentType": "STOCK",

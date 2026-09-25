@@ -98,13 +98,29 @@ public sealed class GatewayTests
         IReadOnlyList<ProbeResult> results = await rig.Connection.Probe.RunAsync("ERIC-B", Ct);
 
         Assert.Equal(
-            ["login", "session-info", "accounts-overview", "trading-accounts", "positions", "orders", "deals", "transactions", "search+orderbook", "marketdata", "price-chart"],
+            ["login", "session-info", "accounts-overview", "trading-accounts", "positions", "orders", "deals", "transactions", "search", "orderbook", "marketdata", "price-chart"],
             results.Select(r => r.Route));
         ProbeResult positions = results.Single(r => r.Route == "positions");
         Assert.Equal(ProbeStatus.Drift, positions.Status);
         Assert.Contains("$.brandNewField", positions.Detail, StringComparison.Ordinal);
         Assert.Equal(ProbeStatus.Recorded, results.Single(r => r.Route == "deals").Status);
         Assert.All(results.Where(r => r.Route is not ("positions" or "deals")), r => Assert.Equal(ProbeStatus.Ok, r.Status));
+    }
+
+    [Fact]
+    public async Task Probe_OrderbookDrift_StillProbesMarketDataAndChartWithTheSearchHit()
+    {
+        // Exactly what the owner's first live probe hit: an orderbook payload lacking a required field.
+        var server = new FakeAvanza();
+        server.On(AvanzaRoutes.Orderbook, _ => FakeAvanza.Json(Fixtures.Mutate("orderbook-5240.json", n => n.AsObject().Remove("isin"))));
+        using var rig = new TestRig(server);
+        IReadOnlyList<ProbeResult> results = await rig.Connection.Probe.RunAsync("ERIC-B", Ct);
+
+        ProbeResult orderbook = results.Single(r => r.Route == "orderbook");
+        Assert.Equal(ProbeStatus.Drift, orderbook.Status);
+        Assert.Contains("$.isin", orderbook.Detail, StringComparison.Ordinal);
+        Assert.Equal(ProbeStatus.Ok, results.Single(r => r.Route == "marketdata").Status);
+        Assert.Equal(ProbeStatus.Ok, results.Single(r => r.Route == "price-chart").Status);
     }
 
     [Fact]

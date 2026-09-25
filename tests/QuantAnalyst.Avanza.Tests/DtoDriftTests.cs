@@ -49,6 +49,37 @@ public sealed class DtoDriftTests
     }
 
     [Fact]
+    public void TierA_UnknownAndMissingFields_AreReportedTogetherInOnePass()
+    {
+        byte[] json = Fixtures.Mutate("trading-accounts.json", n =>
+        {
+            n[0]!["somethingNew"] = true;
+            n[0]!.AsObject().Remove("accountType");
+            n[0]!.AsObject().Remove("hasCredit");
+        });
+
+        var ex = Assert.Throws<SchemaDriftException>(() =>
+            _json.Deserialize(json, AvanzaTierAContext.Default.ListTradingAccountDto, "trading-accounts", TradingAccountDto.Version, DtoTier.A));
+
+        Assert.Equal(["$[0].somethingNew", "$[0].accountType", "$[0].hasCredit"], ex.Paths);
+        Assert.Contains("1 unknown field(s)", ex.Detail, StringComparison.Ordinal);
+        Assert.Contains("2 missing required field(s)", ex.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TierB_MissingRequired_IsReportedByPath_UnknownOnlyLogged()
+    {
+        byte[] json = Fixtures.Mutate("price-chart-5240.json", n =>
+        {
+            n["newThing"] = 1;
+            n["ohlc"]![1]!.AsObject().Remove("close");
+        });
+        var ex = Assert.Throws<SchemaDriftException>(() =>
+            _json.Deserialize(json, AvanzaTierBContext.Default.PriceChartDto, "price-chart", PriceChartDto.Version, DtoTier.B));
+        Assert.Equal(["$.ohlc[1].close"], ex.Paths);
+    }
+
+    [Fact]
     public void TierA_UnknownFieldInsideJsonElementMember_IsAccepted()
     {
         // featureSupport is a known-but-unused JsonElement member: its inner shape is not policed.

@@ -93,6 +93,20 @@ Rate limits: nothing is documented. The Go SDK default is **one request per 100 
 
 **No login needed:** the Go SDK README says search, stock/certificate/warrant info, quote, order depth, market place, price chart, off-hours price, news and forum work without a session. That lets the chart importer and much of Paper-mode data run **without** credentials. The ToS question in `avanza-terms.md` still applies.
 
+## 3a. Observed live (owner's first read-only probe, 2026-09-25, BankID login)
+
+This is the first contact with the real API. The list below has **field names only**; the sanitized recordings will pin down their types.
+
+| Route | Result | Differences from the reference clients |
+|---|---|---|
+| BankID login, session info | OK | none |
+| `account-overview/…/categorizedAccounts` | drift | new per-account fields: `interestRates`, `creditAccountClearingAccountNumber`, `autoDistribution` |
+| `trading-critical/rest/accounts` | drift | new field: `isDiscretionaryAccount` |
+| `position-data/positions`, `trading/rest/orders`, `transactions/list` | OK | none in Tier A. Transactions is Tier B, and its warnings weren't captured. |
+| `trading/rest/deals` | recorded | 27 bytes (no fills yet) |
+| `trading-critical/rest/orderbook/{id}` | drift | `orderbookStatus` is **absent** (it was required in the Go model) |
+| marketdata, price chart | not reached | the probe used to stop at an orderbook failure; it now continues with the search hit |
+
 ## 4. Order endpoints (Phase 6 fixtures only; Claude never calls them)
 
 | Purpose | Method + path | Source / date | Body |

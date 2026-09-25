@@ -22,4 +22,9 @@ Client commits: Qluxzz/avanza `a6a18a948f88cb7e340051e480b203b2ee917eed`; vmorse
 - The tick table in `orderbook-5240.json` is illustrative, not the official RTS 11 table.
 - Orderbook `5240` / ISIN `SE0000108656` (Ericsson B) are public identifiers, used for realism only.
 
+**Updated 2026-09-25 from the owner's first live probe.** The names came from the probe; the values are still placeholders:
+- `interestRates`, `creditAccountClearingAccountNumber` and `autoDistribution` were added to accounts
+- `isDiscretionaryAccount` was added to trading accounts
+- `orderbookStatus` is absent from the orderbook
+
 These files are replaced by your sanitized recordings (`qa probe`, then `qa recordings sanitize`). The real recordings will go to a dated sibling folder, e.g. `../2026-09-26/`, which the tests then prefer.

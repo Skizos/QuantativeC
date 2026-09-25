@@ -10,10 +10,11 @@ namespace QuantAnalyst.Avanza.Json;
 /// <summary>
 /// Tiered strict deserialization (ADR 0002 §2).
 /// <list type="bullet">
-/// <item>Tier A: any unknown path ⇒ <see cref="SchemaDriftException"/> listing every path.</item>
-/// <item>Tier B: unknown paths are logged once per route (drift.warning).</item>
-/// <item>Both tiers: invalid JSON, missing required members, nulls in non-nullable members and type
-/// mismatches ⇒ <see cref="SchemaDriftException"/> with the JSON path.</item>
+/// <item>Tier A: any unknown or missing required path ⇒ <see cref="SchemaDriftException"/> listing all of them.</item>
+/// <item>Tier B: missing required paths ⇒ <see cref="SchemaDriftException"/>; unknown paths are logged once per
+/// route (drift.warning).</item>
+/// <item>Both tiers: invalid JSON, nulls in non-nullable members and type mismatches ⇒ <see cref="SchemaDriftException"/>
+/// with the JSON path.</item>
 /// </list>
 /// </summary>
 internal sealed class AvanzaJson(ILogger logger)
@@ -40,14 +41,23 @@ internal sealed class AvanzaJson(ILogger logger)
 
     public T Deserialize<T>(JsonElement root, JsonTypeInfo<T> typeInfo, string route, string dtoVersion, DtoTier tier)
     {
-        IReadOnlyList<string> unknown = UnknownFieldScanner.Scan(root, typeInfo);
+        SchemaScan scan = UnknownFieldScanner.Scan(root, typeInfo);
+        IReadOnlyList<string> unknown = scan.Unknown;
+        if (scan.Missing.Count > 0 || (tier == DtoTier.A && unknown.Count > 0))
+        {
+            IReadOnlyList<string> unknownReported = tier == DtoTier.A ? unknown : [];
+            string detail = string.Join(
+                "; ",
+                new[]
+                {
+                    unknownReported.Count > 0 ? $"{unknownReported.Count} unknown field(s)" : null,
+                    scan.Missing.Count > 0 ? $"{scan.Missing.Count} missing required field(s): {string.Join(", ", scan.Missing.Take(20))}" : null,
+                }.Where(s => s is not null));
+            throw new SchemaDriftException(route, dtoVersion, tier, [.. unknownReported, .. scan.Missing], detail);
+        }
+
         if (unknown.Count > 0)
         {
-            if (tier == DtoTier.A)
-            {
-                throw new SchemaDriftException(route, dtoVersion, tier, unknown, $"{unknown.Count} unknown field(s)");
-            }
-
             if (_warnedRoutes.TryAdd(route, true))
             {
                 Log.DriftWarning(logger, route, dtoVersion, unknown.Count, string.Join(", ", unknown.Take(20)));

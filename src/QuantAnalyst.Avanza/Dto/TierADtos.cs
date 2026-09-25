@@ -8,6 +8,8 @@ using System.Text.Json.Serialization;
 // Only fields we map are `required`; known-but-unused fields are optional and typed JsonElement where their
 // shape is irrelevant, so a renamed field is still reported as unknown. Provisional until live recordings
 // (docs/plans/03-phase3-avanza-read.md "Stop point").
+// ".2" versions (2026-09-25): field names corrected from the owner's first live probe (names only; the
+// sanitized recording will pin down the shapes).
 namespace QuantAnalyst.Avanza.Dto;
 
 /// <summary>Avanza's value-with-unit object: {value, unit, unitType, decimalPrecision}.</summary>
@@ -61,7 +63,7 @@ internal sealed class SessionUserDto
 
 internal sealed class AccountsOverviewDto
 {
-    public const string Version = "accounts-overview/2026-09-25";
+    public const string Version = "accounts-overview/2026-09-25.2";
 
     public JsonElement? Categories { get; init; }
 
@@ -120,6 +122,14 @@ internal sealed class OverviewAccountDto
     public string? UrlParameterKey { get; init; }
 
     public bool? Owner { get; init; }
+
+    // Seen in the owner's live probe (2026-09-25), not in any reference client. Shapes unknown until the
+    // sanitized recording arrives, so accepted as-is (unused).
+    public JsonElement? InterestRates { get; init; }
+
+    public JsonElement? CreditAccountClearingAccountNumber { get; init; }
+
+    public JsonElement? AutoDistribution { get; init; }
 }
 
 internal sealed class AccountNameDto
@@ -133,7 +143,7 @@ internal sealed class AccountNameDto
 
 internal sealed class TradingAccountDto
 {
-    public const string Version = "trading-accounts/2026-09-25";
+    public const string Version = "trading-accounts/2026-09-25.2";
 
     public required string Name { get; init; }
 
@@ -167,6 +177,10 @@ internal sealed class TradingAccountDto
 
     [JsonPropertyName("urlParameterId")]
     public string? UrlParameterKey { get; init; }
+
+    // Seen in the owner's live probe (2026-09-25). A discretionary (managed) account must never be traded by
+    // this program; mapped once the recording shows its type.
+    public JsonElement? IsDiscretionaryAccount { get; init; }
 }
 
 internal sealed class CurrencyBalanceDto
@@ -388,7 +402,7 @@ internal sealed class OrderOrderbookDto
 
 internal sealed class OrderbookDto
 {
-    public const string Version = "orderbook/2026-09-25";
+    public const string Version = "orderbook/2026-09-25.2";
 
     public required string Id { get; init; }
 
@@ -408,7 +422,8 @@ internal sealed class OrderbookDto
 
     public required string Currency { get; init; }
 
-    public required string OrderbookStatus { get; init; }
+    // Absent in the owner's live probe (2026-09-25); optional since.
+    public string? OrderbookStatus { get; init; }
 
     public JsonElement? MinValidUntil { get; init; }
 

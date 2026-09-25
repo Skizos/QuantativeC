@@ -13,7 +13,7 @@ public sealed record InstrumentTradingParams(
     string MarketPlace,
     string CountryCode,
     string InstrumentType,
-    string OrderbookStatus,
+    string? OrderbookStatus,
     TickSizeTable TickSizes,
     int VolumeFactor,
     int TradingUnit,

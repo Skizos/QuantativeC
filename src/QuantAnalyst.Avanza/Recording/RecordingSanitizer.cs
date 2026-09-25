@@ -35,8 +35,20 @@ public static partial class RecordingSanitizer
     {
         "customerId", "pushSubscriptionId", "authenticationSession", "securityToken", "greetingName", "noteId",
         "verificationNumber", "username", "password", "totpCode", "clearingAccountNumber", "transactionId",
-        "invalidSessionId", "pushBaseUrl",
+        "invalidSessionId", "pushBaseUrl", "creditAccountClearingAccountNumber", "identificationNumber",
     };
+
+    // Any key containing one of these (case-insensitive) is treated as a banking or personal identifier, so new
+    // fields like "creditAccountClearingAccountNumber" (seen live 2026-09-25) are redacted without a code change.
+    private static readonly string[] RedactKeyFragments =
+    [
+        "accountnumber", "clearing", "iban", "bankaccount", "identificationnumber", "personalnumber", "personnummer",
+        "ssn", "email", "phone", "mobile", "address", "zipcode", "postalcode",
+    ];
+
+    private static bool IsRedactKey(string? key) =>
+        key is not null
+        && (RedactKeys.Contains(key) || RedactKeyFragments.Any(f => key.Contains(f, StringComparison.OrdinalIgnoreCase)));
 
     private static readonly HashSet<string> AccountIdKeys = new(StringComparer.Ordinal) { "accountId", "cAccountId" };
 
@@ -276,7 +288,7 @@ public static partial class RecordingSanitizer
                 return arr;
             case JsonValue value when value.GetValueKind() == JsonValueKind.String:
                 string s = value.GetValue<string>();
-                if (key is not null && RedactKeys.Contains(key))
+                if (IsRedactKey(key))
                 {
                     ctx.Count("redacted-key");
                     return JsonValue.Create(RedactedValue);
@@ -291,7 +303,7 @@ public static partial class RecordingSanitizer
                 string replaced = ReplaceAll(s, ctx);
                 return replaced == s ? value : JsonValue.Create(replaced);
             case JsonValue value when value.GetValueKind() == JsonValueKind.Number:
-                if (key is not null && RedactKeys.Contains(key))
+                if (IsRedactKey(key))
                 {
                     ctx.Count("redacted-key");
                     return JsonValue.Create(0);

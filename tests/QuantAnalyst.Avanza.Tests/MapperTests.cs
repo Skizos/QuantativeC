@@ -109,6 +109,7 @@ public sealed class MapperTests
         Assert.Equal(1, p.TradingUnit);
         Assert.Equal(new DateOnly(2026, 10, 23), p.MaxValidUntil);
         Assert.Equal(Now, p.KnownAtUtc);
+        Assert.Null(p.OrderbookStatus); // absent in the live payload (owner's probe 2026-09-25)
     }
 
     [Fact]

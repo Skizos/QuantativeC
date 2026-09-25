@@ -36,7 +36,10 @@
       "accountType24": false,
       "discretionaryPortfolio": false,
       "urlParameterId": "url-1",
-      "owner": true
+      "owner": true,
+      "interestRates": {},
+      "creditAccountClearingAccountNumber": "8327-9 CLR-FAKE-4411",
+      "autoDistribution": false
     },
     {
       "id": "9990002",
@@ -50,7 +53,10 @@
       "status": "ACTIVE",
       "errorStatus": "NO_ERROR",
       "urlParameterId": "url-2",
-      "owner": true
+      "owner": true,
+      "interestRates": {},
+      "creditAccountClearingAccountNumber": null,
+      "autoDistribution": false
     }
   ],
   "loans": []

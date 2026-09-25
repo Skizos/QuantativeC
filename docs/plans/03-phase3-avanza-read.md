@@ -211,13 +211,13 @@ After the gate commands pass, I stop and give you the exact read-only commands t
 
 | Gate item | Result |
 |---|---|
-| Fixture tests | green: `dotnet test --solution QuantAnalyst.sln` 248 passed + 1 skipped (the skipped one is the Windows Credential Manager round trip, which runs on the Windows CI job). Breakdown: Core 25, Avanza 135 (23 of them for BankID), Native 61, Analytics/CLI 28. |
+| Fixture tests | green: `dotnet test --solution QuantAnalyst.sln` 252 passed + 1 skipped (the skipped one is the Windows Credential Manager round trip, which runs on the Windows CI job). Breakdown: Core 25, Avanza 139 (23 of them for BankID), Native 61, Analytics/CLI 28. |
 | Native unchanged | `ctest --preset dev` 107/107 |
 | Log scan | green: `GatewayTests.LogScan_TraceLogsOfAFullRunContainNoSecretsOrFullAccountIds`, `Recording_KeepsStructureButNeverCredentialsTokensOrCookieValues`, and every `CliAvanzaTests` run scans stdout/stderr |
 | Guardrail self-test | 29/29 (6 new money-transfer cases) |
 | Format | `dotnet format --verify-no-changes` and `clang-format --dry-run -Werror` clean |
 | ADR 0004 | recorded (Accepted, 2026-09-25) |
-| **Your manual read-only run** | **pending**: see "Stop point" |
+| **Your manual read-only run** | **first run done 2026-09-25**: BankID login, session, positions, orders and transactions OK; drift on accounts, trading accounts and orderbook (avanza-endpoints.md §3a). DTOs updated to `.2`. Waiting for the second run plus sanitized recordings. |
 
 **Test map:**
 
