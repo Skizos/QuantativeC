@@ -1,0 +1,19 @@
+<Project>
+  <!-- Shared settings for every .NET project (CLAUDE.md "Stack"). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <IsPackable>false</IsPackable>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <RepoRoot>$(MSBuildThisFileDirectory)</RepoRoot>
+    <!-- CMake stages the qe shared library here per RID (native/CMakeLists.txt, QE_STAGE_NATIVE). -->
+    <QeNativeStagingDir>$(RepoRoot)artifacts/native/</QeNativeStagingDir>
+  </PropertyGroup>
+</Project>

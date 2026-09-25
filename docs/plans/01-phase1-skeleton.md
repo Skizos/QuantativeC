@@ -40,7 +40,7 @@ qe_bs_price_batch(const qe_engine* e, const qe_bs_input* in, qe_bs_output* out,
 ```
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev --output-on-failure
 cmake --preset asan && cmake --build --preset asan && ctest --preset asan --output-on-failure
-dotnet build QuantAnalyst.sln && dotnet test QuantAnalyst.sln
+dotnet build QuantAnalyst.sln && dotnet test --solution QuantAnalyst.sln
 bash tests/hooks/block-live-trading.test.sh
 ```
 The gate also requires the BS reference (call ≈ 10.4506, put ≈ 5.5735, tol 1e-4) to pass through the C# binding, and benchmark results to be saved in `bench/results/`.

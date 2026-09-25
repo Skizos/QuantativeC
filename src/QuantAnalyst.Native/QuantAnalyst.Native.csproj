@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>QuantAnalyst.Native</RootNamespace>
+    <!-- Pointers are needed for zero-copy span marshalling into the C ABI (ADR 0001). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="QuantAnalyst.Native.Tests" />
+    <InternalsVisibleTo Include="QuantAnalyst.Bench" />
+  </ItemGroup>
+
+  <!--
+    The qe shared library built by CMake is staged under artifacts/native/<rid>/. Ship it as
+    runtimes/<rid>/native/<file> so every referencing project gets it in its output directory,
+    where QeNativeLibraryResolver looks first.
+  -->
+  <ItemGroup>
+    <None Include="$(QeNativeStagingDir)**/qe.dll;$(QeNativeStagingDir)**/libqe.so;$(QeNativeStagingDir)**/libqe.dylib"
+          Link="runtimes/%(RecursiveDir)native/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          Visible="false" />
+  </ItemGroup>
+
+  <Target Name="WarnWhenNativeLibraryMissing" BeforeTargets="Build"
+          Condition="!Exists('$(QeNativeStagingDir)')">
+    <Warning Code="QE0001" Text="No staged native library under $(QeNativeStagingDir). Build it first: cmake --preset dev &amp;&amp; cmake --build --preset dev (see docs/setup.md). Tests that call into qe will fail with DllNotFoundException." />
+  </Target>
+
+</Project>

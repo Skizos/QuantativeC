@@ -134,7 +134,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 *Gate:*
 - `cmake --preset dev && cmake --build --preset dev && ctest --preset dev --output-on-failure` is green.
 - `ctest --preset asan` is green, with no leaks.
-- `dotnet build QuantAnalyst.sln && dotnet test QuantAnalyst.sln` is green.
+- `dotnet build QuantAnalyst.sln && dotnet test --solution QuantAnalyst.sln` is green.
 - The BS reference (call 10.4506 / put 5.5735, tol 1e-4) passes **through the C# binding**.
 - Benchmark saved.
 

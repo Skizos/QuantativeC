@@ -1,0 +1,11 @@
+# Keep LF in every working tree (the format checks and .editorconfig assume it), except Windows-only scripts.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.sln text eol=crlf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.dll binary
+*.so binary

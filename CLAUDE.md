@@ -23,7 +23,7 @@ base currency SEK.
 
 ## Commands
 - Native:  cmake --preset dev && cmake --build --preset dev && ctest --preset dev --output-on-failure
-- Managed: dotnet build QuantAnalyst.sln && dotnet test QuantAnalyst.sln
+- Managed: dotnet build QuantAnalyst.sln && dotnet test --solution QuantAnalyst.sln   (Microsoft.Testing.Platform, see global.json)
 - All:     ./build.ps1 | ./build.sh
 
 ## Absolute safety rules
