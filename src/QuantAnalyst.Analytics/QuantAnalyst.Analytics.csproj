@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>QuantAnalyst.Analytics</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="QuantAnalyst.Analytics.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QuantAnalyst.Native\QuantAnalyst.Native.csproj" />
+  </ItemGroup>
+
+</Project>
