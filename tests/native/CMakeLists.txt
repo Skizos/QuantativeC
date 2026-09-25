@@ -26,9 +26,11 @@ gtest_discover_tests(qe_unit_tests DISCOVERY_MODE PRE_TEST TEST_PREFIX "unit.")
 # header_c_compat.c proves qe_api.h is valid C11.
 add_executable(qe_abi_tests
     abi/abi_test.cpp
+    abi/abi_v11_test.cpp
     abi/header_c_compat.c
 )
 target_link_libraries(qe_abi_tests PRIVATE qe GTest::gtest_main)
+target_include_directories(qe_abi_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 qe_set_warnings(qe_abi_tests)
 gtest_discover_tests(qe_abi_tests DISCOVERY_MODE PRE_TEST TEST_PREFIX "abi.")
 

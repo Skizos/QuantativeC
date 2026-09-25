@@ -26,8 +26,11 @@ qe_set_warnings(qe_impl)
 
 # qe: the shared library whose ONLY exports are declared in include/qe_api.h.
 add_library(qe SHARED
-    src/api/qe_api.cpp
     src/api/last_error.cpp
+    src/api/portfolio_api.cpp
+    src/api/pricing_api.cpp
+    src/api/qe_api.cpp
+    src/api/risk_api.cpp
 )
 target_include_directories(qe
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
