@@ -11,6 +11,8 @@ add_executable(qe_unit_tests
     pricing/black_scholes_test.cpp
     pricing/greeks_iv_test.cpp
     pricing/lattice_mc_test.cpp
+    portfolio/optimizers_test.cpp
+    portfolio/rebalance_test.cpp
     risk/covariance_test.cpp
     risk/var_es_test.cpp
 )

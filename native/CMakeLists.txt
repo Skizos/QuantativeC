@@ -8,6 +8,9 @@ add_library(qe_impl STATIC
     src/qe/pricing/binomial.cpp
     src/qe/pricing/black_scholes.cpp
     src/qe/pricing/implied_vol.cpp
+    src/qe/portfolio/hrp.cpp
+    src/qe/portfolio/optimizers.cpp
+    src/qe/portfolio/rebalance.cpp
     src/qe/pricing/monte_carlo.cpp
     src/qe/risk/covariance.cpp
     src/qe/risk/stress.cpp
