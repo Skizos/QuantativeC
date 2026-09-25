@@ -1,0 +1,40 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "auth.start-page",
+  "tier": "none",
+  "recordedAtUtc": "2026-09-25T21:02:13.0623706\u002B00:00",
+  "request": {
+    "method": "GET",
+    "path": "/",
+    "query": null,
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "User-Agent"
+    ],
+    "body": null
+  },
+  "response": {
+    "status": 302,
+    "contentType": "text/html",
+    "headerNames": [
+      "Connection",
+      "Content-Security-Policy",
+      "Date",
+      "Keep-Alive",
+      "Location",
+      "Server",
+      "Set-Cookie",
+      "Strict-Transport-Security"
+    ],
+    "setCookieNames": [
+      "AZAPERSISTENCE"
+    ],
+    "body": "\u003Cnon-JSON body, 211 bytes, omitted\u003E"
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": false
+  }
+}

@@ -1,0 +1,250 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "price-chart",
+  "tier": "B",
+  "recordedAtUtc": "2026-09-25T21:02:28.4560894\u002B00:00",
+  "request": {
+    "method": "GET",
+    "path": "/_api/price-chart/stock/5240",
+    "query": "?timePeriod=one_month\u0026resolution=day",
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "Cookie",
+      "User-Agent",
+      "X-SecurityToken"
+    ],
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "headerNames": [
+      "AVANZA_TRACE_ID",
+      "Cache-Control",
+      "Connection",
+      "Date",
+      "Keep-Alive",
+      "Pragma",
+      "Strict-Transport-Security",
+      "Transfer-Encoding",
+      "Vary",
+      "X-SecurityToken"
+    ],
+    "setCookieNames": [],
+    "body": {
+      "ohlc": [
+        {
+          "timestamp": 1787608800000,
+          "open": 97.0,
+          "close": 97.64,
+          "low": 96.88,
+          "high": 98.16,
+          "totalVolumeTraded": 4810703
+        },
+        {
+          "timestamp": 1787695200000,
+          "open": 98.0,
+          "close": 95.7,
+          "low": 95.3,
+          "high": 98.3,
+          "totalVolumeTraded": 7816677
+        },
+        {
+          "timestamp": 1787781600000,
+          "open": 96.5,
+          "close": 96.2,
+          "low": 95.4,
+          "high": 97.82,
+          "totalVolumeTraded": 9773676
+        },
+        {
+          "timestamp": 1787868000000,
+          "open": 97.1,
+          "close": 96.76,
+          "low": 95.92,
+          "high": 97.56,
+          "totalVolumeTraded": 5056105
+        },
+        {
+          "timestamp": 1788127200000,
+          "open": 96.5,
+          "close": 96.72,
+          "low": 96.12,
+          "high": 97.34,
+          "totalVolumeTraded": 7267325
+        },
+        {
+          "timestamp": 1788213600000,
+          "open": 97.0,
+          "close": 96.48,
+          "low": 96.22,
+          "high": 98.48,
+          "totalVolumeTraded": 7782814
+        },
+        {
+          "timestamp": 1788300000000,
+          "open": 96.98,
+          "close": 96.64,
+          "low": 95.72,
+          "high": 97.6,
+          "totalVolumeTraded": 6989244
+        },
+        {
+          "timestamp": 1788386400000,
+          "open": 96.84,
+          "close": 96.8,
+          "low": 96.4,
+          "high": 97.74,
+          "totalVolumeTraded": 7615417
+        },
+        {
+          "timestamp": 1788472800000,
+          "open": 96.52,
+          "close": 97.06,
+          "low": 96.52,
+          "high": 97.82,
+          "totalVolumeTraded": 4510859
+        },
+        {
+          "timestamp": 1788732000000,
+          "open": 97.06,
+          "close": 97.24,
+          "low": 97.0,
+          "high": 97.88,
+          "totalVolumeTraded": 3669903
+        },
+        {
+          "timestamp": 1788818400000,
+          "open": 96.6,
+          "close": 97.26,
+          "low": 96.12,
+          "high": 97.58,
+          "totalVolumeTraded": 7584000
+        },
+        {
+          "timestamp": 1788904800000,
+          "open": 97.1,
+          "close": 96.78,
+          "low": 96.5,
+          "high": 98.14,
+          "totalVolumeTraded": 7650845
+        },
+        {
+          "timestamp": 1788991200000,
+          "open": 97.0,
+          "close": 97.24,
+          "low": 95.9,
+          "high": 97.42,
+          "totalVolumeTraded": 5704362
+        },
+        {
+          "timestamp": 1789077600000,
+          "open": 97.3,
+          "close": 98.66,
+          "low": 96.88,
+          "high": 98.9,
+          "totalVolumeTraded": 7696108
+        },
+        {
+          "timestamp": 1789336800000,
+          "open": 98.96,
+          "close": 98.04,
+          "low": 98.04,
+          "high": 100.0,
+          "totalVolumeTraded": 7559735
+        },
+        {
+          "timestamp": 1789423200000,
+          "open": 97.94,
+          "close": 98.1,
+          "low": 97.06,
+          "high": 98.88,
+          "totalVolumeTraded": 7430028
+        },
+        {
+          "timestamp": 1789509600000,
+          "open": 98.1,
+          "close": 98.96,
+          "low": 98.1,
+          "high": 99.64,
+          "totalVolumeTraded": 8033442
+        },
+        {
+          "timestamp": 1789596000000,
+          "open": 99.5,
+          "close": 101.25,
+          "low": 99.48,
+          "high": 102.2,
+          "totalVolumeTraded": 8570042
+        },
+        {
+          "timestamp": 1789682400000,
+          "open": 101.25,
+          "close": 99.98,
+          "low": 99.14,
+          "high": 101.65,
+          "totalVolumeTraded": 12024522
+        },
+        {
+          "timestamp": 1789941600000,
+          "open": 99.6,
+          "close": 100.3,
+          "low": 99.38,
+          "high": 101.3,
+          "totalVolumeTraded": 5901728
+        },
+        {
+          "timestamp": 1790028000000,
+          "open": 97.28,
+          "close": 96.52,
+          "low": 94.9,
+          "high": 98.36,
+          "totalVolumeTraded": 17100059
+        },
+        {
+          "timestamp": 1790114400000,
+          "open": 96.86,
+          "close": 97.38,
+          "low": 95.5,
+          "high": 97.38,
+          "totalVolumeTraded": 6985408
+        },
+        {
+          "timestamp": 1790200800000,
+          "open": 96.5,
+          "close": 94.34,
+          "low": 94.02,
+          "high": 96.58,
+          "totalVolumeTraded": 7414555
+        },
+        {
+          "timestamp": 1790287200000,
+          "open": 94.56,
+          "close": 94.96,
+          "low": 94.54,
+          "high": 95.82,
+          "totalVolumeTraded": 6090838
+        }
+      ],
+      "metadata": {
+        "resolution": {
+          "chartResolution": "day",
+          "availableResolutions": [
+            "hour",
+            "day",
+            "week"
+          ]
+        }
+      },
+      "from": "2026-08-25",
+      "to": "2026-09-25",
+      "previousClosingPrice": 96.72
+    }
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": false
+  }
+}

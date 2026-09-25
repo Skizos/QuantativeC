@@ -1,0 +1,204 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "positions",
+  "tier": "A",
+  "recordedAtUtc": "2026-09-25T21:02:24.469085\u002B00:00",
+  "request": {
+    "method": "GET",
+    "path": "/_api/position-data/positions",
+    "query": "",
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "Cookie",
+      "User-Agent",
+      "X-SecurityToken"
+    ],
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "headerNames": [
+      "AVANZA_TRACE_ID",
+      "Cache-Control",
+      "Connection",
+      "Date",
+      "Keep-Alive",
+      "Pragma",
+      "Strict-Transport-Security",
+      "Transfer-Encoding",
+      "Vary",
+      "X-SecurityToken"
+    ],
+    "setCookieNames": [],
+    "body": {
+      "withOrderbook": [
+        {
+          "account": {
+            "id": "900003193",
+            "type": "INVESTERINGSSPARKONTO",
+            "name": "Account 2",
+            "urlParameterId": "urlparam-3",
+            "hasCredit": false
+          },
+          "instrument": {
+            "id": "341309",
+            "type": "STOCK",
+            "name": "Fastator",
+            "orderbook": {
+              "id": "346549",
+              "flagCode": "SE",
+              "name": "Fastator",
+              "type": "STOCK",
+              "tradeStatus": "BUYABLE_AND_SELLABLE",
+              "quote": {
+                "highest": {
+                  "value": 7.607,
+                  "unit": "SEK",
+                  "unitType": "MONETARY",
+                  "decimalPrecision": 3
+                },
+                "lowest": {
+                  "value": 8.277,
+                  "unit": "SEK",
+                  "unitType": "MONETARY",
+                  "decimalPrecision": 3
+                },
+                "buy": {
+                  "value": 6.903,
+                  "unit": "SEK",
+                  "unitType": "MONETARY",
+                  "decimalPrecision": 3
+                },
+                "sell": {
+                  "value": 8.605,
+                  "unit": "SEK",
+                  "unitType": "MONETARY",
+                  "decimalPrecision": 3
+                },
+                "latest": {
+                  "value": 4.264,
+                  "unit": "SEK",
+                  "unitType": "MONETARY",
+                  "decimalPrecision": 3
+                },
+                "change": {
+                  "value": -2.263,
+                  "unit": "SEK",
+                  "unitType": "MONETARY",
+                  "decimalPrecision": 3
+                },
+                "changePercent": {
+                  "value": -8.05,
+                  "unit": "percentage",
+                  "unitType": "PERCENTAGE",
+                  "decimalPrecision": 2
+                },
+                "updated": "2026-09-25T18:00:00.227"
+              },
+              "turnover": {
+                "volume": {
+                  "value": 5969031.00000000,
+                  "unit": "",
+                  "unitType": "UNITLESS",
+                  "decimalPrecision": 8
+                },
+                "value": {
+                  "value": 4559847.82677044,
+                  "unit": "SEK",
+                  "unitType": "MONETARY",
+                  "decimalPrecision": 8
+                }
+              },
+              "lastDeal": {
+                "date": "2026-09-25",
+                "time": "17:29:43\u002B02:00"
+              }
+            },
+            "currency": "SEK",
+            "isin": "SE0015407382",
+            "volumeFactor": 1
+          },
+          "lastTradingDayPerformance": {
+            "absolute": {
+              "value": -9.823,
+              "unit": "SEK",
+              "unitType": "MONETARY",
+              "decimalPrecision": 3
+            },
+            "relative": {
+              "value": -8.36,
+              "unit": "percentage",
+              "unitType": "PERCENTAGE",
+              "decimalPrecision": 2
+            }
+          },
+          "id": "900003193-346549",
+          "superInterestApproved": false,
+          "volume": {
+            "value": 435,
+            "unit": "",
+            "unitType": "UNITLESS",
+            "decimalPrecision": 0
+          },
+          "value": {
+            "value": 461.3340,
+            "unit": "SEK",
+            "unitType": "MONETARY",
+            "decimalPrecision": 4
+          },
+          "averageAcquiredPrice": {
+            "value": 6.40154,
+            "unit": "SEK",
+            "unitType": "MONETARY",
+            "decimalPrecision": 5
+          },
+          "averageAcquiredPriceInstrumentCurrency": {
+            "value": 9.6136,
+            "unit": "SEK",
+            "unitType": "MONETARY",
+            "decimalPrecision": 4
+          },
+          "acquiredValue": {
+            "value": 935.28049,
+            "unit": "SEK",
+            "unitType": "MONETARY",
+            "decimalPrecision": 5
+          },
+          "collateralFactor": {
+            "value": 0.00,
+            "unit": "percentage",
+            "unitType": "PERCENTAGE",
+            "decimalPrecision": 2
+          }
+        }
+      ],
+      "withoutOrderbook": [],
+      "cashPositions": [
+        {
+          "account": {
+            "id": "900003193",
+            "type": "INVESTERINGSSPARKONTO",
+            "name": "Account 2",
+            "urlParameterId": "urlparam-3",
+            "hasCredit": false
+          },
+          "totalBalance": {
+            "value": 5.2959,
+            "unit": "SEK",
+            "unitType": "MONETARY",
+            "decimalPrecision": 4
+          },
+          "id": "900003193-SEK"
+        }
+      ],
+      "withCreditAccount": false
+    }
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": true
+  }
+}

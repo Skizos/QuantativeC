@@ -1,0 +1,46 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "auth.redirect",
+  "tier": "none",
+  "recordedAtUtc": "2026-09-25T21:02:13.0908436\u002B00:00",
+  "request": {
+    "method": "GET",
+    "path": "(same-origin redirect during login)",
+    "query": null,
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "Cookie",
+      "User-Agent"
+    ],
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "contentType": "text/html",
+    "headerNames": [
+      "Accept-Ranges",
+      "Cache-Control",
+      "Connection",
+      "Content-Security-Policy",
+      "Date",
+      "ETag",
+      "Keep-Alive",
+      "Pragma",
+      "Referrer-Policy",
+      "Server",
+      "Strict-Transport-Security",
+      "Vary",
+      "X-Content-Type-Options",
+      "X-Frame-Options",
+      "X-XSS-Protection"
+    ],
+    "setCookieNames": [],
+    "body": "\u003Cnon-JSON body, 10090 bytes, omitted\u003E"
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": false
+  }
+}

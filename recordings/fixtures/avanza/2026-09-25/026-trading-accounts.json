@@ -1,0 +1,118 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "trading-accounts",
+  "tier": "A",
+  "recordedAtUtc": "2026-09-25T21:02:23.9763306\u002B00:00",
+  "request": {
+    "method": "GET",
+    "path": "/_api/trading-critical/rest/accounts",
+    "query": "",
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "Cookie",
+      "User-Agent",
+      "X-SecurityToken"
+    ],
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "headerNames": [
+      "AVANZA_TRACE_ID",
+      "Cache-Control",
+      "Connection",
+      "Date",
+      "Keep-Alive",
+      "Pragma",
+      "Strict-Transport-Security",
+      "Transfer-Encoding",
+      "Vary",
+      "X-SecurityToken"
+    ],
+    "setCookieNames": [],
+    "body": [
+      {
+        "name": "Account 2",
+        "accountId": "900003193",
+        "accountTypeName": "Investeringssparkonto",
+        "accountType": "INVESTERINGSSPARKONTO",
+        "availableForPurchase": 3.45,
+        "availableForPurchaseWithoutCredit": 9.54,
+        "availableCredit": 5.00,
+        "hasCredit": false,
+        "isTradable": true,
+        "isShortSellable": false,
+        "isOvermortgaged": false,
+        "isOverdrawn": false,
+        "isHidden": false,
+        "isDiscretionaryAccount": false,
+        "positions": [],
+        "currencyBalances": [
+          {
+            "currency": "SEK",
+            "countryCode": "SE",
+            "balance": 8.11
+          }
+        ],
+        "urlParameterId": "urlparam-3"
+      },
+      {
+        "name": "Account 1",
+        "accountId": "900001987",
+        "accountTypeName": "Aktie- \u0026 fondkonto",
+        "accountType": "AKTIEFONDKONTO",
+        "availableForPurchase": 4.00,
+        "availableForPurchaseWithoutCredit": 0.00,
+        "availableCredit": 4.00,
+        "hasCredit": false,
+        "isTradable": true,
+        "isShortSellable": false,
+        "isOvermortgaged": false,
+        "isOverdrawn": false,
+        "isHidden": false,
+        "isDiscretionaryAccount": false,
+        "positions": [],
+        "currencyBalances": [
+          {
+            "currency": "SEK",
+            "countryCode": "SE",
+            "balance": 8
+          }
+        ],
+        "urlParameterId": "urlparam-1"
+      },
+      {
+        "name": "Account 3",
+        "accountId": "900002019",
+        "accountTypeName": "Account 3konto",
+        "accountType": "SPARKONTO",
+        "availableForPurchase": 7.00,
+        "availableForPurchaseWithoutCredit": 5.00,
+        "availableCredit": 3.00,
+        "hasCredit": false,
+        "isTradable": false,
+        "isShortSellable": false,
+        "isOvermortgaged": false,
+        "isOverdrawn": false,
+        "isHidden": false,
+        "isDiscretionaryAccount": false,
+        "positions": [],
+        "currencyBalances": [
+          {
+            "currency": "SEK",
+            "countryCode": "SE",
+            "balance": 5
+          }
+        ],
+        "urlParameterId": "urlparam-2"
+      }
+    ]
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": true
+  }
+}

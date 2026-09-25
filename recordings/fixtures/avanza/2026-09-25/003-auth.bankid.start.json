@@ -1,0 +1,48 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "auth.bankid.start",
+  "tier": "none",
+  "recordedAtUtc": "2026-09-25T21:02:13.1473989\u002B00:00",
+  "request": {
+    "method": "POST",
+    "path": "/_api/authentication/v2/sessions/bankid",
+    "query": null,
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "Cookie",
+      "User-Agent"
+    ],
+    "body": "\u003Comitted: authentication request\u003E"
+  },
+  "response": {
+    "status": 202,
+    "contentType": "application/json",
+    "headerNames": [
+      "AVANZA_TRACE_ID",
+      "Cache-Control",
+      "Connection",
+      "Date",
+      "Keep-Alive",
+      "Location",
+      "Pragma",
+      "Set-Cookie",
+      "Strict-Transport-Security",
+      "Transfer-Encoding",
+      "Vary"
+    ],
+    "setCookieNames": [
+      "AZABANKIDTRANSID"
+    ],
+    "body": {
+      "transactionId": "\u003Credacted\u003E",
+      "expires": "\u003Credacted\u003E",
+      "qrToken": "\u003Credacted\u003E"
+    }
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": false
+  }
+}

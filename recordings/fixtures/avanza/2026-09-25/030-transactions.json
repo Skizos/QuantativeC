@@ -1,0 +1,162 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "transactions",
+  "tier": "B",
+  "recordedAtUtc": "2026-09-25T21:02:25.9643239\u002B00:00",
+  "request": {
+    "method": "GET",
+    "path": "/_api/transactions/list",
+    "query": "?from=2026-08-26\u0026to=2026-09-25\u0026includeResult=false",
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "Cookie",
+      "User-Agent",
+      "X-SecurityToken"
+    ],
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "headerNames": [
+      "AVANZA_TRACE_ID",
+      "Cache-Control",
+      "Connection",
+      "Date",
+      "Keep-Alive",
+      "Pragma",
+      "Strict-Transport-Security",
+      "Transfer-Encoding",
+      "Vary",
+      "X-SecurityToken"
+    ],
+    "setCookieNames": [],
+    "body": {
+      "transactions": [
+        {
+          "id": "ABA-900003193-3193063945",
+          "date": "2026-09-23T00:00:00",
+          "settlementDate": "2026-09-25",
+          "availabilityDate": "2026-09-25",
+          "tradeDate": "2026-09-23",
+          "account": {
+            "id": "900003193",
+            "name": "Account 2",
+            "type": "INVESTERINGSSPARKONTO",
+            "urlParameterId": "urlparam-3"
+          },
+          "orderbook": {
+            "id": "346549",
+            "flagCode": "SE",
+            "name": "Fastator",
+            "marketplace": "Stockholmsb\u00F6rsen",
+            "type": "STOCK",
+            "currency": "SEK",
+            "isin": "SE0015407382",
+            "volumeFactor": 1
+          },
+          "instrumentName": "Fastator AB",
+          "description": "",
+          "type": "BUY",
+          "backofficeType": "BUY",
+          "backofficeTypeText": "K\u00F6p",
+          "volume": {
+            "value": 647.000000,
+            "unit": "",
+            "unitType": "UNITLESS",
+            "decimalPrecision": 6
+          },
+          "priceInTradedCurrency": {
+            "value": 6.154089,
+            "unit": "SEK",
+            "unitType": "MONETARY",
+            "decimalPrecision": 6
+          },
+          "amount": {
+            "value": -386.25,
+            "unit": "SEK",
+            "unitType": "MONETARY",
+            "decimalPrecision": 2
+          },
+          "onCreditAccount": false,
+          "commission": null,
+          "currencyRate": null,
+          "noteId": "\u003Credacted\u003E",
+          "priceInTransactionCurrency": {
+            "value": 7.367840,
+            "unit": "SEK",
+            "unitType": "MONETARY",
+            "decimalPrecision": 6
+          },
+          "intraday": false,
+          "foreignTaxRate": null,
+          "isin": "SE0015407382",
+          "result": null,
+          "volumeFactor": 1,
+          "cancelled": false,
+          "cancelDate": null,
+          "verificationNumber": "\u003Credacted\u003E"
+        },
+        {
+          "id": "ABA-900003193-3192620549",
+          "date": "2026-09-23T00:00:00",
+          "settlementDate": "2026-09-23",
+          "availabilityDate": "2026-09-23",
+          "tradeDate": "2026-09-23",
+          "account": {
+            "id": "900003193",
+            "name": "Account 2",
+            "type": "INVESTERINGSSPARKONTO",
+            "urlParameterId": "urlparam-3"
+          },
+          "orderbook": null,
+          "instrumentName": null,
+          "description": "Direktins\u00E4ttning via Swish",
+          "type": "DEPOSIT",
+          "backofficeType": "DEPOSIT",
+          "backofficeTypeText": "Ins\u00E4ttning",
+          "volume": null,
+          "priceInTradedCurrency": null,
+          "amount": {
+            "value": 385.00,
+            "unit": "SEK",
+            "unitType": "MONETARY",
+            "decimalPrecision": 2
+          },
+          "onCreditAccount": false,
+          "commission": null,
+          "currencyRate": null,
+          "noteId": null,
+          "priceInTransactionCurrency": null,
+          "intraday": false,
+          "foreignTaxRate": null,
+          "isin": null,
+          "result": null,
+          "volumeFactor": null,
+          "cancelled": false,
+          "cancelDate": null,
+          "verificationNumber": "\u003Credacted\u003E"
+        }
+      ],
+      "transactionsAfterFiltering": 3,
+      "transactionsFilter": {
+        "accountIds": null,
+        "transactionTypes": null,
+        "isin": null,
+        "dateRange": {
+          "from": "2026-08-26",
+          "to": "2026-09-25"
+        },
+        "includeCancelled": false,
+        "includeClosedAccounts": false
+      },
+      "firstTransactionDate": "2026-09-23"
+    }
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": true
+  }
+}

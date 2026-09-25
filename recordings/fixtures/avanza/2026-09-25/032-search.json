@@ -1,0 +1,178 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "search",
+  "tier": "B",
+  "recordedAtUtc": "2026-09-25T21:02:26.9635243\u002B00:00",
+  "request": {
+    "method": "POST",
+    "path": "/_api/search/filtered-search",
+    "query": "",
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "Cookie",
+      "Transfer-Encoding",
+      "User-Agent",
+      "X-SecurityToken"
+    ],
+    "body": {
+      "query": "ERIC B",
+      "searchFilter": {
+        "types": [
+          "STOCK"
+        ]
+      },
+      "pagination": {
+        "from": 0,
+        "size": 10
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "headerNames": [
+      "AVANZA_TRACE_ID",
+      "Cache-Control",
+      "Connection",
+      "Date",
+      "Keep-Alive",
+      "Pragma",
+      "Strict-Transport-Security",
+      "Transfer-Encoding",
+      "Vary",
+      "X-SecurityToken"
+    ],
+    "setCookieNames": [],
+    "body": {
+      "totalNumberOfHits": 2,
+      "hits": [
+        {
+          "type": "STOCK",
+          "title": "Ericsson B (ERIC B)",
+          "highlightedTitle": "\u003Cmark class=\u0022bold\u0022\u003EEric\u003C/mark\u003Esson \u003Cmark class=\u0022bold\u0022\u003EB\u003C/mark\u003E (\u003Cmark class=\u0022bold\u0022\u003EERIC\u003C/mark\u003E \u003Cmark class=\u0022bold\u0022\u003EB\u003C/mark\u003E)",
+          "description": "Ericsson \u00E4r verksamt inom kommunikationsteknik. B\u2026",
+          "highlightedDescription": "",
+          "path": null,
+          "flagCode": "SE",
+          "orderBookId": "5240",
+          "urlSlugName": "ericsson-b",
+          "tradeable": true,
+          "sellable": true,
+          "buyable": true,
+          "price": {
+            "last": "94,96",
+            "currency": "SEK",
+            "todayChangePercent": "0,66",
+            "todayChangeValue": "0,62",
+            "todayChangeDirection": 1,
+            "threeMonthsAgoChangePercent": null,
+            "threeMonthsAgoChangeDirection": 0,
+            "spread": "0,02"
+          },
+          "stockSectors": [
+            {
+              "id": 38,
+              "level": 1,
+              "name": "Teknologi",
+              "englishName": "Technology",
+              "highlightedName": null
+            },
+            {
+              "id": 28,
+              "level": 2,
+              "name": "Telekommunikation",
+              "englishName": "Telecommunications",
+              "highlightedName": null
+            },
+            {
+              "id": 67,
+              "level": 3,
+              "name": "Telekomutrustning",
+              "englishName": "Telecommunications - Equipment",
+              "highlightedName": null
+            }
+          ],
+          "fundTags": [],
+          "marketPlaceName": "Stockholmsb\u00F6rsen",
+          "subType": null,
+          "highlightedSubType": ""
+        },
+        {
+          "type": "STOCK",
+          "title": "Ericsson B (ERIBR)",
+          "highlightedTitle": "\u003Cmark class=\u0022bold\u0022\u003EEric\u003C/mark\u003Esson \u003Cmark class=\u0022bold\u0022\u003EB\u003C/mark\u003E (ERIBR)",
+          "description": "Ericsson \u00E4r verksamt inom kommunikationsteknik. B\u2026",
+          "highlightedDescription": "",
+          "path": null,
+          "flagCode": "FI",
+          "orderBookId": "61540",
+          "urlSlugName": "ericsson-b",
+          "tradeable": true,
+          "sellable": true,
+          "buyable": true,
+          "price": {
+            "last": "8,424",
+            "currency": "EUR",
+            "todayChangePercent": "10,96",
+            "todayChangeValue": "0,832",
+            "todayChangeDirection": 1,
+            "threeMonthsAgoChangePercent": null,
+            "threeMonthsAgoChangeDirection": 0,
+            "spread": "5,59"
+          },
+          "stockSectors": [
+            {
+              "id": 38,
+              "level": 1,
+              "name": "Teknologi",
+              "englishName": "Technology",
+              "highlightedName": null
+            },
+            {
+              "id": 28,
+              "level": 2,
+              "name": "Telekommunikation",
+              "englishName": "Telecommunications",
+              "highlightedName": null
+            },
+            {
+              "id": 67,
+              "level": 3,
+              "name": "Telekomutrustning",
+              "englishName": "Telecommunications - Equipment",
+              "highlightedName": null
+            }
+          ],
+          "fundTags": [],
+          "marketPlaceName": "Helsingforsb\u00F6rsen",
+          "subType": null,
+          "highlightedSubType": ""
+        }
+      ],
+      "searchQuery": "ERIC B",
+      "searchFilter": {
+        "types": [
+          "STOCK"
+        ]
+      },
+      "facets": {
+        "types": [
+          {
+            "type": "STOCK",
+            "count": 2
+          }
+        ]
+      },
+      "pagination": {
+        "size": 10,
+        "from": 0
+      }
+    }
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": false
+  }
+}
