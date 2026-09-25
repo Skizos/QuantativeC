@@ -35,6 +35,18 @@ internal sealed class Recorder
 
     public string Directory { get; }
 
+    /// <summary>Reserves the next <c>NNN-&lt;name&gt;.json</c> file name (shared numbering for REST and stream recordings).</summary>
+    public string NextFile(string name, out string fileName)
+    {
+        int seq = Interlocked.Increment(ref _sequence);
+        fileName = string.Create(CultureInfo.InvariantCulture, $"{seq:000}-{name}.json");
+        return Path.Combine(Directory, fileName);
+    }
+
+    /// <summary>Starts recording one stream connection; see <see cref="StreamRecording"/>.</summary>
+    public StreamRecording BeginStream(AvanzaRoute route, HttpRequestMessage request, HttpResponseMessage response) =>
+        new(this, route, request, response, _time, _logger);
+
     public async Task RecordAsync(HttpRequestMessage request, HttpResponseMessage response, CancellationToken ct)
     {
         AvanzaRoute? route = request.Options.TryGetValue(AvanzaRequest.Route, out AvanzaRoute? r) ? r : null;
@@ -45,9 +57,7 @@ internal sealed class Recorder
         await response.Content.LoadIntoBufferAsync(ct).ConfigureAwait(false);
         byte[] responseBody = await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
 
-        int seq = Interlocked.Increment(ref _sequence);
-        string fileName = string.Create(CultureInfo.InvariantCulture, $"{seq:000}-{name}.json");
-        string file = Path.Combine(Directory, fileName);
+        string file = NextFile(name, out string fileName);
 
         using var stream = new MemoryStream();
         using (var w = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
@@ -93,12 +103,12 @@ internal sealed class Recorder
         Log.Recorded(_logger, name, fileName);
     }
 
-    private static IEnumerable<string> CookieNames(HttpResponseMessage response) =>
+    internal static IEnumerable<string> CookieNames(HttpResponseMessage response) =>
         response.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? values)
             ? values.Select(v => v.Split('=', 2)[0].Trim())
             : [];
 
-    private static void WriteNames(Utf8JsonWriter w, string property, IEnumerable<string> names)
+    internal static void WriteNames(Utf8JsonWriter w, string property, IEnumerable<string> names)
     {
         w.WriteStartArray(property);
         foreach (string n in names.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))

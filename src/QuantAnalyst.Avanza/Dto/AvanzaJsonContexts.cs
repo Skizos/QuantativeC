@@ -21,6 +21,7 @@ namespace QuantAnalyst.Avanza.Dto;
 [JsonSerializable(typeof(DealsDto))]
 [JsonSerializable(typeof(OrderbookDto))]
 [JsonSerializable(typeof(MarketDataDto))]
+[JsonSerializable(typeof(OrderDepthPushDto))]
 internal sealed partial class AvanzaTierAContext : JsonSerializerContext;
 
 /// <summary>Tier B: unmapped members are skipped here and reported by the unknown-field scan as warnings.</summary>

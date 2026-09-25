@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Market data services and the history store (Phase 4): quote composition and fan-out over IBrokerGateway, the
+    DuckDB known-at store, the instrument master, historical data providers and the calendar loader.
+    Depends on Core only (never on QuantAnalyst.Avanza; an architecture test checks it).
+  -->
+  <PropertyGroup>
+    <RootNamespace>QuantAnalyst.Data</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="QuantAnalyst.Data.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DuckDB.NET.Data.Full" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QuantAnalyst.Core\QuantAnalyst.Core.csproj" />
+  </ItemGroup>
+
+</Project>

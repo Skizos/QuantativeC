@@ -112,17 +112,31 @@ internal sealed class SearchPriceDto
 
 internal sealed class PriceChartDto
 {
-    public const string Version = "price-chart/2026-09-25";
+    // .2: metadata is typed and required (Phase 4 import checks the resolution Avanza used; present in both fixtures).
+    public const string Version = "price-chart/2026-09-25.2";
 
     public required List<OhlcDto> Ohlc { get; init; }
 
-    public JsonElement? Metadata { get; init; }
+    public required PriceChartMetadataDto Metadata { get; init; }
 
     public string? From { get; init; }
 
     public string? To { get; init; }
 
     public decimal? PreviousClosingPrice { get; init; }
+}
+
+internal sealed class PriceChartMetadataDto
+{
+    public required PriceChartResolutionDto Resolution { get; init; }
+}
+
+internal sealed class PriceChartResolutionDto
+{
+    /// <summary>"day" live (2026-09-25), "DAY" in the provisional fixture; parsed case-insensitively.</summary>
+    public required string ChartResolution { get; init; }
+
+    public List<string>? AvailableResolutions { get; init; }
 }
 
 internal sealed class OhlcDto

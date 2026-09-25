@@ -131,7 +131,8 @@ public sealed class AvanzaProbe
                     throw new SkipException("no orderbook id (search found nothing)");
                 }
 
-                return $"{(await _gateway.GetPriceHistoryAsync(id.Value, ChartPeriod.OneMonth, ChartResolution.Day, ct).ConfigureAwait(false)).Count} daily bar(s)";
+                PriceHistory history = await _gateway.GetPriceHistoryAsync(id.Value, ChartPeriod.OneMonth, ChartResolution.Day, ct).ConfigureAwait(false);
+                return $"{history.Bars.Count} bar(s) at resolution {history.Resolution}";
             }),
         };
 

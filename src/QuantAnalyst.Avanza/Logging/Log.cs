@@ -47,4 +47,13 @@ internal static partial class Log
 
     [LoggerMessage(EventId = 1301, Level = LogLevel.Information, Message = "recording {Route} -> {File}")]
     public static partial void Recorded(ILogger logger, string route, string file);
+
+    [LoggerMessage(EventId = 1401, Level = LogLevel.Information, Message = "stream {Route} connected (resuming after an event id: {Resumed})")]
+    public static partial void StreamConnected(ILogger logger, string route, bool resumed);
+
+    [LoggerMessage(EventId = 1402, Level = LogLevel.Warning, Message = "stream {Route} dropped ({Reason}); reconnecting in {DelayMs} ms (consecutive failures: {Failures})")]
+    public static partial void StreamReconnecting(ILogger logger, string route, string reason, long delayMs, int failures);
+
+    [LoggerMessage(EventId = 1403, Level = LogLevel.Error, Message = "stream {Route} stopped: {Error}")]
+    public static partial void StreamStopped(ILogger logger, string route, string error);
 }

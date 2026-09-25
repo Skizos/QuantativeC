@@ -33,7 +33,7 @@ public sealed record AvanzaRoute(string Name, string Method, string PathTemplate
 /// </summary>
 public static class AvanzaRoutes
 {
-    public const string RoutesVersion = "2026-09-25";
+    public const string RoutesVersion = "2026-09-25.2"; // .2: order-depth push stream (Phase 4)
 
     public static readonly Uri DefaultBaseAddress = new("https://www.avanza.se");
 
@@ -145,11 +145,24 @@ public static class AvanzaRoutes
     public static readonly AvanzaRoute Transactions = new(
         "transactions", "GET", "/_api/transactions/list", DtoTier.B, false, GoSdk + "/accounts/service.go");
 
+    // ---- Push streams (server-sent events; ADR 0002 §3). Needs the login cookies csid, cstoken and AZACSRF. ----
+
+    /// <summary>
+    /// Order depth of one orderbook: <c>ORDER_DEPTH</c> events, each a full snapshot, plus <c>info</c> keep-alives.
+    /// The Go SDK sends the orderbook's trading page as <c>Referer</c> (<see cref="OrderDepthRefererPath"/>).
+    /// </summary>
+    public static readonly AvanzaRoute OrderDepthStream = new(
+        "order-depth-stream", "GET", "/_push/order-depth-web-push/{0}", DtoTier.A, false, GoSdk + "/market/service.go");
+
+    /// <summary>Page <c>Referer</c> path for <see cref="OrderDepthStream"/> (Go SDK <c>SubscribeToOrderDepth</c>).</summary>
+    public static string OrderDepthRefererPath(OrderbookId id) =>
+        OrderDepthStream.Path(id).Length > 0 ? "/handla/order.html/kop/" + id.Value : throw new ArgumentException("Invalid orderbook id.", nameof(id));
+
     /// <summary>Every route, for architecture tests and the probe.</summary>
     public static IReadOnlyList<AvanzaRoute> All { get; } =
     [
         UserCredentials, Totp, SessionInfo, StartPage, BankIdStart, BankIdRestart, BankIdCollect, BankIdLogin, TradingPage,
         LoginRedirect, AccountsOverview, TradingAccounts, Positions, Orders, Deals,
-        Orderbook, MarketData, Search, PriceChart, Transactions,
+        Orderbook, MarketData, Search, PriceChart, Transactions, OrderDepthStream,
     ];
 }

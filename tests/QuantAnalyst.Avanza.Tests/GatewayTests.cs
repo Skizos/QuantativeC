@@ -28,7 +28,8 @@ public sealed class GatewayTests
         Assert.Single(await g.GetTransactionsAsync(new DateOnly(2026, 8, 26), new DateOnly(2026, 9, 25), Ct));
         Assert.Equal(2, (await g.SearchStocksAsync("ERIC", 10, Ct)).Count);
         Assert.Equal(70.84m, (await g.GetMarketSnapshotAsync(new OrderbookId("5240"), Ct)).Bid);
-        Assert.Equal(2, (await g.GetPriceHistoryAsync(new OrderbookId("5240"), ChartPeriod.OneMonth, ChartResolution.Day, Ct)).Count);
+        PriceHistory history = await g.GetPriceHistoryAsync(new OrderbookId("5240"), ChartPeriod.OneMonth, ChartResolution.Day, Ct);
+        Assert.Equal((2, ChartResolution.Day, 70.1m), (history.Bars.Count, history.Resolution, history.PreviousClose)); // provisional "DAY"
 
         Assert.All(rig.Server.Requests.Skip(2).Where(r => !r.PathAndQuery.Contains("search", StringComparison.Ordinal) && !r.PathAndQuery.Contains("price-chart", StringComparison.Ordinal)),
             r => Assert.Equal(FakeSecrets.SecurityToken, r.Headers["X-SecurityToken"]));

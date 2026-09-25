@@ -11,8 +11,8 @@ public sealed record SessionHealth(bool LoggedIn, DateTimeOffset CheckedAtUtc);
 /// <summary>
 /// Read side of the broker (ADR 0002 §1). Everything that only <em>reads</em> goes here; placing, modifying
 /// and cancelling orders lives on a separate port (<c>IBrokerOrderChannel</c>, Phase 6) that only
-/// <c>Trading.OrderGateway</c> may use. Streams (Phase 4) and the pre-trade fee/validation helpers
-/// (Phase 7) are added to this interface in those phases.
+/// <c>Trading.OrderGateway</c> may use. The pre-trade fee/validation helpers (Phase 7) and the own-order stream
+/// (Phase 6) are added to this interface in those phases.
 /// </summary>
 /// <remarks>
 /// Implementations throw <see cref="SchemaDriftException"/> when a payload no longer matches its DTO,
@@ -42,6 +42,14 @@ public interface IBrokerGateway
 
     Task<MarketSnapshot> GetMarketSnapshotAsync(OrderbookId id, CancellationToken ct);
 
-    Task<IReadOnlyList<Bar>> GetPriceHistoryAsync(
+    /// <summary>OHLCV history; the result says which resolution the broker actually used.</summary>
+    Task<PriceHistory> GetPriceHistoryAsync(
         OrderbookId id, ChartPeriod period, ChartResolution? resolution, CancellationToken ct);
+
+    /// <summary>
+    /// Pushed order-depth snapshots for one orderbook, with connection state changes and heartbeats (ADR 0002 §3).
+    /// Reconnects on its own; throws <see cref="SessionExpiredException"/>, <see cref="SchemaDriftException"/> or
+    /// <see cref="EndpointGoneException"/> when it must stop. Runs until <paramref name="ct"/> is cancelled.
+    /// </summary>
+    IAsyncEnumerable<MarketStreamEvent> StreamOrderDepthAsync(OrderbookId id, CancellationToken ct);
 }

@@ -7,6 +7,7 @@ using QuantAnalyst.Avanza.Http;
 using QuantAnalyst.Avanza.Json;
 using QuantAnalyst.Avanza.Logging;
 using QuantAnalyst.Avanza.Recording;
+using QuantAnalyst.Avanza.Streaming;
 using QuantAnalyst.Core.Broker;
 
 namespace QuantAnalyst.Avanza;
@@ -16,6 +17,7 @@ namespace QuantAnalyst.Avanza;
 /// <list type="bullet">
 /// <item>login: Recording → RateLimit → Cookies → primary (no retries, ever)</item>
 /// <item>reads: Recording → ReadResilience → RateLimit → SecurityToken → Cookies → primary</item>
+/// <item>streams: RateLimit → SecurityToken → Cookies → primary (the stream client records and reconnects itself)</item>
 /// </list>
 /// Create one per CLI invocation; <see cref="Authenticator"/> allows exactly one login per connection.
 /// </summary>
@@ -25,6 +27,7 @@ public sealed class AvanzaConnection : IDisposable
     private readonly bool _ownsPrimary;
     private readonly HttpClient _authClient;
     private readonly HttpClient _readClient;
+    private readonly HttpClient _streamClient;
     private readonly AvanzaGateway _gateway;
 
     private AvanzaConnection(
@@ -63,8 +66,17 @@ public sealed class AvanzaConnection : IDisposable
             new SecurityTokenHandler(session),
             new CookieHandler(session.Cookies)));
 
-        var api = new AvanzaApiClient(_readClient, new AvanzaJson(logger));
-        _gateway = new AvanzaGateway(api, time, redactor);
+        // Streams: no RecordingHandler (it buffers whole bodies; the stream client records events itself) and no retry
+        // handler (the stream loop reconnects with its own backoff).
+        _streamClient = Client(options, Chain(null,
+            new RateLimitHandler(bucket, time, logger),
+            new SecurityTokenHandler(session),
+            new CookieHandler(session.Cookies)));
+
+        var json = new AvanzaJson(logger);
+        var api = new AvanzaApiClient(_readClient, json);
+        var streams = new AvanzaStreamClient(_streamClient, options, time, logger, Random.Shared, recorder);
+        _gateway = new AvanzaGateway(api, streams, json, time, redactor);
         Authenticator = new AvanzaAuthenticator(
             _authClient, session, secrets, new AuthStateStore(options.StateDirectory, time), options, time, logger, redactor, bankIdPrompt);
         Session = session;
@@ -110,6 +122,7 @@ public sealed class AvanzaConnection : IDisposable
         // Chains are not disposed through the clients (disposeHandler: false) so the shared primary handler is released once.
         _authClient.Dispose();
         _readClient.Dispose();
+        _streamClient.Dispose();
         if (_ownsPrimary)
         {
             _primary.Dispose();

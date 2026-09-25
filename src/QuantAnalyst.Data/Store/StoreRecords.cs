@@ -1,0 +1,71 @@
+using System.Globalization;
+using System.Text;
+using QuantAnalyst.Core;
+using QuantAnalyst.Core.Instruments;
+using QuantAnalyst.Core.Market;
+
+namespace QuantAnalyst.Data.Store;
+
+/// <summary>How an instrument trades. The Phase 5 backtest refuses <see cref="Unknown"/> (market-rules.md: First North auctions).</summary>
+public enum TradingModel
+{
+    Unknown,
+    Continuous,
+    PeriodicAuction,
+}
+
+/// <summary>One version of an instrument master row (the attributes; <see cref="StoredInstrument"/> adds when it was known).</summary>
+public sealed record InstrumentRecord(
+    OrderbookId OrderbookId,
+    string? Isin,
+    string Ticker,
+    string Name,
+    string Currency,
+    string MarketPlace,
+    string InstrumentType,
+    TradingModel TradingModel,
+    decimal VolumeFactor,
+    string TickTableJson,
+    DateOnly ValidFrom)
+{
+    /// <summary>
+    /// Builds the master row from the broker's orderbook parameters. Nasdaq Stockholm main market (XSTO) trades
+    /// continuously; anything else stays <see cref="TradingModel.Unknown"/> until classified.
+    /// </summary>
+    public static InstrumentRecord FromTradingParams(InstrumentTradingParams p) => new(
+        p.OrderbookId,
+        string.IsNullOrWhiteSpace(p.Isin) ? null : p.Isin,
+        p.TickerSymbol ?? p.Name,
+        p.Name,
+        p.Currency,
+        p.MarketPlace,
+        p.InstrumentType,
+        string.Equals(p.MarketPlace, "XSTO", StringComparison.Ordinal) ? TradingModel.Continuous : TradingModel.Unknown,
+        p.VolumeFactor,
+        CanonicalTickTable(p.TickSizes),
+        DateOnly.FromDateTime(MarketTime.ToStockholm(p.KnownAtUtc).DateTime));
+
+    /// <summary>Canonical JSON of a tick table (invariant decimals, fixed key order) so equal tables compare equal.</summary>
+    public static string CanonicalTickTable(TickSizeTable table)
+    {
+        var sb = new StringBuilder("[");
+        for (int i = 0; i < table.Bands.Count; i++)
+        {
+            TickSizeBand b = table.Bands[i];
+            sb.Append(i == 0 ? string.Empty : ",")
+              .Append(CultureInfo.InvariantCulture, $"{{\"min\":{b.Min.ToString(CultureInfo.InvariantCulture)},\"max\":{b.Max.ToString(CultureInfo.InvariantCulture)},\"tick\":{b.Tick.ToString(CultureInfo.InvariantCulture)}}}");
+        }
+
+        return sb.Append(']').ToString();
+    }
+
+    /// <summary>True when every attribute except <see cref="ValidFrom"/> is equal (a new version is only stored on a real change).</summary>
+    public bool SameAttributes(InstrumentRecord other) => this with { ValidFrom = other.ValidFrom } == other;
+}
+
+public sealed record StoredInstrument(InstrumentRecord Instrument, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
+
+public sealed record StoredBar(DailyBar Bar, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
+
+/// <summary>What an append-only write did: rows new to the store, rows that changed (restatements) and unchanged rows.</summary>
+public sealed record WriteCounts(int New, int Restated, int Unchanged);

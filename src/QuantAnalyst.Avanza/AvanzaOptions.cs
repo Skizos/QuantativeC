@@ -44,6 +44,21 @@ public sealed class AvanzaOptions
 
     public TimeSpan CircuitBreakDuration { get; init; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>Stream reconnect base delay floor: the delay is <c>max(server retry, this) · 2^min(n,5)</c> (ADR 0002 §3).</summary>
+    public TimeSpan StreamMinRetry { get; init; } = TimeSpan.FromSeconds(3);
+
+    /// <summary>Upper bound of the stream reconnect delay (after jitter).</summary>
+    public TimeSpan StreamMaxBackoff { get; init; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>A stream that sends no byte for this long is dropped and reconnected (half-open connections).</summary>
+    public TimeSpan StreamIdleTimeout { get; init; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>Largest accepted event-stream line or event data (ADR 0002 §3: 1 MB).</summary>
+    public int StreamMaxEventChars { get; init; } = 1024 * 1024;
+
+    /// <summary>Events buffered between the connection and the consumer before the connection waits.</summary>
+    public int StreamBufferCapacity { get; init; } = 256;
+
     /// <summary>Where <c>state/auth.json</c> (login lock) lives.</summary>
     public string StateDirectory { get; init; } = "state";
 
@@ -78,6 +93,12 @@ public sealed class AvanzaOptions
         if (AttemptTimeout <= TimeSpan.Zero || CircuitBreakDuration <= TimeSpan.Zero || CircuitWindow <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(AttemptTimeout), "Timeouts and windows must be positive.");
+        }
+
+        if (StreamMinRetry < TimeSpan.FromSeconds(1) || StreamMaxBackoff < StreamMinRetry || StreamMaxBackoff > TimeSpan.FromMinutes(5)
+            || StreamIdleTimeout < TimeSpan.FromSeconds(10) || StreamMaxEventChars is < 1024 or > 16 * 1024 * 1024 || StreamBufferCapacity is < 1 or > 10_000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(StreamMinRetry), "Stream settings out of range (retry ≥ 1 s, backoff ≤ 5 min, idle ≥ 10 s, events 1 KB–16 MB).");
         }
     }
 }

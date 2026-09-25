@@ -543,3 +543,33 @@ internal sealed class OrderDepthSideDto
 
     public string? PriceString { get; init; }
 }
+
+// ---- SSE /_push/order-depth-web-push/{id}, event ORDER_DEPTH ---------------------------------------------
+// PROVISIONAL: from the Go SDK market/types.go (OrderDepthData) @ 43f39025 and its tests; replaced by the owner's
+// recording in Phase 4. Every event is a full snapshot.
+
+internal sealed class OrderDepthPushDto
+{
+    public const string Version = "order-depth-push/2026-09-25";
+
+    /// <summary>A string in the Go SDK model and test payloads.</summary>
+    public required string OrderbookId { get; init; }
+
+    public required List<OrderDepthPushLevelDto> Levels { get; init; }
+
+    public int? MarketMakerLevelInAsk { get; init; }
+
+    public int? MarketMakerLevelInBid { get; init; }
+}
+
+/// <summary>One flat level. A side is empty when its price is missing/null or price and volume are both zero.</summary>
+internal sealed class OrderDepthPushLevelDto
+{
+    public decimal? BuyPrice { get; init; }
+
+    public decimal? BuyVolume { get; init; }
+
+    public decimal? SellPrice { get; init; }
+
+    public decimal? SellVolume { get; init; }
+}

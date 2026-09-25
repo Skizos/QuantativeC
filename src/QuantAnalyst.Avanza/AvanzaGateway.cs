@@ -1,8 +1,11 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using QuantAnalyst.Avanza.Dto;
 using QuantAnalyst.Avanza.Http;
+using QuantAnalyst.Avanza.Json;
 using QuantAnalyst.Avanza.Logging;
 using QuantAnalyst.Avanza.Mapping;
+using QuantAnalyst.Avanza.Streaming;
 using QuantAnalyst.Core;
 using QuantAnalyst.Core.Accounts;
 using QuantAnalyst.Core.Broker;
@@ -16,7 +19,7 @@ namespace QuantAnalyst.Avanza;
 /// Read-only Avanza implementation of <see cref="IBrokerGateway"/> (ADR 0002). It has no way to place, modify or
 /// cancel orders and no money-movement capability (ADR 0004).
 /// </summary>
-internal sealed class AvanzaGateway(AvanzaApiClient api, TimeProvider time, Redactor redactor) : IBrokerGateway
+internal sealed class AvanzaGateway(AvanzaApiClient api, AvanzaStreamClient streams, AvanzaJson json, TimeProvider time, Redactor redactor) : IBrokerGateway
 {
     public async Task<SessionHealth> GetSessionHealthAsync(CancellationToken ct)
     {
@@ -124,13 +127,49 @@ internal sealed class AvanzaGateway(AvanzaApiClient api, TimeProvider time, Reda
         return AvanzaMapper.ToMarketSnapshot(id, dto, time.GetUtcNow());
     }
 
-    public async Task<IReadOnlyList<Bar>> GetPriceHistoryAsync(OrderbookId id, ChartPeriod period, ChartResolution? resolution, CancellationToken ct)
+    public async Task<PriceHistory> GetPriceHistoryAsync(OrderbookId id, ChartPeriod period, ChartResolution? resolution, CancellationToken ct)
     {
         string query = "?timePeriod=" + WireName(period.ToString()) + (resolution is { } r ? "&resolution=" + WireName(r.ToString()) : string.Empty);
         PriceChartDto dto = await api.GetAsync(
             AvanzaRoutes.PriceChart, AvanzaRoutes.PriceChart.Path(id) + query, AvanzaTierBContext.Default.PriceChartDto, PriceChartDto.Version, ct).ConfigureAwait(false);
-        return AvanzaMapper.ToBars(dto);
+        return AvanzaMapper.ToPriceHistory(dto);
     }
+
+    /// <summary>
+    /// <c>ORDER_DEPTH</c> snapshots of one orderbook (Tier A). <c>info</c> events are heartbeats, never parsed. Any other
+    /// event name, and any payload that fails the strict check, is schema drift and stops the stream.
+    /// </summary>
+    public async IAsyncEnumerable<MarketStreamEvent> StreamOrderDepthAsync(OrderbookId id, [EnumeratorCancellation] CancellationToken ct)
+    {
+        AvanzaRoute route = AvanzaRoutes.OrderDepthStream;
+        await foreach (StreamItem item in streams.RunAsync(route, route.Path(id), AvanzaRoutes.OrderDepthRefererPath(id), ct).ConfigureAwait(false))
+        {
+            switch (item)
+            {
+                case StreamStateItem s:
+                    yield return new StreamStateChanged(s.State, s.Reason, s.ReceivedUtc);
+                    break;
+                case StreamMessage { Event.Event: OrderDepthEventName } m:
+                    OrderDepthPushDto dto = json.Deserialize(
+                        System.Text.Encoding.UTF8.GetBytes(m.Event.Data), AvanzaTierAContext.Default.OrderDepthPushDto, route.Name, OrderDepthPushDto.Version, DtoTier.A);
+                    yield return new DepthEvent(AvanzaMapper.ToOrderDepth(id, dto, m.ReceivedUtc));
+                    break;
+                case StreamMessage { Event.Event: InfoEventName } m:
+                    yield return new StreamHeartbeat(m.ReceivedUtc);
+                    break;
+                case StreamMessage m:
+                    throw new SchemaDriftException(
+                        route.Name, OrderDepthPushDto.Version, DtoTier.A, ["$event"], $"unknown event name '{SafeEventName(m.Event.Event)}'");
+            }
+        }
+    }
+
+    internal const string OrderDepthEventName = "ORDER_DEPTH";
+    internal const string InfoEventName = "info";
+
+    /// <summary>Server-chosen event names are shown only as short plain identifiers.</summary>
+    internal static string SafeEventName(string name) =>
+        new([.. name.Where(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-').Take(40)]);
 
     /// <summary>"OneMonth" → "one_month", "FiveMinutes" → "five_minutes" (lower snake case, as the clients send).</summary>
     internal static string WireName(string pascal)
