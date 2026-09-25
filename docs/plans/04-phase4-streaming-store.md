@@ -1,6 +1,6 @@
 # 04 — Phase 4: Streaming + data store
 
-- **Status:** in progress (started 2026-09-25).
+- **Status:** implemented and green (2026-09-25). **Waiting for your stop-point run** (a live stream recording, one history import, and the calendar check) to close the gate.
 - **Scope:** master plan §4 Phase 4; ADR 0002 §3 (streaming and quotes, accepted); `market-rules.md` §2 (calendar).
 - **Gate:**
   - replay tests on recorded SSE fixtures pass
@@ -205,6 +205,30 @@ The next trading day is Monday 2026-09-28.
 3. Run `qa history import ERIC-B --period one_year`, then `qa history show ERIC-B`.
 4. Open <https://www.nasdaq.com/european-market-activity/trading-hours>, compare its holidays and half days with the two calendar files, fix any difference, and set `verified_on`.
 
-## Results
+## Results (2026-09-25, clean tree)
 
-(Filled in at the gate.)
+| Gate item | Status | Evidence |
+|---|---|---|
+| Replay tests on recorded SSE fixtures | **pass on the provisional fixture; your recording pending** | `StreamReplayTests` replays every `qa-stream-recording/1` file under `recordings/fixtures/avanza/` through parser → Tier A DTO → mapper → `QuoteComposer`. Today that is the hand-written `provisional/order-depth-stream-5240.json`; your sanitized recording is picked up automatically once committed. |
+| Staleness (10 s) | **pass** | `QuoteComposerTests.NoDepthOrPollUpdateFor10Seconds_SetsTheStaleFlag_AndAnUpdateClearsIt`: fresh at 9.5 s, stale by 10.25 s ("no depth or poll update for 10.x s"), fresh again on the next depth event. Also: stale while the stream reconnects even with fresh polls, and "no data yet". |
+| Known-at restatement | **pass** | `HistoryStoreTests.Restatement_IsNotVisibleBeforeItsKnownAt`: as of T2 − 1 µs the old close (96.2) is returned; from T2 the restated one (48.1). Unchanged neighbours keep their original `known_at`, and a re-import writes nothing. |
+| Calendar classifies every weekday | **pass (draft)** | `MarketCalendarTests`: all 2 × 261 weekdays of 2026–2027 are classified. The drafts equal the holiday rules and `exchange_calendars` 4.13.2. **`verified_on` is still null** until you check Nasdaq's page. |
+
+| Command | Result |
+|---|---|
+| `ctest --preset dev` / `--preset asan` | 107/107 / 107/107 (native code unchanged in Phase 4) |
+| `dotnet build QuantAnalyst.sln` | 0 warnings, 0 errors |
+| `dotnet test --solution QuantAnalyst.sln` | **380 passed, 1 skipped** (the Windows-only Credential Manager round trip). By project: Core 25, Data 54, Avanza 212 (+1 skipped), Native and Analytics unchanged. |
+| `dotnet format --verify-no-changes` / `clang-format --dry-run -Werror` | clean / clean |
+| `bash tests/hooks/block-live-trading.test.sh` | 29/29 |
+| CI (8 checks: Linux, Windows, ASan, format + guardrails) | green on `deaaa53` and `e2ac7c2`, including DuckDB's native library on Windows |
+
+**Timing tests were run repeatedly** (the composer and stream tests mix fake and real time): Data tests 8×, Avanza tests 5×, no failures.
+
+**Still open:**
+- **Your stop-point run** (above). The recording also settles:
+  - the real `ORDER_DEPTH` field set and event names (`info`?)
+  - how often heartbeats come
+  - whether two depth streams can share one session (ADR 0002 open item 1)
+- **Calendar `verified_on`**, from Nasdaq's page.
+- **Daily bars over longer periods.** Whether `one_year`/`five_years` offer `resolution=day` is unknown until your import. The importer refuses the import rather than silently storing week bars.

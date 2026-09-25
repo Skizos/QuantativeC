@@ -80,7 +80,7 @@ qa optimize --prices … --method hrp                        # hierarchical risk
 - Output: weights, each asset's share of risk, and annualized expected return and volatility (`--periods-per-year`, default 252).
 - Results are **in-sample** estimates: not validated out of sample and not a backtest. Honest evaluation arrives with the Phase 5 TrialLedger.
 
-## Avanza (read-only, Phase 3)
+## Avanza (read-only, Phases 3–4)
 
 These verbs talk to Avanza. Each invocation is **one trigger**: at most **one login**, never retried. There are **no** order or money-transfer verbs.
 
@@ -100,6 +100,8 @@ These verbs talk to Avanza. Each invocation is **one trigger**: at most **one lo
 | `qa quote ERIC-B` / `qa quote --id 5240` | Bid/ask/last, depth, tick size at the last price, lot size. Times are shown in Europe/Stockholm. |
 | `qa probe [--ticker ERIC-B]` | One login, then every Phase 3 read. Prints OK / DRIFT / RECORDED per endpoint and records raw responses to `recordings/live/<utc-stamp>/`. |
 | `qa recordings sanitize --in <raw> --out <fixtures>` | Masks ids and names, replaces personal amounts (`--keep-amounts` to keep them), scans for leaks; writes nothing if a leak is found |
+| `qa stream ERIC-B [VOLV-B …] [--duration 60] [--poll 5]` | Live quotes for 1–5 instruments. Order depth is pushed by Avanza (server-sent events) and the last trade is polled every `--poll` seconds. A line is printed whenever the visible quote changes. A quote is marked **STALE** when neither source has updated for 10 s or the depth stream is down. Records to `recordings/live/<utc-stamp>/` unless `--no-record`. Ctrl+C stops early. |
+| `qa history import ERIC-B [--from yyyy-MM-dd] [--to yyyy-MM-dd] [--store data/quant.duckdb]` | Imports daily bars from Avanza's price chart (default: the last year) and adds or updates the instrument in the instrument master. Re-imports store only changed bars, as restatements with their own known-at time. |
 
 Common options:
 - `--login bankid|totp` (default `bankid`, or `QA_AVANZA_LOGIN`)
@@ -118,3 +120,16 @@ Common options:
 | 4 | **LOCKED**: login is locked |
 
 A Tier A drift message lists every unknown or missing JSON path, e.g. `$.accounts[0].newField`.
+
+## Local data (offline, Phase 4)
+
+These verbs never talk to Avanza.
+
+| Verb | What it does |
+|---|---|
+| `qa history show ERIC-B [--from] [--to] [--as-of <time>] [--json]` | Stored daily bars with their source labels. Avanza history is labelled **NOT survivorship-free, NOT point-in-time**. `--as-of` shows what the store knew at that time: ISO 8601, and without an offset it is read as Stockholm time. |
+| `qa instruments [--as-of <time>] [--json]` | The instrument master: orderbook id, ISIN, ticker, market, currency, trading model and tick table. |
+| `qa calendar [--year 2026] [--date yyyy-MM-dd]` | The Nasdaq Stockholm (XSTO) calendar from `config/market-calendar.XSTO.<year>.json`: closed days, half days, and whether each year has been verified (`verified_on`). |
+
+- **Store:** `data/quant.duckdb` by default (git-ignored). Change it with `--store`.
+- **Calendar files:** read from `./config`, else from next to `qa`. Change the folder with `--config-dir`.

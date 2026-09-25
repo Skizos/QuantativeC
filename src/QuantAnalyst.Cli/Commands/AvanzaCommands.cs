@@ -14,6 +14,9 @@ using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
 using QuantAnalyst.Core.Orders;
+using QuantAnalyst.Data.Calendar;
+using QuantAnalyst.Data.History;
+using QuantAnalyst.Data.Store;
 
 namespace QuantAnalyst.Cli.Commands;
 
@@ -36,11 +39,11 @@ internal sealed record AvanzaCliServices(
 }
 
 /// <summary>
-/// Read-only Avanza verbs (Phase 3). Every invocation is one trigger: at most one login, never retried
+/// Read-only Avanza verbs (Phases 3–4). Every invocation is one trigger: at most one login, never retried
 /// (CLAUDE.md "Absolute safety rules"). There are no order or money-transfer verbs.
 /// Exit codes: 0 ok, 1 error, 3 halt (schema drift / session gone / endpoint moved), 4 login locked.
 /// </summary>
-internal static class AvanzaCommands
+internal static partial class AvanzaCommands
 {
     public const int ExitHalt = 3;
     public const int ExitLocked = 4;
@@ -95,6 +98,8 @@ internal static class AvanzaCommands
         yield return Positions(services);
         yield return Orders(services);
         yield return Quote(services);
+        yield return Stream(services);
+        yield return History(services);
         yield return Probe(services);
         yield return Recordings(services);
         yield return Secrets();
@@ -527,15 +532,21 @@ internal static class AvanzaCommands
 
     // ---- shared plumbing ------------------------------------------------------------------------------
 
-    private sealed record Ctx(AvanzaConnection Connection, CancellationToken Ct);
+    /// <param name="Interactive">True when stderr is the real console (Ctrl+C handling, in-place QR redraw).</param>
+    private sealed record Ctx(AvanzaConnection Connection, ILogger Logger, bool Interactive, CancellationToken Ct);
 
-    private static int Run(ParseResult parse, AvanzaCliServices services, Common common, string? record, Func<Ctx, TextWriter, Task<int>> body)
+    /// <param name="live">
+    /// False: output is buffered and redacted as a whole at the end. True (long-running verbs): every line is redacted
+    /// and written as soon as it is complete.
+    /// </param>
+    private static int Run(
+        ParseResult parse, AvanzaCliServices services, Common common, string? record, Func<Ctx, TextWriter, Task<int>> body, bool live = false)
     {
         TextWriter output = parse.InvocationConfiguration.Output;
         TextWriter error = parse.InvocationConfiguration.Error;
         var redactor = new Redactor();
         var logger = new RedactingLogger(error, redactor, parse.GetValue(common.Verbose) ? LogLevel.Debug : LogLevel.Warning);
-        var buffer = new StringWriter(CultureInfo.InvariantCulture);
+        TextWriter buffer = live ? new RedactingLineWriter(output, redactor) : new StringWriter(CultureInfo.InvariantCulture);
         try
         {
             ISecretStore secrets = services.SecretStoreFactory(parse.GetValue(common.SecretStore)!);
@@ -548,13 +559,14 @@ internal static class AvanzaCommands
             bool interactive = ReferenceEquals(error, Console.Error) && !Console.IsErrorRedirected;
             var prompt = new ConsoleBankIdPrompt(error, interactive);
             using AvanzaConnection connection = services.ConnectionFactory(options, secrets, prompt, logger, redactor);
-            int code = body(new Ctx(connection, CancellationToken.None), buffer).GetAwaiter().GetResult();
-            output.Write(redactor.Redact(buffer.ToString()));
+            int code = body(new Ctx(connection, logger, interactive, CancellationToken.None), buffer).GetAwaiter().GetResult();
+            Flush(buffer, output, redactor);
             return code;
         }
-        catch (Exception ex) when (ex is BrokerException or SecretStoreException or ArgumentException or IOException or InvalidDataException)
+        catch (Exception ex) when (ex is BrokerException or SecretStoreException or ArgumentException or IOException or InvalidDataException
+                                       or HistoryImportException or HistoryStoreException or CalendarConfigException)
         {
-            output.Write(redactor.Redact(buffer.ToString()));
+            Flush(buffer, output, redactor);
             (int code, string prefix) = ex switch
             {
                 LoginLockedException => (ExitLocked, "LOCKED"),
@@ -564,6 +576,18 @@ internal static class AvanzaCommands
             };
             error.WriteLine(redactor.Redact($"{prefix}: {ex.Message}"));
             return code;
+        }
+    }
+
+    private static void Flush(TextWriter buffer, TextWriter output, Redactor redactor)
+    {
+        if (buffer is StringWriter sw)
+        {
+            output.Write(redactor.Redact(sw.ToString()));
+        }
+        else
+        {
+            buffer.Flush();
         }
     }
 

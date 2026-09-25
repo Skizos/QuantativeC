@@ -95,6 +95,12 @@ public sealed class AvanzaConnection : IDisposable
         }
     }
 
+    /// <summary>Stored with imported chart rows: the DTO and routes versions they were parsed with.</summary>
+    public static string PriceChartSourceVersion => $"{Dto.PriceChartDto.Version}; routes {AvanzaRoutes.RoutesVersion}";
+
+    /// <summary>Stored with instrument-master rows built from the orderbook response.</summary>
+    public static string OrderbookSourceVersion => $"{Dto.OrderbookDto.Version}; routes {AvanzaRoutes.RoutesVersion}";
+
     public AvanzaAuthenticator Authenticator { get; }
 
     public IBrokerGateway Gateway => _gateway;

@@ -156,6 +156,19 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
 - **No automatic re-login in Phase 3.** The CLI is a one-shot trigger; the "one re-login attempt" on 401/403 belongs to the long-running `HaltController` (Phase 6).
 - **Deals:** no reference client models the current response, so the DTO waits for your recording (`EndpointNotModelledException` until then).
 
+## Implementation notes (Phase 4)
+
+- **Stream pipeline:** RateLimit → SecurityToken → Cookies → primary.
+  - It has no recording handler, because that handler buffers whole bodies. The stream client records events itself (`qa-stream-recording/1`).
+  - It has no retry handler: the stream loop is the retry.
+- **Timeouts:** the response headers must arrive within the normal attempt timeout (15 s). After that, an **idle watchdog** (60 s without a byte) replaces the HTTP timeout, so a half-open connection is dropped and reconnected. The quote is stale long before that.
+- **Terminal statuses:** besides 401/403, a **404 is `EndpointGone`**, and any other 4xx or a non-`text/event-stream` 200 is **schema drift**. None of them reconnects.
+- **Events:** `info` events are heartbeats and are never parsed. Any other event name except `ORDER_DEPTH` is drift, because the stream is Tier A.
+- **The `ORDER_DEPTH` DTO is provisional** until your recording (the Go SDK's flat `{buyPrice, buyVolume, sellPrice, sellVolume}` levels).
+- **Staleness is measured on our clock:** the receipt time of the last depth event and of the last *successful* poll. Avanza's `quote.updated` isn't used, because it is the last server-side change and stays old in a quiet market.
+- **Bid/ask:** the composer takes them from whichever source is newer, because the poll also carries a full depth. The stale check runs every 250 ms.
+- **Own-order stream (`/_push/trading/orders/`):** moved to Phase 6, where the OMS consumes it. Until an order exists there is nothing to record.
+
 ## Alternatives considered
 
 | Option | Why not |
@@ -174,7 +187,7 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
 
 ## Open items (resolved in the named phase)
 
-1. Can ~30 concurrent SSE depth streams run on one session, or is there a multiplexed variant? **Phase 4**, from recordings.
+1. Can ~30 concurrent SSE depth streams run on one session, or is there a multiplexed variant? **Phase 4**, from recordings. `qa stream` runs up to 5 streams on one session. Your two-instrument recording (plan 04, stop point) is the first data point; 30 streams stays unproven until a Paper-mode run in Phase 6.
 2. The current path for `modify`. **Phase 6/7**, from a captured web-app request.
 3. The `profit` field on sells (Qluxzz #156). **Phase 7**, from a captured web-app sell.
 4. How lockout is signalled (status and message). **Phase 3**, only if it happens; never provoked.

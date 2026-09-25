@@ -19,7 +19,13 @@
   <ItemGroup>
     <ProjectReference Include="..\QuantAnalyst.Analytics\QuantAnalyst.Analytics.csproj" />
     <ProjectReference Include="..\QuantAnalyst.Avanza\QuantAnalyst.Avanza.csproj" />
+    <ProjectReference Include="..\QuantAnalyst.Data\QuantAnalyst.Data.csproj" />
     <ProjectReference Include="..\QuantAnalyst.Native\QuantAnalyst.Native.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Calendar files next to qa for runs outside the repo root; a ./config folder takes precedence. -->
+    <None Include="..\..\config\market-calendar.*.json" LinkBase="config" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
