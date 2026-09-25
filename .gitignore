@@ -27,7 +27,8 @@ recordings/live/
 
 # Runtime state
 KILL
-promotion/*.local.json
+promotion/state.json
+state/
 logs/
 audit/
 
