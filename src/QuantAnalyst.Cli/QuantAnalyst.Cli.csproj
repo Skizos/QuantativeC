@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="QuantAnalyst.Analytics.Tests" />
+    <InternalsVisibleTo Include="QuantAnalyst.Avanza.Tests" />
   </ItemGroup>
 
   <ItemGroup>
@@ -16,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\QuantAnalyst.Analytics\QuantAnalyst.Analytics.csproj" />
+    <ProjectReference Include="..\QuantAnalyst.Avanza\QuantAnalyst.Avanza.csproj" />
     <ProjectReference Include="..\QuantAnalyst.Native\QuantAnalyst.Native.csproj" />
   </ItemGroup>
 

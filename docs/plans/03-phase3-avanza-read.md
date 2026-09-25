@@ -190,3 +190,29 @@ Package versions come from nuget.org's flat-container index (2026-09-25). `Syste
 
 ## Stop point
 After the gate commands pass, I stop and give you the exact read-only commands to run on your Windows machine. You then commit the sanitized fixture folder (or send it), and I update the DTOs until every Tier A route parses strictly.
+
+## Results so far (clean tree, cloud container, 2026-09-25)
+
+| Gate item | Result |
+|---|---|
+| Fixture tests | green: `dotnet test --solution QuantAnalyst.sln` 225 passed + 1 skipped (the skipped one is the Windows Credential Manager round trip, which runs on the Windows CI job). Breakdown: Core 25, Avanza 112, Native 61, Analytics/CLI 28. |
+| Native unchanged | `ctest --preset dev` 107/107 |
+| Log scan | green: `GatewayTests.LogScan_TraceLogsOfAFullRunContainNoSecretsOrFullAccountIds`, `Recording_KeepsStructureButNeverCredentialsTokensOrCookieValues`, and every `CliAvanzaTests` run scans stdout/stderr |
+| Guardrail self-test | 29/29 (6 new money-transfer cases) |
+| Format | `dotnet format --verify-no-changes` and `clang-format --dry-run -Werror` clean |
+| ADR 0004 | recorded (Accepted, 2026-09-25) |
+| **Your manual read-only run** | **pending**: see "Stop point" |
+
+**Test map:**
+
+| Area | Tests |
+|---|---|
+| RFC 6238 / 4226 vectors, Base32 | `TotpTests` |
+| Tier A/B drift (unknown, missing, null, wrong type, non-JSON) | `DtoDriftTests` |
+| Mapping (decimals, volumes, timestamps, tick table, unknown side) | `MapperTests` |
+| One login attempt, no next-OTP retry, lock after the second failure, 423/429 lock, lock blocks HTTP, fresh-window wait, header/cookie token | `AuthenticatorTests` |
+| 401/403, 404, retries, `Retry-After`, timeout, circuit breaker, token bucket | `PipelineTests` |
+| Gateway, ticker resolver, probe, recording redaction, log scan | `GatewayTests` |
+| Sanitizer (ids, names, amounts, determinism, fail closed) | `SanitizerTests` |
+| `/_api/` only in routes, no order/stop-loss/transfer routes, DTOs internal | `ArchitectureTests` |
+| CLI verbs, exit codes, output masking | `CliAvanzaTests` |

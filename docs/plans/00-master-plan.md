@@ -148,7 +148,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 
 *Gate:* every numerical item in `<verification_requirements>` passes, with seeds recorded.
 
-### Phase 3 — Avanza read-only gateway (in progress; plan and results in `docs/plans/03-phase3-avanza-read.md`)
+### Phase 3 — Avanza read-only gateway (code + fixture gate green 2026-09-25; waiting for your read-only run, see `docs/plans/03-phase3-avanza-read.md`)
 - First, refresh `avanza-endpoints.md` if it is older than 7 days.
 - Implement RFC 6238 TOTP (Appendix B vectors), `AvanzaAuthenticator` (single attempt, lock persistence), `AvanzaHttpClient` (handler pipeline, ADR 0002), `AvanzaRoutes` (versioned), strict DTOs + mappers, and `AvanzaGateway` reads: accounts, trading accounts, positions, orders, deals, transactions, search, orderbook (tick table), marketdata, chart, session info.
 - Recording + sanitizing tool (`qa recordings sanitize`), a secret-scanning log test, and the drift test.

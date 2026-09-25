@@ -21,13 +21,15 @@ internal static class QaCli
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static int Run(string[] args, TextWriter output, TextWriter error)
+    public static int Run(string[] args, TextWriter output, TextWriter error) => Run(args, output, error, AvanzaCliServices.Default);
+
+    internal static int Run(string[] args, TextWriter output, TextWriter error, AvanzaCliServices avanza)
     {
         CultureInfo previous = CultureInfo.CurrentCulture;
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
         try
         {
-            RootCommand root = Build();
+            RootCommand root = Build(avanza);
             ParseResult parse = root.Parse(args);
             return parse.Invoke(new InvocationConfiguration { Output = output, Error = error });
         }
@@ -37,13 +39,18 @@ internal static class QaCli
         }
     }
 
-    internal static RootCommand Build()
+    internal static RootCommand Build(AvanzaCliServices avanza)
     {
         var root = new RootCommand(
-            "QuantAnalyst for Avanza - quant research and risk tools. Model outputs only; not financial advice.");
+            "QuantAnalyst for Avanza - quant research, risk tools and read-only Avanza access. Model outputs only; not financial advice.");
         root.Subcommands.Add(PriceCommand.Create());
         root.Subcommands.Add(RiskCommand.Create());
         root.Subcommands.Add(OptimizeCommand.Create());
+        foreach (Command command in AvanzaCommands.Create(avanza))
+        {
+            root.Subcommands.Add(command);
+        }
+
         return root;
     }
 

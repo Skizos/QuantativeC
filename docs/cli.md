@@ -79,3 +79,36 @@ qa optimize --prices … --method hrp                        # hierarchical risk
 ```
 - Output: weights, each asset's share of risk, and annualized expected return and volatility (`--periods-per-year`, default 252).
 - Results are **in-sample** estimates: not validated out of sample and not a backtest. Honest evaluation arrives with the Phase 5 TrialLedger.
+
+## Avanza (read-only, Phase 3)
+
+These verbs talk to Avanza. Each invocation is **one trigger**: at most **one login**, never retried. There are **no** order or money-transfer verbs. Credentials come from Windows Credential Manager (`docs/setup.md` §5).
+
+| Verb | What it does |
+|---|---|
+| `qa secrets set` / `qa secrets check` | Store the credentials (prompts, no echo) / show which exist |
+| `qa login` | One login plus a session health check. Prints where the security token came from, never the token. |
+| `qa login --clear-lock` | Clear a persisted login lock after checking with BankID. No login is attempted. |
+| `qa accounts [--json]` | Accounts, total value, buying power, available for purchase (ids masked `***123`) |
+| `qa positions [--account 123] [--json]` | Holdings and cash; `--account` matches the end of the id |
+| `qa orders [--json]` | Open orders |
+| `qa quote ERIC-B` / `qa quote --id 5240` | Bid/ask/last, depth, tick size at the last price, lot size. Times are shown in Europe/Stockholm. |
+| `qa probe [--ticker ERIC-B]` | One login, then every Phase 3 read. Prints OK / DRIFT / RECORDED per endpoint and records raw responses to `recordings/live/<utc-stamp>/`. |
+| `qa recordings sanitize --in <raw> --out <fixtures>` | Masks ids and names, replaces personal amounts (`--keep-amounts` to keep them), scans for leaks; writes nothing if a leak is found |
+
+Common options:
+- `--state-dir` (default `state`)
+- `--secret-store credman|env`
+- `--verbose` (redacted debug log on stderr)
+
+**Exit codes:**
+
+| Code | Meaning |
+|---|---|
+| 0 | OK |
+| 1 | Error, e.g. missing credentials or bad arguments |
+| 2 | `sanitize` found a leak |
+| 3 | **HALT**: schema drift, session expired, or endpoint moved |
+| 4 | **LOCKED**: login is locked |
+
+A Tier A drift message lists every unknown or missing JSON path, e.g. `$.accounts[0].newField`.

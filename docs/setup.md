@@ -104,9 +104,10 @@ Claude Code must never run QuantAnalyst in **Confirm** or **Auto** mode, or call
 - pass `--mode Confirm|Auto`, `--mode=auto`, `-m auto`, …
 - set `TRADING__MODE` / `Trading:Mode` to Confirm/Auto, including `dotnet user-secrets set`
 - reference Avanza order routes (`order-entry/order`, `rest/order/{new,modify,delete}`, `stoploss/{new,modify}`, `fund-order-page/{buy,sell}`)
+- reference Avanza money-movement paths: `transfer`, `withdraw`, `deposit`, `payment`, `uttag`, `overforing` or `insattning` under `/_api/` (ADR 0004)
 
 **Check it in three steps:**
-1. **Self-test:** `bash tests/hooks/block-live-trading.test.sh`. Expect 23 lines starting with `ok` and exit code 0. CI runs this on every push.
+1. **Self-test:** `bash tests/hooks/block-live-trading.test.sh`. Expect 29 lines starting with `ok` and exit code 0. CI runs this on every push.
 2. **Registration:** in Claude Code, run `/hooks` and confirm there is a `PreToolUse` entry for `Bash` pointing to `block-live-trading.sh`.
 3. **Live refusal:** ask Claude Code to run `echo qa paper run --mode Auto`. The tool call must be refused with `BLOCKED by .claude/hooks/block-live-trading.sh: …`. If it runs, stop, because the hook is not active.
 
@@ -119,10 +120,24 @@ Claude Code must never run QuantAnalyst in **Confirm** or **Auto** mode, or call
 
 ## 5. Secrets (Phase 3 onwards)
 
-Nothing in Phase 1–2 needs credentials. The following comes into play in Phase 3:
-- **Store:** Avanza credentials (`AVANZA__USERNAME`, `AVANZA__PASSWORD`, `AVANZA__TOTPSECRET`, `AVANZA__ALLOWEDACCOUNTIDS`) go in **Windows Credential Manager**. `dotnet user-secrets` is the development fallback.
-- **Never:** in the repo, in `.env` files Claude can read, or in logs.
+Credentials live in **Windows Credential Manager** as two generic credentials:
+
+| Target | User name | Password |
+|---|---|---|
+| `QuantAnalyst:Avanza` | your Avanza username | your Avanza password |
+| `QuantAnalyst:Avanza:TOTP` | `totp` | the Base32 TOTP secret Avanza showed when you enabled an authenticator app |
+
+**Set them up** with one of:
+- `qa secrets set`: prompts without echo and checks that the TOTP secret is valid Base32 before storing anything.
+- `cmdkey /generic:QuantAnalyst:Avanza /user:<username> /pass`: with no value after `/pass`, cmdkey prompts for it, so the secret stays out of your shell history. Repeat for `QuantAnalyst:Avanza:TOTP`.
+
+Then run `qa secrets check`. It reports which entries exist and never prints values.
+
+**Rules:**
+- **Development fallback** (non-Windows): environment variables `QA_AVANZA_USERNAME`, `QA_AVANZA_PASSWORD` and `QA_AVANZA_TOTP_SECRET`, selected with `--secret-store env`. Never used in CI. `dotnet user-secrets` is not used, because it stores plaintext JSON.
+- **Never** put credentials in the repo, in `.env` files Claude can read, or in logs. The logger redacts them anyway, and a test scans a full Trace-level run for them.
 - **Claude Code access:** `.claude/settings.json` denies reading `.env*`, `secrets/**` and `recordings/live/**`.
+- **Login lock:** a failed login is recorded in `state/auth.json`. A second failure within 24 h, or an HTTP 423/429 on login, **locks** it. `qa` then refuses to try until you check your login with BankID on avanza.se and run `qa login --clear-lock`.
 
 ---
 
