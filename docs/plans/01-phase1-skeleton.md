@@ -55,6 +55,7 @@ The gate also requires the BS reference (call ≈ 10.4506, put ≈ 5.5735, tol 1
 | Guardrail self-test | 23/23. The live session also refused an `echo` containing a live-mode flag, and blocked one of my own commits whose text quoted it. |
 | `dotnet format --verify-no-changes`, `clang-format --dry-run -Werror` | clean |
 | Benchmarks | `bench/results/` (1e6 BS: 74 ms scalar, 81 ms via ABI, 78.5 ms from C#; bare P/Invoke 10.8 ns) |
+| CI [run 36168605334](https://github.com/Skizos/QuantativeC/actions/runs/36168605334) on `2228d5c` | All 4 jobs green: format + guardrails; ubuntu-24.04 (vcpkg gtest 1.18 / benchmark 1.9.5); **windows-2025 via `build.ps1`** (MSVC `/W4 /WX`, 0 warnings, 21/21 native, 27/27 managed); ASan + UBSan |
 
 ## Deviations from the master plan
 - **`dotnet test` needs `--solution`.** xunit.v3 4.x runs on Microsoft.Testing.Platform, which the .NET 10 SDK requires opting into via `global.json`. In that mode `dotnet test` takes the solution through `--solution`. CLAUDE.md's command was updated.
