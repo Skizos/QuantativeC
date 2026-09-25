@@ -30,8 +30,14 @@ internal static partial class Log
     [LoggerMessage(EventId = 1202, Level = LogLevel.Information, Message = "login: waiting {WaitMs} ms for a fresh TOTP window (not a retry)")]
     public static partial void TotpWindowWait(ILogger logger, long waitMs);
 
-    [LoggerMessage(EventId = 1203, Level = LogLevel.Information, Message = "login: succeeded; security token from {TokenSource}")]
-    public static partial void LoginSucceeded(ILogger logger, string tokenSource);
+    [LoggerMessage(EventId = 1203, Level = LogLevel.Information, Message = "login: succeeded with {Method}; security token from {TokenSource}")]
+    public static partial void LoginSucceeded(ILogger logger, string method, string tokenSource);
+
+    [LoggerMessage(EventId = 1206, Level = LogLevel.Information, Message = "login: starting one BankID transaction (QR code)")]
+    public static partial void BankIdStarting(ILogger logger);
+
+    [LoggerMessage(EventId = 1207, Level = LogLevel.Debug, Message = "login: BankID status {HintCode}")]
+    public static partial void BankIdStatus(ILogger logger, string hintCode);
 
     [LoggerMessage(EventId = 1204, Level = LogLevel.Error, Message = "login: failed at {Step}: {Reason}. Not retrying.")]
     public static partial void LoginFailed(ILogger logger, string step, string reason);

@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="QRCoder" />
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 

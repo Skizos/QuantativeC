@@ -68,7 +68,7 @@ public sealed class AvanzaProbe
         try
         {
             LoginResult login = await _auth.LoginAsync(ct).ConfigureAwait(false);
-            results.Add(new("login", ProbeStatus.Ok, $"security token from {login.TokenSource}"));
+            results.Add(new("login", ProbeStatus.Ok, $"{(login.Method == AvanzaLoginMethod.BankId ? "BankID" : "TOTP")}; security token from {login.TokenSource}"));
         }
         catch (BrokerException ex)
         {

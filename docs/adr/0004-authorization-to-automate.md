@@ -35,7 +35,9 @@ Recorded as:
   - a global limit of ~2 requests/s (burst 5)
   - conservative polling (ADR 0002 §3)
   - no scraping of HTML pages
-- **Credentials:** username + password + TOTP only, from the OS secret store. There is no BankID automation.
+- **Credentials:**
+  - **BankID** (default, owner's choice 2026-09-25): you approve every login in the BankID app. Nothing is stored, and approval is never automated.
+  - **Username + password + TOTP** from the OS secret store, when you enable it later.
 - **Accounts:** one dedicated ISK for orders. Other accounts are only ever read.
 - **No money movement, ever:**
   - The program implements **no** transfer, withdrawal, deposit or payment endpoints.
@@ -61,3 +63,4 @@ Recorded as:
 | Date | Event |
 |---|---|
 | 2026-09-25 | Owner decision recorded (above). No written consent requested yet. |
+| 2026-09-25 | Owner chose BankID login per run for now; TOTP stays available for later. |

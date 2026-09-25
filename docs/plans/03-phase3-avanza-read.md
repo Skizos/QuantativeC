@@ -16,6 +16,7 @@
 | DTO strictness (master plan §2 item 8) | "Apply the strict" | Read as approval of the **tiered** proposal in ADR 0002. See the note below. |
 | Account | "a dedicated ISK account" | Orders (Phase 6+) are allowlisted to one ISK. Reads show every account; account ids are always masked to the last 3 digits. |
 | Terms of use | "I agree to avanzas terms of use" | ADR 0004 records your decision and its limits. |
+| Login method (asked after the first delivery) | "BankID login per run … make me able to add [TOTP] later" | BankID QR login is the default; you approve every run. TOTP stays implemented behind `--login totp` / `QA_AVANZA_LOGIN=totp`. Auto mode (Phase 8) will require TOTP. |
 
 **How "Apply the strict" is read.** The question was whether to accept the tiered refinement in master plan §2 item 8:
 - **Tier A (trading-critical) is strict:** unknown **or** missing fields ⇒ `SchemaDriftException` ⇒ halt.
@@ -45,6 +46,21 @@ Package versions come from nuget.org's flat-container index (2026-09-25). `Syste
 ## Design
 
 ### Authentication (`AvanzaAuthenticator`)
+
+**BankID (default).** The flow follows the Go SDK `auth/auth.go` @ `43f39025`; the full sequence is in avanza-endpoints.md §1.
+1. `GET /` for cookies, then start one QR transaction.
+2. Every second, collect the state and fetch a refreshed QR token, which `IBankIdPrompt` draws. The CLI renders it as half-blocks, dark on light, redrawn in place.
+3. On COMPLETE:
+   - validate `logins[0].loginPath` and GET it, following same-origin redirects manually so every hop's cookies are kept
+   - GET the trading page for cookies
+   - verify with session info
+   - use the `AZACSRF` cookie as the token
+4. **Stopping rules:**
+   - FAILED, a timeout (3 min) or any HTTP failure stops the trigger. A second transaction is never started.
+   - The collect payload's `name` and `identificationNumber` are never read.
+   - BankID failures do not count toward the TOTP lock, and a TOTP lock does not block BankID.
+
+**TOTP** (`--login totp`):
 1. **Before any HTTP call:**
    - load `state/auth.json`; if `Locked`, stop
    - read the credentials from the secret store; if any is missing, stop
@@ -143,7 +159,7 @@ Package versions come from nuget.org's flat-container index (2026-09-25). `Syste
 | Verb | Login | What it does |
 |---|---|---|
 | `qa secrets set` / `qa secrets check` | no | Windows Credential Manager setup |
-| `qa login [--clear-lock]` | yes | one login + session health; prints the token source, never the token |
+| `qa login [--clear-lock]` | yes | one login (BankID QR by default) + session health; prints the method and token source, never the token |
 | `qa probe [--ticker ERIC-B]` | yes | one login, then every Phase 3 read with recording on; a per-endpoint OK/DRIFT/HTTP table. It continues after drift (read-only diagnostics) and stops on 401/403. |
 | `qa accounts` | yes | accounts + buying power, ids masked |
 | `qa positions [--account <last3>]` | yes | positions and cash |
@@ -195,7 +211,7 @@ After the gate commands pass, I stop and give you the exact read-only commands t
 
 | Gate item | Result |
 |---|---|
-| Fixture tests | green: `dotnet test --solution QuantAnalyst.sln` 225 passed + 1 skipped (the skipped one is the Windows Credential Manager round trip, which runs on the Windows CI job). Breakdown: Core 25, Avanza 112, Native 61, Analytics/CLI 28. |
+| Fixture tests | green: `dotnet test --solution QuantAnalyst.sln` 248 passed + 1 skipped (the skipped one is the Windows Credential Manager round trip, which runs on the Windows CI job). Breakdown: Core 25, Avanza 135 (23 of them for BankID), Native 61, Analytics/CLI 28. |
 | Native unchanged | `ctest --preset dev` 107/107 |
 | Log scan | green: `GatewayTests.LogScan_TraceLogsOfAFullRunContainNoSecretsOrFullAccountIds`, `Recording_KeepsStructureButNeverCredentialsTokensOrCookieValues`, and every `CliAvanzaTests` run scans stdout/stderr |
 | Guardrail self-test | 29/29 (6 new money-transfer cases) |
@@ -216,3 +232,5 @@ After the gate commands pass, I stop and give you the exact read-only commands t
 | Sanitizer (ids, names, amounts, determinism, fail closed) | `SanitizerTests` |
 | `/_api/` only in routes, no order/stop-loss/transfer routes, DTOs internal | `ArchitectureTests` |
 | CLI verbs, exit codes, output masking | `CliAvanzaTests` |
+| BankID: refreshing QR, one transaction, cancel/expiry, loginPath validation, cross-origin redirect refused, unknown state = drift, personal data never logged or recorded, independence from the TOTP lock | `BankIdLoginTests` |
+| QR drawing reproduces the QR module matrix exactly. QRCoder's own output was decoded once with zxing-cpp (an independent decoder) and gave the exact payload at EC level L. | `CliAvanzaTests.BankIdQrRendering_ReproducesTheQrModulesExactly` |

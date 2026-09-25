@@ -82,12 +82,17 @@ qa optimize --prices … --method hrp                        # hierarchical risk
 
 ## Avanza (read-only, Phase 3)
 
-These verbs talk to Avanza. Each invocation is **one trigger**: at most **one login**, never retried. There are **no** order or money-transfer verbs. Credentials come from Windows Credential Manager (`docs/setup.md` §5).
+These verbs talk to Avanza. Each invocation is **one trigger**: at most **one login**, never retried. There are **no** order or money-transfer verbs.
+
+**Login** (`docs/setup.md` §5):
+- `--login bankid` (default): scan the QR code with the BankID app and approve.
+- `--login totp`: unattended, with credentials from Windows Credential Manager.
+- The default comes from the `QA_AVANZA_LOGIN` environment variable when set.
 
 | Verb | What it does |
 |---|---|
 | `qa secrets set` / `qa secrets check` | Store the credentials (prompts, no echo) / show which exist |
-| `qa login` | One login plus a session health check. Prints where the security token came from, never the token. |
+| `qa login` | One login (BankID QR by default) plus a session health check. Prints the method and where the security token came from, never the token. |
 | `qa login --clear-lock` | Clear a persisted login lock after checking with BankID. No login is attempted. |
 | `qa accounts [--json]` | Accounts, total value, buying power, available for purchase (ids masked `***123`) |
 | `qa positions [--account 123] [--json]` | Holdings and cash; `--account` matches the end of the id |
@@ -97,6 +102,7 @@ These verbs talk to Avanza. Each invocation is **one trigger**: at most **one lo
 | `qa recordings sanitize --in <raw> --out <fixtures>` | Masks ids and names, replaces personal amounts (`--keep-amounts` to keep them), scans for leaks; writes nothing if a leak is found |
 
 Common options:
+- `--login bankid|totp` (default `bankid`, or `QA_AVANZA_LOGIN`)
 - `--state-dir` (default `state`)
 - `--secret-store credman|env`
 - `--verbose` (redacted debug log on stderr)

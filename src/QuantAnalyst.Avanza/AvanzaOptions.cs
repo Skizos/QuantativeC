@@ -1,3 +1,4 @@
+using QuantAnalyst.Avanza.Auth;
 using QuantAnalyst.Avanza.Http;
 
 namespace QuantAnalyst.Avanza;
@@ -6,6 +7,15 @@ namespace QuantAnalyst.Avanza;
 public sealed class AvanzaOptions
 {
     public Uri BaseAddress { get; init; } = AvanzaRoutes.DefaultBaseAddress;
+
+    /// <summary>BankID (default, a human approves each login) or TOTP (unattended; set up with <c>qa secrets set</c>).</summary>
+    public AvanzaLoginMethod LoginMethod { get; init; } = AvanzaLoginMethod.BankId;
+
+    /// <summary>How long one BankID transaction may wait for approval before the trigger gives up.</summary>
+    public TimeSpan BankIdTimeout { get; init; } = TimeSpan.FromMinutes(3);
+
+    /// <summary>Collect/refresh interval while waiting for BankID approval (the reference client uses 1 s).</summary>
+    public TimeSpan BankIdPollInterval { get; init; } = TimeSpan.FromSeconds(1);
 
     /// <summary>Session inactivity timeout sent at login; Avanza accepts 30–1440.</summary>
     public int MaxInactiveMinutes { get; init; } = 60;
@@ -57,6 +67,12 @@ public sealed class AvanzaOptions
         if (MaxReadRetries is < 0 or > 5)
         {
             throw new ArgumentOutOfRangeException(nameof(MaxReadRetries), MaxReadRetries, "0–5 retries.");
+        }
+
+        if (BankIdTimeout < TimeSpan.FromSeconds(10) || BankIdTimeout > TimeSpan.FromMinutes(10)
+            || BankIdPollInterval < TimeSpan.FromMilliseconds(1) || BankIdPollInterval > TimeSpan.FromSeconds(5))
+        {
+            throw new ArgumentOutOfRangeException(nameof(BankIdTimeout), "BankID timeout must be 10 s–10 min and the poll interval at most 5 s.");
         }
 
         if (AttemptTimeout <= TimeSpan.Zero || CircuitBreakDuration <= TimeSpan.Zero || CircuitWindow <= TimeSpan.Zero)

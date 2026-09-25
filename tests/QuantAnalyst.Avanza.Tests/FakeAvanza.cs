@@ -23,8 +23,13 @@ internal static class FakeSecrets
     public const string PushSubscriptionId = "push-FAKE-3310";
     public const string CustomerId = "cust-FAKE-1177";
 
+    // Personal data in the BankID collect payload: must never reach logs, output or recordings.
+    public const string PersonName = "PII-NAME-FAKE Testsson";
+    public const string PersonalNumber = "PII-PNR-FAKE-198001019999";
+
     public static readonly string[] All =
-        [Username, Password, TotpSecret, SecurityToken, CsrfCookie, SessionCookie, AuthenticationSession, PushSubscriptionId, CustomerId];
+        [Username, Password, TotpSecret, SecurityToken, CsrfCookie, SessionCookie, AuthenticationSession, PushSubscriptionId, CustomerId,
+         PersonName, PersonalNumber];
 
     public static InMemorySecretStore Store(string totpSecret = TotpSecret) => new(new AvanzaCredentials(
         new Secret(Username), new Secret(Password), new Secret(totpSecret)));
@@ -59,6 +64,23 @@ internal sealed class FakeAvanza : HttpMessageHandler
     public bool SendCsrfCookie { get; set; } = true;
 
     public string TwoFactorMethod { get; set; } = "TOTP";
+
+    /// <summary>BankID: how many collects answer OUTSTANDING_TRANSACTION before the final state.</summary>
+    public int BankIdPendingPolls { get; set; } = 2;
+
+    /// <summary>BankID final collect state: COMPLETE or FAILED (with <see cref="BankIdFailureHint"/>).</summary>
+    public string BankIdFinalState { get; set; } = "COMPLETE";
+
+    public string BankIdFailureHint { get; set; } = "userCancel";
+
+    public string BankIdLoginPath { get; set; } = "/_api/authentication/v2/sessions/bankid/tx-1/" + FakeSecrets.CustomerId;
+
+    /// <summary>Where the login path redirects (a same-origin hop by default).</summary>
+    public string BankIdLoginRedirect { get; set; } = "/min-ekonomi/oversikt.html";
+
+    private int _collects;
+    private int _restarts;
+    private bool _bankIdLoggedIn;
 
     public IReadOnlyList<RecordedRequest> Requests
     {
@@ -127,6 +149,77 @@ internal sealed class FakeAvanza : HttpMessageHandler
         return Default(request, path, headers);
     }
 
+    private HttpResponseMessage? BankId(HttpRequestMessage request, string path)
+    {
+        static HttpResponseMessage Html(string cookie = "")
+        {
+            var r = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<html><body>page</body></html>", Encoding.UTF8, "text/html") };
+            if (cookie.Length > 0)
+            {
+                r.Headers.Add("Set-Cookie", cookie);
+            }
+
+            return r;
+        }
+
+        if (request.Method == HttpMethod.Get && path == AvanzaRoutes.StartPage.Path())
+        {
+            return Html($"AZAPERSISTENCE={FakeSecrets.SessionCookie}; Path=/; Secure; HttpOnly");
+        }
+
+        if (path == AvanzaRoutes.BankIdStart.Path())
+        {
+            _collects = 0;
+            _restarts = 0;
+            return Json("""{"transactionId":"tx-1","expires":"2099-01-01T00:00:00Z","qrToken":"bankid.qr.0"}""");
+        }
+
+        if (path == AvanzaRoutes.BankIdRestart.Path())
+        {
+            return Json($$"""{"transactionId":"tx-1","expires":"2099-01-01T00:00:00Z","qrToken":"bankid.qr.{{++_restarts}}"}""");
+        }
+
+        if (path == AvanzaRoutes.BankIdCollect.Path())
+        {
+            _collects++;
+            if (_collects <= BankIdPendingPolls)
+            {
+                string hint = _collects == 1 ? "outstandingTransaction" : "userSign";
+                return Json($$"""{"name":null,"transactionId":"tx-1","state":"OUTSTANDING_TRANSACTION","hintCode":"{{hint}}","logins":[]}""");
+            }
+
+            return BankIdFinalState == "COMPLETE"
+                ? Json($$$"""
+                    {"name":"{{{FakeSecrets.PersonName}}}","transactionId":"tx-1","state":"COMPLETE","hintCode":null,"rfa":null,
+                     "identificationNumber":"{{{FakeSecrets.PersonalNumber}}}",
+                     "logins":[{"customerId":"{{{FakeSecrets.CustomerId}}}","username":"user","accounts":[{"accountName":"ISK","accountType":"ISK"}],"loginPath":"{{{BankIdLoginPath}}}"}],
+                     "recommendedTargetCustomers":[],"poa":{"letters":[]}}
+                    """)
+                : Json($$"""{"transactionId":"tx-1","state":"{{BankIdFinalState}}","hintCode":"{{BankIdFailureHint}}","logins":[]}""");
+        }
+
+        if (request.Method == HttpMethod.Get && path == BankIdLoginPath)
+        {
+            var r = new HttpResponseMessage(HttpStatusCode.Found);
+            r.Headers.Location = new Uri(BankIdLoginRedirect, UriKind.RelativeOrAbsolute);
+            r.Headers.Add("Set-Cookie", "csid=hop-cookie; Path=/");
+            return r;
+        }
+
+        if (request.Method == HttpMethod.Get && path == BankIdLoginRedirect)
+        {
+            return Html();
+        }
+
+        if (request.Method == HttpMethod.Get && path == AvanzaRoutes.TradingPage.Path())
+        {
+            _bankIdLoggedIn = true;
+            return Html($"AZACSRF={FakeSecrets.CsrfCookie}; Path=/; Secure");
+        }
+
+        return null;
+    }
+
     private HttpResponseMessage Default(HttpRequestMessage request, string path, Dictionary<string, string> headers)
     {
         if (path == AvanzaRoutes.UserCredentials.Path())
@@ -154,9 +247,14 @@ internal sealed class FakeAvanza : HttpMessageHandler
             return r;
         }
 
+        if (BankId(request, path) is { } bankIdResponse)
+        {
+            return bankIdResponse;
+        }
+
         bool isPublic = path.StartsWith(AvanzaRoutes.Search.Path(), StringComparison.Ordinal)
                         || path.StartsWith(AvanzaRoutes.PriceChart.PathTemplate.Split('{')[0], StringComparison.Ordinal);
-        string expectedToken = SendTokenHeader ? FakeSecrets.SecurityToken : FakeSecrets.CsrfCookie;
+        string expectedToken = _bankIdLoggedIn || !SendTokenHeader ? FakeSecrets.CsrfCookie : FakeSecrets.SecurityToken;
         if (!isPublic && (!headers.TryGetValue("X-SecurityToken", out string? token) || token != expectedToken))
         {
             return Status(HttpStatusCode.Unauthorized);
@@ -195,6 +293,22 @@ internal sealed class FakeAvanza : HttpMessageHandler
     }
 }
 
+/// <summary>Records what the authenticator shows to the human during a BankID login.</summary>
+internal sealed class FakeBankIdPrompt : QuantAnalyst.Avanza.Auth.IBankIdPrompt
+{
+    public List<string> QrCodes { get; } = [];
+
+    public List<string> Statuses { get; } = [];
+
+    public int Completions { get; private set; }
+
+    public void ShowQrCode(string qrPayload) => QrCodes.Add(qrPayload);
+
+    public void ShowStatus(string message) => Statuses.Add(message);
+
+    public void Completed() => Completions++;
+}
+
 /// <summary>Builds a connection against <see cref="FakeAvanza"/> with fake time and a temp state folder.</summary>
 internal sealed class TestRig : IDisposable
 {
@@ -202,7 +316,9 @@ internal sealed class TestRig : IDisposable
     /// False (default) raises the token bucket to its maximum (10/s, burst 20) so tests that do not advance fake
     /// time are not paced; rate limiting itself is tested with true.
     /// </param>
-    public TestRig(FakeAvanza? server = null, AvanzaOptions? options = null, ISecretStore? secrets = null, bool record = false, ILogger? logger = null, bool realisticRateLimit = false)
+    public TestRig(
+        FakeAvanza? server = null, AvanzaOptions? options = null, ISecretStore? secrets = null, bool record = false, ILogger? logger = null,
+        bool realisticRateLimit = false, QuantAnalyst.Avanza.Auth.AvanzaLoginMethod login = QuantAnalyst.Avanza.Auth.AvanzaLoginMethod.Totp)
     {
         Server = server ?? new FakeAvanza();
         Time = new FakeTimeProvider(new DateTimeOffset(2026, 9, 25, 7, 0, 10, TimeSpan.Zero)); // 10 s into a TOTP window
@@ -214,6 +330,9 @@ internal sealed class TestRig : IDisposable
         Options = new AvanzaOptions
         {
             BaseAddress = Options.BaseAddress,
+            LoginMethod = login,
+            BankIdTimeout = Options.BankIdTimeout,
+            BankIdPollInterval = Options.BankIdPollInterval,
             MaxInactiveMinutes = Options.MaxInactiveMinutes,
             RequestsPerSecond = realisticRateLimit ? Options.RequestsPerSecond : 10,
             Burst = realisticRateLimit ? Options.Burst : 20,
@@ -247,10 +366,12 @@ internal sealed class TestRig : IDisposable
 
     public AvanzaConnection Connection { get; private set; }
 
+    public FakeBankIdPrompt Prompt { get; } = new();
+
     /// <summary>A fresh connection = a fresh trigger (same state folder, same server).</summary>
     public AvanzaConnection NewConnection()
     {
-        Connection = AvanzaConnection.CreateForTest(Options, Secrets, Logger, Redactor, Time, Server);
+        Connection = AvanzaConnection.CreateForTest(Options, Secrets, Logger, Redactor, Time, Server, Prompt);
         return Connection;
     }
 

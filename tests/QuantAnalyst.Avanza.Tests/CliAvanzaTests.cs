@@ -27,19 +27,23 @@ public sealed class CliAvanzaTests : IDisposable
     private (int Code, string Output, string Error) Qa(params string[] args)
     {
         var services = new AvanzaCliServices(
-            (options, secrets, logger, redactor) => AvanzaConnection.CreateForTest(
+            (options, secrets, prompt, logger, redactor) => AvanzaConnection.CreateForTest(
                 new AvanzaOptions
                 {
                     StateDirectory = options.StateDirectory,
                     RecordingDirectory = options.RecordingDirectory,
+                    LoginMethod = options.LoginMethod,
+                    BankIdPollInterval = TimeSpan.FromMilliseconds(1),
                     RequestsPerSecond = 10,
                     Burst = 20,
                 },
-                secrets, logger, redactor, TimeProvider.System, _server),
+                secrets, logger, redactor, TimeProvider.System, _server, prompt),
             _ => FakeSecrets.Store());
         var output = new StringWriter();
         var error = new StringWriter();
-        string[] full = args[0] == "recordings" ? args : [.. args, "--state-dir", Path.Combine(_root, "state")];
+        string[] full = args[0] == "recordings" || args[0] == "--help"
+            ? args
+            : [.. args, "--state-dir", Path.Combine(_root, "state"), .. args.Contains("--login") ? Array.Empty<string>() : ["--login", "totp"]];
         int code = QaCli.Run(full, output, error, services);
         string all = output + "\n" + error;
         foreach (string secret in FakeSecrets.All.Append("9990001").Append("9990002"))
@@ -55,7 +59,41 @@ public sealed class CliAvanzaTests : IDisposable
     {
         (int code, string output, string error) = Qa("login");
         Assert.True(code == 0, error);
-        Assert.Contains("Logged in; security token from the header. Session health: loggedIn=True.", output, StringComparison.Ordinal);
+        Assert.Contains("Logged in with TOTP; security token from the header. Session health: loggedIn=True.", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Login_WithBankId_DrawsTheQrCodeAndNeverPrintsPersonalData()
+    {
+        (int code, string output, string error) = Qa("login", "--login", "bankid");
+        Assert.True(code == 0, output + error);
+        Assert.Contains("Logged in with BankID; security token from the cookie. Session health: loggedIn=True.", output, StringComparison.Ordinal);
+        Assert.Contains("open the BankID app, choose 'Scan QR code'", error, StringComparison.Ordinal);
+        Assert.Contains("█", error, StringComparison.Ordinal);
+        Assert.Contains("BankID approved", error, StringComparison.Ordinal);
+        Assert.DoesNotContain("bankid.qr.", error, StringComparison.Ordinal); // the payload itself is only drawn, never printed
+        Assert.Equal(0, _server.Requests.Count(r => r.PathAndQuery == Http.AvanzaRoutes.UserCredentials.Path()));
+    }
+
+    [Fact]
+    public void BankIdQrRendering_ReproducesTheQrModulesExactly()
+    {
+        const string payload = "bankid.67df3917-fa0d-44e5-b327-edcc928297f8.0.dc69358e712458a66a7525beef148ae8526b1c71610eff2c16cdffb4cdac9bf8";
+        using var generator = new QRCoder.QRCodeGenerator();
+        using QRCoder.QRCodeData data = generator.CreateQrCode(payload, QRCoder.QRCodeGenerator.ECCLevel.L);
+        IReadOnlyList<string> lines = QuantAnalyst.Cli.Output.ConsoleBankIdPrompt.Render(payload, ansiColours: false);
+
+        int n = data.ModuleMatrix.Count;
+        Assert.Equal((n + 1) / 2, lines.Count);
+        for (int y = 0; y < n; y++)
+        {
+            for (int x = 0; x < n; x++)
+            {
+                char c = lines[y / 2][x];
+                bool dark = y % 2 == 0 ? c is '█' or '▀' : c is '█' or '▄';
+                Assert.Equal(data.ModuleMatrix[y][x], dark);
+            }
+        }
     }
 
     [Fact]
@@ -161,11 +199,11 @@ public sealed class CliAvanzaTests : IDisposable
     public void MissingCredentials_FailBeforeAnyHttpCall()
     {
         var services = new AvanzaCliServices(
-            (options, secrets, logger, redactor) => AvanzaConnection.CreateForTest(options, secrets, logger, redactor, TimeProvider.System, _server),
+            (options, secrets, prompt, logger, redactor) => AvanzaConnection.CreateForTest(options, secrets, logger, redactor, TimeProvider.System, _server, prompt),
             _ => new EnvironmentSecretStore(_ => null));
         var output = new StringWriter();
         var error = new StringWriter();
-        int code = QaCli.Run(["accounts", "--state-dir", Path.Combine(_root, "state")], output, error, services);
+        int code = QaCli.Run(["accounts", "--login", "totp", "--state-dir", Path.Combine(_root, "state")], output, error, services);
         Assert.Equal(1, code);
         Assert.Contains("QA_AVANZA_USERNAME", error.ToString(), StringComparison.Ordinal);
         Assert.Empty(_server.Requests);

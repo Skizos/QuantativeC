@@ -11,15 +11,30 @@ using QuantAnalyst.Core.Broker;
 
 namespace QuantAnalyst.Avanza.Auth;
 
+/// <summary>How <c>qa</c> logs in to Avanza.</summary>
+public enum AvanzaLoginMethod
+{
+    /// <summary>BankID QR code approved on your phone (default). Needs a human at every login.</summary>
+    BankId,
+
+    /// <summary>Username + password + TOTP from the secret store. Unattended; needed for Auto mode later.</summary>
+    Totp,
+}
+
 /// <summary>Outcome of a successful login. Contains no secret.</summary>
-public sealed record LoginResult(string TokenSource, DateTimeOffset AtUtc);
+public sealed record LoginResult(AvanzaLoginMethod Method, string TokenSource, DateTimeOffset AtUtc);
 
 /// <summary>
-/// Username + password + TOTP login (ADR 0002 §2, avanza-endpoints.md §1). <b>One attempt per trigger</b>:
-/// every step is sent at most once, a failure is persisted, and a second failure within 24 h locks login until a
-/// human clears it. There is no next-OTP retry (the reference Python client has one; we deliberately do not).
+/// Logs in to Avanza once per trigger (ADR 0002 §2, avanza-endpoints.md §1), with one of two methods:
+/// <list type="bullet">
+/// <item><b>BankID</b> (default, <c>AvanzaAuthenticator.BankId.cs</c>): one BankID transaction, shown as a
+/// refreshing QR code until you approve it or it expires. Never a second transaction in the same trigger.</item>
+/// <item><b>TOTP</b>: username + password + TOTP. Every step is sent at most once, a failure is persisted, and a
+/// second failure within 24 h locks TOTP login until a human clears it. There is no next-OTP retry (the reference
+/// Python client has one; we deliberately do not).</item>
+/// </list>
 /// </summary>
-public sealed class AvanzaAuthenticator
+public sealed partial class AvanzaAuthenticator
 {
     internal const string AuthDtoVersion = "auth/2026-09-25";
     private static readonly TimeSpan MinTotpValidity = TimeSpan.FromSeconds(3);
@@ -32,11 +47,12 @@ public sealed class AvanzaAuthenticator
     private readonly TimeProvider _time;
     private readonly ILogger _logger;
     private readonly Redactor _redactor;
+    private readonly IBankIdPrompt? _bankIdPrompt;
     private int _attempted;
 
     internal AvanzaAuthenticator(
         HttpClient authClient, AvanzaSession session, ISecretStore secrets, AuthStateStore state,
-        AvanzaOptions options, TimeProvider time, ILogger logger, Redactor redactor)
+        AvanzaOptions options, TimeProvider time, ILogger logger, Redactor redactor, IBankIdPrompt? bankIdPrompt)
     {
         _authClient = authClient;
         _session = session;
@@ -46,8 +62,12 @@ public sealed class AvanzaAuthenticator
         _time = time;
         _logger = logger;
         _redactor = redactor;
+        _bankIdPrompt = bankIdPrompt;
     }
 
+    public AvanzaLoginMethod Method => _options.LoginMethod;
+
+    /// <summary>True when TOTP login is locked (BankID login is not affected by this lock).</summary>
     public bool IsLocked => _state.Load().Locked;
 
     public string StateFile => _state.FilePath;
@@ -56,8 +76,8 @@ public sealed class AvanzaAuthenticator
     public void ClearLock() => _state.ClearLock();
 
     /// <summary>
-    /// Performs the single login attempt for this trigger. A second call on the same instance throws: one
-    /// connection = one trigger = at most one login.
+    /// Performs the single login attempt for this trigger with the configured method. A second call on the same
+    /// instance throws: one connection = one trigger = at most one login.
     /// </summary>
     public async Task<LoginResult> LoginAsync(CancellationToken ct)
     {
@@ -66,6 +86,13 @@ public sealed class AvanzaAuthenticator
             throw new InvalidOperationException("Login was already attempted for this trigger; start a new trigger (process) to try again.");
         }
 
+        return _options.LoginMethod == AvanzaLoginMethod.BankId
+            ? await LoginWithBankIdAsync(ct).ConfigureAwait(false)
+            : await LoginWithTotpAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task<LoginResult> LoginWithTotpAsync(CancellationToken ct)
+    {
         AuthState state = _state.Load();
         if (state.Locked)
         {
@@ -131,8 +158,8 @@ public sealed class AvanzaAuthenticator
                 _redactor.AddSecret(token);
                 _session.SetToken(token, source);
                 _state.RecordSuccess();
-                Log.LoginSucceeded(_logger, source);
-                return new LoginResult(source, _time.GetUtcNow());
+                Log.LoginSucceeded(_logger, "TOTP", source);
+                return new LoginResult(AvanzaLoginMethod.Totp, source, _time.GetUtcNow());
             }
             finally
             {
@@ -155,14 +182,28 @@ public sealed class AvanzaAuthenticator
         }
     }
 
-    private async Task<HttpResponseMessage> PostOnceAsync(AvanzaRoute route, byte[] body, CancellationToken ct)
+    private Task<HttpResponseMessage> PostOnceAsync(AvanzaRoute route, byte[] body, CancellationToken ct) =>
+        SendOnceAsync(route, HttpMethod.Post, route.Path(), body, securityToken: null, ct);
+
+    /// <summary>Sends one login-pipeline request (never retried) with a per-attempt timeout; zeroes the body afterwards.</summary>
+    private async Task<HttpResponseMessage> SendOnceAsync(
+        AvanzaRoute route, HttpMethod method, string pathAndQuery, byte[]? body, string? securityToken, CancellationToken ct)
     {
         using var timeout = new CancellationTokenSource(_options.AttemptTimeout, _time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
-        using var request = new HttpRequestMessage(HttpMethod.Post, route.Path());
-        request.Content = new ByteArrayContent(body);
-        request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
-        request.Headers.Accept.ParseAdd("application/json");
+        using var request = new HttpRequestMessage(method, pathAndQuery);
+        if (body is not null)
+        {
+            request.Content = new ByteArrayContent(body);
+            request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+        }
+
+        request.Headers.Accept.ParseAdd("application/json, text/plain, */*");
+        if (securityToken is not null)
+        {
+            request.Headers.TryAddWithoutValidation(AvanzaSession.SecurityTokenHeader, securityToken);
+        }
+
         request.Options.Set(AvanzaRequest.Route, route);
         try
         {
@@ -170,7 +211,10 @@ public sealed class AvanzaAuthenticator
         }
         finally
         {
-            CryptographicOperations.ZeroMemory(body);
+            if (body is not null)
+            {
+                CryptographicOperations.ZeroMemory(body);
+            }
         }
     }
 

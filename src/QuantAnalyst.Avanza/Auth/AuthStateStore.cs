@@ -76,6 +76,9 @@ internal sealed class AuthStateStore(string stateDirectory, TimeProvider time)
     public void RecordSuccess() =>
         Save(Load() with { LastFailureUtc = null, LastFailureReason = null, LastSuccessUtc = time.GetUtcNow() });
 
+    /// <summary>A BankID login proves the account works but does not clear the TOTP failure history or lock.</summary>
+    public void RecordBankIdSuccess() => Save(Load() with { LastSuccessUtc = time.GetUtcNow() });
+
     public void ClearLock() =>
         Save(new AuthState { LastSuccessUtc = Load().LastSuccessUtc });
 

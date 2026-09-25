@@ -56,7 +56,9 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
   - `public const string RoutesVersion = "2026-09-25";`
   - each route has an XML-doc `<see href>` to the client commit it came from
   - order routes are `internal`, visible only to `AvanzaOrderChannel`
-- **`AvanzaAuthenticator`:**
+- **`AvanzaAuthenticator`** (two methods since 2026-09-25):
+  - **BankID** is the owner's choice for now and the default. It runs one QR transaction per trigger that a human approves in the BankID app, and never starts a second transaction. Details: `docs/research/avanza-endpoints.md` §1. BankID failures don't count toward the lock below.
+  - **TOTP** stays fully implemented and is selected with `--login totp` / `QA_AVANZA_LOGIN=totp`. Unattended Auto mode (Phase 8) needs it. Everything below describes TOTP.
   - **States:** `NotAuthenticated → Authenticating → Valid → Expired | Failed | Locked`.
   - **Flow:** `usercredentials` → (if `twoFactorLogin.method == "TOTP"`) `totp`.
     - Any other 2FA method goes to `Failed` ("unsupported 2FA").
@@ -137,11 +139,11 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
 - **Research refresh:** before touching any route, re-read the clients (Qluxzz, avanza-sdk-go) at their HEAD, diff against `AvanzaRoutes`, update `avanza-endpoints.md` with the new commit URLs, and bump `RoutesVersion`.
 
 ### 6. What we deliberately do not do
-- No BankID automation.
+- No BankID *approval* automation: a human approves every BankID login on the phone.
 - No automatic login retry, and no retry of any order POST.
 - No stop-loss orders in v1. The endpoint exists but the payload has a `orderBookId` casing quirk and is lightly tested; revisit after Phase 8.
 - No reliance on `requestId` for server-side idempotency, since that behaviour is unknown.
-- No scraping of HTML pages. The Go SDK visits `/handla/order.html` during BankID session setup; our username+TOTP flow does not need it.
+- No scraping of HTML pages. BankID login GETs `/` and `/handla/order.html` once each, exactly as the Go SDK does, **only to receive cookies**. Their content is never parsed, and the recording keeps only the byte count.
 
 ## Implementation notes (Phase 3)
 

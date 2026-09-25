@@ -9,7 +9,7 @@
 | Client | Language | Commit read | Date | Notes |
 |---|---|---|---|---|
 | [Qluxzz/avanza](https://github.com/Qluxzz/avanza/tree/a6a18a948f88cb7e340051e480b203b2ee917eed) | Python | `a6a18a948f88cb7e340051e480b203b2ee917eed` | 2026-09-21 | Main reference. Username + password + TOTP login. Routes live in [`avanza/constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py). Its live test suite covers **read** endpoints only. |
-| [vmorsell/avanza-sdk-go](https://github.com/vmorsell/avanza-sdk-go/tree/43f39025751c05ff73a85e708dadee4bfa9da2ca) | Go | `43f39025751c05ff73a85e708dadee4bfa9da2ca` | 2026-07-05 | Only client that documents the **SSE** push streams. Also covers order validation, preliminary fees, tick-size tables, and a schema-drift test. **BankID-only login.** |
+| [vmorsell/avanza-sdk-go](https://github.com/vmorsell/avanza-sdk-go/tree/43f39025751c05ff73a85e708dadee4bfa9da2ca) | Go | `43f39025751c05ff73a85e708dadee4bfa9da2ca` | 2026-07-05 | Only client that documents the **SSE** push streams. Also covers order validation, preliminary fees, tick-size tables, and a schema-drift test. **BankID-only login** (our BankID flow follows it). |
 | [fhqvst/avanza](https://github.com/fhqvst/avanza/tree/858772175db425fe594c4110f98f8af991e7c9b3) | JS | `858772175db425fe594c4110f98f8af991e7c9b3` | 2023-08-26 | Stale. Its `_mobile/*` paths and CometD socket are obsolete. Historical reference only. |
 | [AnteWall/avanza-mcp](https://github.com/AnteWall/avanza-mcp) | – | not read | updated 2026-09-25 | MCP server. Found but not reviewed. |
 
@@ -39,7 +39,17 @@ Session lifetime: `maxInactiveMinutes` is set by the client and validated to **3
   - The Go SDK takes it from the **`AZACSRF` cookie** and sends that cookie's value as `X-SecurityToken` (`client/client.go`, `extractCookies`).
   - The authenticator should support both, preferring the header and falling back to the cookie, and record which one it used. If both are missing, raise `SchemaDriftException`.
 - Session introspection: `GET /_api/authentication/session/info/session` returns `user.loggedIn`, `user.pushSubscriptionId`, `user.securityToken`, `user.id` (Go SDK `auth/auth.go`). This is a cheap read-only **session health check**, useful for the drift canary and for `SessionState`.
-- BankID uses `/_api/authentication/v2/sessions/bankid[/collect|/restart]` (Go SDK). It needs a human, so we only document it and do not automate it.
+- **BankID login** (implemented 2026-09-25 as the default login; source: [Go SDK `auth/auth.go` @ `43f39025`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/auth/auth.go), HEAD re-checked the same day). A human approves every login; we only draw the QR code.
+  1. `GET /` for the initial cookies (`AZAPERSISTENCE` …).
+  2. `POST /_api/authentication/v2/sessions/bankid` with `{"method":"QR_START","returnScheme":"NULL"}`. The response is 200/202 `{transactionId, expires, qrToken}`.
+  3. Every second:
+     - `POST …/bankid/collect` `{}`. The response is `{state: OUTSTANDING_TRANSACTION|COMPLETE|FAILED, hintCode, logins[], name, identificationNumber, …}`. `name` and `identificationNumber` are personal data: we never read them.
+     - While the state is pending, `POST …/bankid/restart` `{}` returns a fresh `qrToken` (animated QR).
+  4. On COMPLETE:
+     - `GET logins[0].loginPath`, e.g. `/_api/authentication/v2/sessions/bankid/{tx}/{customerId}`. We validate it and follow same-origin redirects manually.
+     - `GET /handla/order.html` for the remaining cookies.
+     - `GET session/info/session` to verify.
+  5. The security token is the `AZACSRF` cookie, sent as `X-SecurityToken`.
 - Open questions with no source that answers them:
   - How many failed password/TOTP attempts trigger the lockout.
   - Whether the inactivity timeout is extended by every request or only some. The Go SDK sends `aza-do-not-touch-session: true` on SSE requests, which suggests streams deliberately do **not** extend the session.

@@ -118,9 +118,24 @@ Claude Code must never run QuantAnalyst in **Confirm** or **Auto** mode, or call
 
 ---
 
-## 5. Secrets (Phase 3 onwards)
+## 5. Logging in to Avanza (Phase 3 onwards)
 
-Credentials live in **Windows Credential Manager** as two generic credentials:
+**Default: BankID.** `qa` draws a QR code in the terminal; you scan it with the BankID app and approve. Nothing is stored on the PC.
+- Every `qa` command that talks to Avanza is one login, and you approve each one.
+- If you don't approve within 3 minutes, the command stops. Run it again to get a new QR code.
+- Use Windows Terminal or PowerShell 7 so the QR block characters render. If the code looks broken, maximise the window.
+
+**Later: TOTP (unattended).** Needed for Auto mode in Phase 8. When you have the TOTP secret:
+1. `qa secrets set` stores it (see below).
+2. Then either:
+   - add `--login totp` to a command, or
+   - make TOTP the default: `[Environment]::SetEnvironmentVariable('QA_AVANZA_LOGIN','totp','User')` and open a new terminal.
+
+Go back to BankID any time with `--login bankid`.
+
+### TOTP credentials
+
+TOTP credentials live in **Windows Credential Manager** as two generic credentials:
 
 | Target | User name | Password |
 |---|---|---|
@@ -137,7 +152,7 @@ Then run `qa secrets check`. It reports which entries exist and never prints val
 - **Development fallback** (non-Windows): environment variables `QA_AVANZA_USERNAME`, `QA_AVANZA_PASSWORD` and `QA_AVANZA_TOTP_SECRET`, selected with `--secret-store env`. Never used in CI. `dotnet user-secrets` is not used, because it stores plaintext JSON.
 - **Never** put credentials in the repo, in `.env` files Claude can read, or in logs. The logger redacts them anyway, and a test scans a full Trace-level run for them.
 - **Claude Code access:** `.claude/settings.json` denies reading `.env*`, `secrets/**` and `recordings/live/**`.
-- **Login lock:** a failed login is recorded in `state/auth.json`. A second failure within 24 h, or an HTTP 423/429 on login, **locks** it. `qa` then refuses to try until you check your login with BankID on avanza.se and run `qa login --clear-lock`.
+- **Login lock (TOTP only):** a failed TOTP login is recorded in `state/auth.json`. A second failure within 24 h, or an HTTP 423/429 on login, **locks** TOTP login. `qa` then refuses to try TOTP until you check your login with BankID and run `qa login --clear-lock`. BankID login still works while TOTP is locked.
 
 ---
 

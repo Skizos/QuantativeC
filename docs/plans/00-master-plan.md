@@ -219,6 +219,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 
 ### Phase 8 — Auto mode (hard-limited)
 Auto requires all of the following:
+- **TOTP login enabled:** BankID needs a human at every login, so it cannot run unattended.
 - a signed promotion record
 - every `<risk_limits>` value set
 - a KillSwitch self-test that day (a dummy **paper** order is cancelled)

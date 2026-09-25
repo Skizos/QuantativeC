@@ -28,7 +28,8 @@ public sealed class AvanzaConnection : IDisposable
     private readonly AvanzaGateway _gateway;
 
     private AvanzaConnection(
-        AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, TimeProvider time, HttpMessageHandler? primary)
+        AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, TimeProvider time, HttpMessageHandler? primary,
+        IBankIdPrompt? bankIdPrompt)
     {
         options.Validate();
         _ownsPrimary = primary is null;
@@ -65,7 +66,7 @@ public sealed class AvanzaConnection : IDisposable
         var api = new AvanzaApiClient(_readClient, new AvanzaJson(logger));
         _gateway = new AvanzaGateway(api, time, redactor);
         Authenticator = new AvanzaAuthenticator(
-            _authClient, session, secrets, new AuthStateStore(options.StateDirectory, time), options, time, logger, redactor);
+            _authClient, session, secrets, new AuthStateStore(options.StateDirectory, time), options, time, logger, redactor, bankIdPrompt);
         Session = session;
         Probe = new AvanzaProbe(Authenticator, _gateway, time);
 
@@ -93,14 +94,16 @@ public sealed class AvanzaConnection : IDisposable
 
     internal AvanzaSession Session { get; }
 
+    /// <param name="bankIdPrompt">Shows the QR code; required when <see cref="AvanzaOptions.LoginMethod"/> is BankID.</param>
     public static AvanzaConnection Create(
-        AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, TimeProvider? time = null) =>
-        new(options, secrets, logger, redactor, time ?? TimeProvider.System, primary: null);
+        AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, IBankIdPrompt? bankIdPrompt = null, TimeProvider? time = null) =>
+        new(options, secrets, logger, redactor, time ?? TimeProvider.System, primary: null, bankIdPrompt);
 
     /// <summary>Test seam: a fake primary handler instead of the network.</summary>
     internal static AvanzaConnection CreateForTest(
-        AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, TimeProvider time, HttpMessageHandler primary) =>
-        new(options, secrets, logger, redactor, time, primary);
+        AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, TimeProvider time, HttpMessageHandler primary,
+        IBankIdPrompt? bankIdPrompt = null) =>
+        new(options, secrets, logger, redactor, time, primary, bankIdPrompt);
 
     public void Dispose()
     {

@@ -19,11 +19,11 @@ namespace QuantAnalyst.Cli.Commands;
 
 /// <summary>Seams for the Avanza verbs (tests replace the connection factory; nothing else talks to the network).</summary>
 internal sealed record AvanzaCliServices(
-    Func<AvanzaOptions, ISecretStore, ILogger, Redactor, AvanzaConnection> ConnectionFactory,
+    Func<AvanzaOptions, ISecretStore, IBankIdPrompt, ILogger, Redactor, AvanzaConnection> ConnectionFactory,
     Func<string, ISecretStore> SecretStoreFactory)
 {
     public static AvanzaCliServices Default { get; } = new(
-        (options, secrets, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor),
+        (options, secrets, prompt, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor, prompt),
         CreateSecretStore);
 
     private static ISecretStore CreateSecretStore(string kind) => kind switch
@@ -56,6 +56,8 @@ internal static class AvanzaCommands
             DefaultValueFactory = _ => OperatingSystem.IsWindows() ? "credman" : "env",
         };
 
+        public Option<string> Login { get; } = CreateLoginOption();
+
         public Option<bool> Verbose { get; } = new("--verbose") { Description = "Debug logging to stderr (redacted)" };
 
         public Option<bool> Json { get; } = new("--json") { Description = "JSON output" };
@@ -63,6 +65,7 @@ internal static class AvanzaCommands
         public void AddTo(Command c, bool json = true)
         {
             c.Options.Add(StateDir);
+            c.Options.Add(Login);
             c.Options.Add(SecretStore);
             c.Options.Add(Verbose);
             if (json)
@@ -70,6 +73,20 @@ internal static class AvanzaCommands
                 c.Options.Add(Json);
             }
         }
+    }
+
+    /// <summary>Environment variable that selects the default login method (bankid|totp).</summary>
+    public const string LoginMethodVariable = "QA_AVANZA_LOGIN";
+
+    private static Option<string> CreateLoginOption()
+    {
+        var option = new Option<string>("--login")
+        {
+            Description = $"bankid (default: approve with the BankID app) or totp (unattended; needs 'qa secrets set'). Default from {LoginMethodVariable}.",
+            DefaultValueFactory = _ => Environment.GetEnvironmentVariable(LoginMethodVariable) is { Length: > 0 } v ? v.Trim().ToLowerInvariant() : "bankid",
+        };
+        option.AcceptOnlyFromAmong("bankid", "totp");
+        return option;
     }
 
     public static IEnumerable<Command> Create(AvanzaCliServices services)
@@ -93,7 +110,7 @@ internal static class AvanzaCommands
         {
             Description = "Clear a persisted login lock. Only after you have checked with BankID on avanza.se that login works.",
         };
-        var command = new Command("login", "Log in once (username + password + TOTP) and check the session. Read-only.");
+        var command = new Command("login", "Log in once (BankID by default, or TOTP) and check the session. Read-only.");
         common.AddTo(command, json: false);
         command.Options.Add(clearLock);
         command.SetAction(parse => Run(parse, services, common, record: null, async (ctx, output) =>
@@ -107,7 +124,7 @@ internal static class AvanzaCommands
 
             LoginResult login = await ctx.Connection.Authenticator.LoginAsync(ctx.Ct).ConfigureAwait(false);
             SessionHealth health = await ctx.Connection.Gateway.GetSessionHealthAsync(ctx.Ct).ConfigureAwait(false);
-            output.WriteLine($"Logged in; security token from the {login.TokenSource}. Session health: loggedIn={health.LoggedIn}.");
+            output.WriteLine($"Logged in with {(login.Method == AvanzaLoginMethod.BankId ? "BankID" : "TOTP")}; security token from the {login.TokenSource}. Session health: loggedIn={health.LoggedIn}.");
             output.WriteLine("Read-only: this build has no order or money-transfer capability.");
             return health.LoggedIn ? 0 : ExitHalt;
         }));
@@ -523,8 +540,15 @@ internal static class AvanzaCommands
         try
         {
             ISecretStore secrets = services.SecretStoreFactory(parse.GetValue(common.SecretStore)!);
-            var options = new AvanzaOptions { StateDirectory = parse.GetValue(common.StateDir)!, RecordingDirectory = record };
-            using AvanzaConnection connection = services.ConnectionFactory(options, secrets, logger, redactor);
+            var options = new AvanzaOptions
+            {
+                StateDirectory = parse.GetValue(common.StateDir)!,
+                RecordingDirectory = record,
+                LoginMethod = parse.GetValue(common.Login) == "totp" ? AvanzaLoginMethod.Totp : AvanzaLoginMethod.BankId,
+            };
+            bool interactive = ReferenceEquals(error, Console.Error) && !Console.IsErrorRedirected;
+            var prompt = new ConsoleBankIdPrompt(error, interactive);
+            using AvanzaConnection connection = services.ConnectionFactory(options, secrets, prompt, logger, redactor);
             int code = body(new Ctx(connection, CancellationToken.None), buffer).GetAwaiter().GetResult();
             output.Write(redactor.Redact(buffer.ToString()));
             return code;

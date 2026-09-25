@@ -44,7 +44,7 @@ public sealed partial class ArchitectureTests
     }
 
     [Fact]
-    public void RoutesAreReadOnly_OnlyLoginAndSearchArePosts()
+    public void RoutesAreReadOnly_OnlyLoginStepsAndSearchArePosts()
     {
         FieldInfo[] fields = typeof(AvanzaRoutes).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
             .Where(f => f.FieldType == typeof(AvanzaRoute)).ToArray();
@@ -54,7 +54,7 @@ public sealed partial class ArchitectureTests
         Assert.All(declared, r => Assert.Contains(r, AvanzaRoutes.All));
         Assert.All(declared, r => Assert.DoesNotMatch(Forbidden, r.PathTemplate));
         Assert.Equal(
-            ["auth.totp", "auth.usercredentials", "search"],
+            ["auth.bankid.collect", "auth.bankid.restart", "auth.bankid.start", "auth.totp", "auth.usercredentials", "search"],
             declared.Where(r => r.Method != "GET").Select(r => r.Name).Order(StringComparer.Ordinal));
         Assert.All(declared, r => Assert.StartsWith("https://github.com/", r.Source, StringComparison.Ordinal));
     }

@@ -12,7 +12,7 @@ namespace QuantAnalyst.Avanza.Recording;
 /// Even in the git-ignored live folder, the following are <b>never</b> written:
 /// <list type="bullet">
 /// <item>header and cookie values (names only)</item>
-/// <item>request bodies of authentication routes (password, TOTP code)</item>
+/// <item>request bodies and real paths of authentication routes (password, TOTP code, BankID customer id)</item>
 /// <item>string and number values of authentication responses (session ids, security token): only their structure is kept</item>
 /// </list>
 /// Everything else is raw and must go through <c>qa recordings sanitize</c> before it is shared or committed.
@@ -61,8 +61,9 @@ internal sealed class Recorder
 
             w.WriteStartObject("request");
             w.WriteString("method", request.Method.Method);
-            w.WriteString("path", request.RequestUri?.AbsolutePath);
-            w.WriteString("query", request.RequestUri?.Query);
+            // Authentication paths can carry identifiers (BankID loginPath has the customer id): template only.
+            w.WriteString("path", auth ? route?.PathTemplate ?? "(authentication)" : request.RequestUri?.AbsolutePath);
+            w.WriteString("query", auth ? null : request.RequestUri?.Query);
             WriteNames(w, "headerNames", request.Headers.Select(h => h.Key));
             w.WritePropertyName("body");
             if (auth && request.Content is not null)

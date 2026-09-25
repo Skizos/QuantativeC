@@ -191,7 +191,7 @@ public sealed class GatewayTests
         }
 
         string logs = sink.ToString();
-        Assert.Contains("login: succeeded; security token from header", logs, StringComparison.Ordinal);
+        Assert.Contains("login: succeeded with TOTP; security token from header", logs, StringComparison.Ordinal);
         Assert.Contains("recording positions", logs, StringComparison.Ordinal);
         foreach (string secret in FakeSecrets.All.Append("9990001").Append("9990002"))
         {
