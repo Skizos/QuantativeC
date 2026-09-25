@@ -11,6 +11,8 @@ add_executable(qe_unit_tests
     pricing/black_scholes_test.cpp
     pricing/greeks_iv_test.cpp
     pricing/lattice_mc_test.cpp
+    risk/covariance_test.cpp
+    risk/var_es_test.cpp
 )
 target_link_libraries(qe_unit_tests PRIVATE qe_impl GTest::gtest_main)
 # Generated reference values (tools/reference/phase2_reference.py) live under tests/native/reference.

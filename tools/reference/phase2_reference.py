@@ -149,6 +149,11 @@ def reference_values() -> str:
                       0.9, 0.95, 0.975, 0.99, 0.999, 1 - 1e-5, 1 - 1e-8])
     out += "// scipy.stats.norm.ppf\n" + arr("kPpfP", probs) + arr("kPpfX", norm.ppf(probs)) + "\n"
 
+    # Parametric VaR/ES constants.
+    z99 = norm.ppf(0.99)
+    out += "// scipy: z_0.99 and phi(z_0.99) / 0.01 (normal ES multiplier)\n"
+    out += f"inline constexpr double kZ99 = {fmt(z99)};\ninline constexpr double kEsFactor99 = {fmt(norm.pdf(z99) / 0.01)};\n\n"
+
     # Sobol points, unscrambled.
     pts = qmc.Sobol(d=8, scramble=False).random(64)
     out += "// scipy.stats.qmc.Sobol(d=8, scramble=False).random(64), row-major 64x8\n"
