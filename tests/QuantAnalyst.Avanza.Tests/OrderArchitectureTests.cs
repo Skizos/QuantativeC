@@ -63,6 +63,28 @@ public sealed class OrderArchitectureTests
     }
 
     [Fact]
+    public void OnlyAvanzaPreflight_UsesThePreflightRoutes()
+    {
+        IlReference[] uses = [.. All.Value.Where(r => r.Target is FieldInfo or MethodInfo && r.Target.DeclaringType == typeof(AvanzaPreflightRoutes) && r.Owner != typeof(AvanzaPreflightRoutes))];
+        Assert.Equal(
+            [nameof(AvanzaPreflightRoutes.PreliminaryFee), nameof(AvanzaPreflightRoutes.Validate)],
+            uses.Where(u => u.Owner == typeof(AvanzaPreflight)).Select(u => u.Target.Name).Distinct().Order(StringComparer.Ordinal));
+        Assert.Empty(uses.Where(u => u.Owner != typeof(AvanzaPreflight) && !IsMapper(u)).Select(u => u.ToString()));
+
+        // The fee mapper names the route in its drift errors; it sends nothing.
+        static bool IsMapper(IlReference u) => u.Owner.Name == "AvanzaMapper" && u.Target.Name == nameof(AvanzaPreflightRoutes.PreliminaryFee);
+    }
+
+    [Fact]
+    public void ThePreflight_IsBuiltOnlyByTheConnection()
+    {
+        IlReference[] built = [.. All.Value.Where(r => r.Target is ConstructorInfo c && c.DeclaringType == typeof(AvanzaPreflight))];
+        Assert.Equal([typeof(AvanzaConnection)], built.Select(b => b.Owner).Distinct());
+        Assert.True(typeof(AvanzaPreflight).GetConstructors().Length == 0, "the preflight must have no public constructor");
+        Assert.True(typeof(AvanzaConnection).GetMethod("CreatePreflight", BindingFlags.Instance | BindingFlags.NonPublic)!.IsAssembly);
+    }
+
+    [Fact]
     public void TheAvanzaOrderChannel_IsBuiltOnlyByTheConnection_AndNothingAsksForItInPhase6()
     {
         IlReference[] built = [.. All.Value.Where(r => r.Target is ConstructorInfo c && c.DeclaringType == typeof(AvanzaOrderChannel))];

@@ -77,10 +77,10 @@ Running until 2026-09-28 17:32 (Stockholm). Stop early with Ctrl+C or 'qa kill'.
 09:10:00 Buy 6 ERIC B: Accepted (Filled, filled 6/6 @ 70.86)
 09:10:13 Buy 1 VOLV B: Accepted (Working, filled 0/1)
 ...
-Report: 2026-09-28 CLEAN: 2 sent, 2 accepted, 0 risk-rejected, 2 fill(s) (0 outside ±200 bps), reconciliation 1010/1010 clean, 0 violation(s); value 5,001.20 SEK (+0.02%), fees 2.00. Saved to reports/eod/2026-09-28.json.
+Report: 2026-09-28 CLEAN: 2 sent, 2 accepted, 0 risk-rejected, 2 fill(s) (0 outside ±200 bps), reconciliation 1010/1010 clean, 0 violation(s); value 5,001.20 SEK (+0.02%), fees 0.00. Saved to reports/eod/2026-09-28.json.
 
 Session over: 2 order(s) sent to the paper channel, 2 accepted, 0 stopped by the risk checks, 2 with fills.
-Paper account: value 5,001.20 SEK (start of day 5,000.00), cash 4,329.94, fees paid 2.00.
+Paper account: value 5,001.20 SEK (start of day 5,000.00), cash 4,329.84, fees paid 0.00.
 Reconciliation: clean. Audit: audit (check with 'qa audit verify').
 ```
 
@@ -181,26 +181,26 @@ At 09:10 every order the strategy wants is shown as a card, one at a time:
  Instrument  Ericsson B   ERIC B · orderbook 5240 · SE0000108656
  Side        BUY
  Volume      6
- Limit       70.85 SEK    (rounded down from 70.857 to the 0.01 tick)
- Value       425.10 SEK
- Fee         Avanza 1.06 SEK · model 1.06 SEK
+ Limit       70.84 SEK    (rounded down from 70.857 to the 0.02 tick)
+ Value       425.04 SEK
+ Fee         Avanza 0.00 SEK · model 0.00 SEK (Start class)
  Reason      ma-cross(fast=20, slow=100): target 20 % of the account in ERIC B
  Decided     09:10:00 at 70.62 (close 2026-09-25: 70.40)
- Market      bid 70.84 × 1,200 · ask 70.86 × 950 · last 70.85 · 2 s old
+ Market      bid 70.84 × 1,200 · ask 70.86 × 950 · last 70.86 · 2 s old
 
  Risk checks: 21 of 21 pass
    R1  account          ***123 is allowed                         ok
-   R5  price collar     +0.3 % from 70.64 (max ±2 %)              ok
+   R5  price collar     −0.03 % from 70.86 (max ±2 %)             ok
    R6  order value      425 SEK (max 500)                         ok
    R7  position after   425 SEK (max 1,000)                       ok
-   R9  cash             426 SEK of 4,210 available                ok
+   R9  cash             425 SEK of 4,210 available                ok
    …
    R21 Avanza validate  valid                                     ok
 
  Type  ERIC-B JA  within 30 s to send. Anything else skips this order.
  > ERIC-B JA
  Re-checked: 21 of 21 pass (quote 1 s old). Sent: Avanza order ***456, Working.
- 09:10:21 filled 6 @ 70.85, fee 1.06 SEK.
+ 09:10:21 filled 6 @ 70.84, fee 0.00 SEK.
 ──────────────────────────────────────────────────────────────────────
 ```
 

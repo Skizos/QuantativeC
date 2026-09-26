@@ -34,7 +34,7 @@ public sealed record AvanzaRoute(string Name, string Method, string PathTemplate
 /// </summary>
 public static class AvanzaRoutes
 {
-    public const string RoutesVersion = "2026-09-26.1"; // .1: order routes in AvanzaOrderRoutes (Phase 6, fixture-tested only)
+    public const string RoutesVersion = "2026-09-26.2"; // .1: order routes in AvanzaOrderRoutes (Phase 6); .2: AvanzaPreflightRoutes (Phase 7 step 1)
 
     public static readonly Uri DefaultBaseAddress = new("https://www.avanza.se");
 
@@ -196,4 +196,27 @@ internal static class AvanzaOrderRoutes
         "order.modify", "POST", "/_api/trading-critical/rest/order/modify", DtoTier.A, false, Qluxzz);
 
     public static IReadOnlyList<AvanzaRoute> All { get; } = [Place, Delete, Modify];
+}
+
+/// <summary>
+/// Avanza's pre-trade checks (ADR 0003 §2 <c>BrokerPreflight</c>; Phase 7 step 1): order validation and the preliminary
+/// fee. Read-only POSTs that place nothing; the web app calls them while you fill in an order. <b>Internal</b>, and
+/// referenced only by <c>AvanzaPreflight</c> (an IL-scanning architecture test checks it). They are not order routes and
+/// are not in <see cref="AvanzaRoutes.All"/>. Source: the Go SDK <c>trading/service.go</c> <c>ValidateOrder</c> and
+/// <c>GetPreliminaryFee</c> @ 43f39025 (re-checked 2026-09-26: no newer commit; Qluxzz has neither route). The DTOs are
+/// <b>provisional</b> until a real answer is recorded (<c>qa probe --preflight</c> or the owner's web-app capture).
+/// </summary>
+internal static class AvanzaPreflightRoutes
+{
+    private const string GoSdk = "https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/service.go";
+
+    /// <summary>Body: the order (Go <c>ValidateOrderRequest</c>) ⇒ one <c>{valid}</c> per named check.</summary>
+    public static readonly AvanzaRoute Validate = new(
+        "preflight.validate", "POST", "/_api/trading-critical/rest/order/validation/validate", DtoTier.A, false, GoSdk);
+
+    /// <summary>Body: {accountId, orderbookId, price, volume, side}, all strings ⇒ commission, fees and totals as strings.</summary>
+    public static readonly AvanzaRoute PreliminaryFee = new(
+        "preflight.fee", "POST", "/_api/trading/preliminary-fee/preliminaryfee", DtoTier.A, false, GoSdk);
+
+    public static IReadOnlyList<AvanzaRoute> All { get; } = [Validate, PreliminaryFee];
 }

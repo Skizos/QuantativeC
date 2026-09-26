@@ -1,0 +1,8 @@
+{
+  "commissionWarning": { "valid": true },
+  "employeeValidation": { "valid": true },
+  "largeInScaleWarning": { "valid": true },
+  "orderValueLimitWarning": { "valid": true },
+  "priceRampingWarning": { "valid": true },
+  "canadaOddLotWarning": { "valid": true }
+}

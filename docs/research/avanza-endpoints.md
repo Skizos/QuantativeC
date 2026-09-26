@@ -15,6 +15,13 @@
 
 Base URL for everything: `https://www.avanza.se`.
 
+**Re-checked 2026-09-26 (Phase 7 step 1, pre-trade checks):** still no newer commits (Qluxzz `a6a18a9`, avanza-sdk-go `43f3902`). Qluxzz `constants.py` has **no** validate or preliminary-fee route. The two routes and their shapes were re-read from the Go SDK: [`trading/service.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/service.go) (`ValidateOrder`, `GetPreliminaryFee`: POST, non-200 is an error) and [`trading/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/types.go):
+- **Validate request** (`ValidateOrderRequest`): `isDividendReinvestment`, `requestId` (nullable), `orderRequestParameters`, `price` (number), `volume` (number), `openVolume`, `accountId`, `side` (`BUY`/`SELL`), `orderbookId`, `validUntil`, `metadata`, `condition` (`NORMAL`/`FILL_OR_KILL`), `isin`, `currency`, `marketPlace`.
+- **Validate response** (`ValidateOrderResponse`): `commissionWarning`, `employeeValidation`, `largeInScaleWarning`, `orderValueLimitWarning`, `priceRampingWarning`, `canadaOddLotWarning`, each `{valid: bool}`.
+- **Fee request** (`PreliminaryFeeRequest`): `accountId`, `orderbookId`, `price`, `volume` (all strings), `side`.
+- **Fee response** (`PreliminaryFeeResponse`): `commission`, `marketFees`, `totalFees`, `totalSum`, `totalSumWithoutFees`, `orderbookCurrency` (strings in the orderbook currency), `transactionTax` and `campaign` (nullable strings), `currencyExchangeFee{rate, sum}`.
+- **No real answer exists in either client:** the SDK's tests echo its own structs. Our DTOs are therefore provisional. `qa probe --preflight` records the real answers for a hypothetical 1-share buy, without placing anything.
+
 **Re-checked 2026-09-26 (Phase 6):** the GitHub commit lists of both clients show no commits after the pins above (Qluxzz newest is still `a6a18a9`, 2026-09-21; avanza-sdk-go newest is still `43f3902`, 2026-07-05). §4 was re-read from those commits: `avanza/avanza.py` `place_order`/`edit_order`/`delete_order` and `constants.py`, and avanza-sdk-go `trading/types.go`.
 
 ## 1. Authentication (username + password + TOTP)

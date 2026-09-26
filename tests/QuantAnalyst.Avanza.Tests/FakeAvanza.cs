@@ -296,6 +296,8 @@ internal sealed class FakeAvanza : HttpMessageHandler
             })),
             _ when p == AvanzaRoutes.MarketData.Path("5240") => Json(Fixtures.Bytes("marketdata-5240.json")),
             _ when p == AvanzaRoutes.PriceChart.Path("5240") => Json(Fixtures.Bytes("price-chart-5240.json")),
+            _ when p == AvanzaPreflightRoutes.Validate.Path() => Json(Fixtures.Bytes("preflight-validate.json")),
+            _ when p == AvanzaPreflightRoutes.PreliminaryFee.Path() => Json(Fixtures.Bytes("preflight-fee-5240.json")),
             _ => Status(HttpStatusCode.NotFound),
         };
     }

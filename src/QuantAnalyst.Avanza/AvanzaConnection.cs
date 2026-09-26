@@ -32,6 +32,7 @@ public sealed class AvanzaConnection : IDisposable
     private readonly HttpClient _readClient;
     private readonly HttpClient _streamClient;
     private readonly HttpClient _orderClient;
+    private readonly AvanzaApiClient _api;
     private readonly AvanzaGateway _gateway;
     private readonly AvanzaJson _json;
     private readonly TimeProvider _time;
@@ -91,12 +92,13 @@ public sealed class AvanzaConnection : IDisposable
         _time = time;
         _orderTimeout = options.OrderTimeout;
         var api = new AvanzaApiClient(_readClient, json);
+        _api = api;
         var streams = new AvanzaStreamClient(_streamClient, options, time, logger, Random.Shared, recorder);
         _gateway = new AvanzaGateway(api, streams, json, time, redactor);
         Authenticator = new AvanzaAuthenticator(
             _authClient, session, secrets, new AuthStateStore(options.StateDirectory, time), options, time, logger, redactor, bankIdPrompt);
         Session = session;
-        Probe = new AvanzaProbe(Authenticator, _gateway, time);
+        Probe = new AvanzaProbe(Authenticator, _gateway, new Orders.AvanzaPreflight(api, time), time);
 
         HttpMessageHandler Chain(Recorder? rec, params DelegatingHandler[] handlers)
         {
@@ -144,6 +146,9 @@ public sealed class AvanzaConnection : IDisposable
     /// and the trading gateway refuses it anyway.
     /// </summary>
     internal Orders.AvanzaOrderChannel CreateOrderChannel() => new(_orderClient, _json, _time, _orderTimeout);
+
+    /// <summary>Avanza's read-only pre-trade checks (validate + preliminary fee) through the read pipeline.</summary>
+    internal Orders.AvanzaPreflight CreatePreflight() => new(_api, _time);
 
     public void Dispose()
     {

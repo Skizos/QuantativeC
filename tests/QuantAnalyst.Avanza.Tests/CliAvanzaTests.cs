@@ -162,6 +162,29 @@ public sealed class CliAvanzaTests : IDisposable
     }
 
     [Fact]
+    public void ProbePreflight_RecordsBothChecks_AndSanitizingMasksTheAccountInTheirBodies()
+    {
+        Assert.Contains("--account is only used with --preflight", Qa("probe", "--account", "001", "--no-record").Error, StringComparison.Ordinal);
+
+        string live = Path.Combine(_root, "live");
+        (int code, string output, string error) = Qa("probe", "--preflight", "--record-dir", live);
+        Assert.True(code == 0, output + error);
+        Assert.Contains("validate: all 6 valid", output, StringComparison.Ordinal);
+        Assert.Contains("nothing placed", output, StringComparison.Ordinal);
+
+        string recorded = Directory.GetDirectories(live).Single();
+        Assert.Single(Directory.GetFiles(recorded, "*-preflight.validate.json"));
+        Assert.Single(Directory.GetFiles(recorded, "*-preflight.fee.json"));
+
+        string fixtures = Path.Combine(_root, "fixtures");
+        (code, output, error) = Qa("recordings", "sanitize", "--in", recorded, "--out", fixtures);
+        Assert.True(code == 0, output + error);
+        string sanitized = string.Join('\n', Directory.GetFiles(fixtures, "*-preflight.*.json").Select(File.ReadAllText));
+        Assert.Contains("preflight.validate", sanitized, StringComparison.Ordinal);
+        Assert.DoesNotContain("9990001", sanitized, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Probe_WithTierADrift_ExitsWithHaltCode()
     {
         _server.On(AvanzaRoutes.Orders, _ => FakeAvanza.Json(Fixtures.Mutate("orders.json", n => n["orders"]![0]!["newThing"] = 1)));

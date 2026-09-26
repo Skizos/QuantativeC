@@ -404,14 +404,27 @@ internal static partial class AvanzaCommands
         var ticker = new Option<string>("--ticker") { Description = "Instrument used for search/orderbook/marketdata/chart", DefaultValueFactory = _ => "ERIC-B" };
         var recordDir = new Option<string>("--record-dir") { Description = "Raw recordings folder (git-ignored)", DefaultValueFactory = _ => Path.Combine("recordings", "live") };
         var noRecord = new Option<bool>("--no-record") { Description = "Do not record responses" };
+        var preflight = new Option<bool>("--preflight")
+        {
+            Description = "Also ask Avanza's two read-only pre-trade checks (validate, preliminary fee) about a hypothetical 1-share buy at the ask, to record their real answers. Nothing is placed.",
+        };
+        var account = new Option<string?>("--account") { Description = "With --preflight: the account, by the last digits of its id (needed when several can trade)" };
         var command = new Command("probe", "One login, then every Phase 3 read; reports OK/DRIFT per endpoint and records the raw responses.");
         common.AddTo(command, json: false);
         command.Options.Add(ticker);
         command.Options.Add(recordDir);
         command.Options.Add(noRecord);
+        command.Options.Add(preflight);
+        command.Options.Add(account);
         command.SetAction(parse => Run(parse, services, common, parse.GetValue(noRecord) ? null : parse.GetValue(recordDir), async (ctx, output) =>
         {
-            IReadOnlyList<ProbeResult> results = await ctx.Connection.Probe.RunAsync(parse.GetValue(ticker)!, ctx.Ct).ConfigureAwait(false);
+            if (parse.GetValue(account) is not null && !parse.GetValue(preflight))
+            {
+                throw new ArgumentException("--account is only used with --preflight.");
+            }
+
+            var options = new ProbeOptions(parse.GetValue(preflight), parse.GetValue(account));
+            IReadOnlyList<ProbeResult> results = await ctx.Connection.Probe.RunAsync(parse.GetValue(ticker)!, options, ctx.Ct).ConfigureAwait(false);
             var table = new TextTable(("route", false), ("result", false), ("detail", false));
             foreach (ProbeResult r in results)
             {

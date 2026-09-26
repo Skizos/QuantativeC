@@ -61,6 +61,8 @@ public sealed class RecordedFixtureTests
                 "search" => AvanzaMapper.ToSearchHits(Parse(json, body, AvanzaTierBContext.Default.SearchResponseDto, route, SearchResponseDto.Version, DtoTier.B)),
                 "price-chart" => AvanzaMapper.ToBars(Parse(json, body, AvanzaTierBContext.Default.PriceChartDto, route, PriceChartDto.Version, DtoTier.B)),
                 "transactions" => AvanzaMapper.ToTransactions(Parse(json, body, AvanzaTierBContext.Default.TransactionsDto, route, TransactionsDto.Version, DtoTier.B)),
+                "preflight.validate" => AvanzaMapper.ToPreflightValidation(Parse(json, body, AvanzaTierAContext.Default.ValidateOrderResponseDto, route, ValidateOrderResponseDto.Version, DtoTier.A)),
+                "preflight.fee" => AvanzaMapper.ToPreliminaryFee(Parse(json, body, AvanzaTierAContext.Default.PreliminaryFeeResponseDto, route, PreliminaryFeeResponseDto.Version, DtoTier.A)),
                 _ => null!, // authentication routes: structure-only recordings, checked below
             };
         }

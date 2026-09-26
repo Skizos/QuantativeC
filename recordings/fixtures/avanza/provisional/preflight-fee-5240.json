@@ -1,0 +1,11 @@
+{
+  "commission": "0",
+  "marketFees": "0",
+  "totalFees": "0",
+  "totalSum": "425.1",
+  "totalSumWithoutFees": "425.1",
+  "orderbookCurrency": "SEK",
+  "transactionTax": null,
+  "currencyExchangeFee": { "rate": "1", "sum": "0" },
+  "campaign": null
+}

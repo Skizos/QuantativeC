@@ -88,6 +88,26 @@ public sealed partial class ArchitectureTests
     }
 
     [Fact]
+    public void PreflightRoutes_AreInternal_TierA_Posts_AndNeitherReadNorOrderRoutes()
+    {
+        Assert.False(typeof(AvanzaPreflightRoutes).IsPublic);
+        Assert.Equal(["preflight.fee", "preflight.validate"], AvanzaPreflightRoutes.All.Select(r => r.Name).Order(StringComparer.Ordinal));
+        Assert.All(AvanzaPreflightRoutes.All, r =>
+        {
+            Assert.Equal("POST", r.Method);
+            Assert.Equal(QuantAnalyst.Core.Broker.DtoTier.A, r.Tier);
+            Assert.False(r.IsAuthentication);
+            Assert.DoesNotContain(r, AvanzaRoutes.All);
+            Assert.DoesNotContain(AvanzaOrderRoutes.All, o => o.PathTemplate == r.PathTemplate);
+            Assert.DoesNotMatch(Forbidden, r.PathTemplate); // a check, not an order: the hook and the order rules don't apply
+            Assert.StartsWith("https://github.com/vmorsell/avanza-sdk-go/blob/", r.Source, StringComparison.Ordinal);
+        });
+        FieldInfo[] declared = typeof(AvanzaPreflightRoutes).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            .Where(f => f.FieldType == typeof(AvanzaRoute)).ToArray();
+        Assert.Equal(AvanzaPreflightRoutes.All.Count, declared.Length);
+    }
+
+    [Fact]
     public void RoutesAreReadOnly_OnlyLoginStepsAndSearchArePosts()
     {
         FieldInfo[] fields = typeof(AvanzaRoutes).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)

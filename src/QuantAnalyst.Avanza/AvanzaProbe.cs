@@ -1,6 +1,7 @@
 using QuantAnalyst.Avanza.Auth;
 using QuantAnalyst.Avanza.Http;
 using QuantAnalyst.Core;
+using QuantAnalyst.Core.Accounts;
 using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
@@ -19,6 +20,13 @@ public enum ProbeStatus
 
 /// <summary>One row of the probe report. <see cref="Detail"/> never contains secrets or full account ids.</summary>
 public sealed record ProbeResult(string Route, ProbeStatus Status, string Detail);
+
+/// <summary>
+/// Opt-in extras of the probe. <see cref="Preflight"/> also asks Avanza's two read-only pre-trade checks (validate and
+/// preliminary fee) about a hypothetical 1-share buy at the ask, so their real answers get recorded. Nothing is placed.
+/// <see cref="AccountSuffix"/> picks the account by the end of its id when several can trade.
+/// </summary>
+public sealed record ProbeOptions(bool Preflight = false, string? AccountSuffix = null);
 
 /// <summary>Maps a ticker such as "ERIC-B" or "ERIC B" to an orderbook id: search, then confirm via the orderbook's ticker.</summary>
 public static class TickerResolver
@@ -47,23 +55,29 @@ public static class TickerResolver
 
 /// <summary>
 /// Read-only diagnostic run for the Phase 3 stop point: one login, then every Phase 3 read, continuing past drift
-/// (so one run reports every mismatch) and stopping on 401/403. Meant to run with recording on.
+/// (so one run reports every mismatch) and stopping on 401/403. Meant to run with recording on. With
+/// <see cref="ProbeOptions.Preflight"/> it ends with Avanza's two pre-trade checks (Phase 7 step 1); nothing is placed.
 /// </summary>
 public sealed class AvanzaProbe
 {
     private readonly AvanzaAuthenticator _auth;
     private readonly AvanzaGateway _gateway;
+    private readonly Orders.AvanzaPreflight _preflight;
     private readonly TimeProvider _time;
 
-    internal AvanzaProbe(AvanzaAuthenticator auth, AvanzaGateway gateway, TimeProvider time)
+    internal AvanzaProbe(AvanzaAuthenticator auth, AvanzaGateway gateway, Orders.AvanzaPreflight preflight, TimeProvider time)
     {
         _auth = auth;
         _gateway = gateway;
+        _preflight = preflight;
         _time = time;
     }
 
-    public async Task<IReadOnlyList<ProbeResult>> RunAsync(string ticker, CancellationToken ct)
+    public Task<IReadOnlyList<ProbeResult>> RunAsync(string ticker, CancellationToken ct) => RunAsync(ticker, new ProbeOptions(), ct);
+
+    public async Task<IReadOnlyList<ProbeResult>> RunAsync(string ticker, ProbeOptions options, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(options);
         var results = new List<ProbeResult>();
         try
         {
@@ -78,11 +92,18 @@ public sealed class AvanzaProbe
 
         DateOnly today = DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime);
         OrderbookId? id = null;
+        IReadOnlyList<TradingAccount> tradingAccounts = [];
+        InstrumentTradingParams? instrument = null;
+        MarketSnapshot? market = null;
         var steps = new List<(string Route, Func<Task<string>> Run)>
         {
             (AvanzaRoutes.SessionInfo.Name, async () => $"loggedIn={(await _gateway.GetSessionHealthAsync(ct).ConfigureAwait(false)).LoggedIn}"),
             (AvanzaRoutes.AccountsOverview.Name, async () => $"{(await _gateway.GetAccountsAsync(ct).ConfigureAwait(false)).Count} account(s)"),
-            (AvanzaRoutes.TradingAccounts.Name, async () => $"{(await _gateway.GetTradingAccountsAsync(ct).ConfigureAwait(false)).Count} trading account(s)"),
+            (AvanzaRoutes.TradingAccounts.Name, async () =>
+            {
+                tradingAccounts = await _gateway.GetTradingAccountsAsync(ct).ConfigureAwait(false);
+                return $"{tradingAccounts.Count} trading account(s)";
+            }),
             (AvanzaRoutes.Positions.Name, async () =>
             {
                 PortfolioSnapshotSummary s = Summarize(await _gateway.GetPositionsAsync(null, ct).ConfigureAwait(false));
@@ -112,6 +133,7 @@ public sealed class AvanzaProbe
             {
                 InstrumentTradingParams p = await TickerResolver.ResolveAsync(_gateway, ticker, ct).ConfigureAwait(false);
                 id = p.OrderbookId;
+                instrument = p;
                 return $"{p.TickerSymbol} = orderbook {p.OrderbookId}, {p.TickSizes.Bands.Count} tick band(s), lot {p.TradingUnit}";
             }),
             (AvanzaRoutes.MarketData.Name, async () =>
@@ -122,6 +144,7 @@ public sealed class AvanzaProbe
                 }
 
                 MarketSnapshot m = await _gateway.GetMarketSnapshotAsync(id.Value, ct).ConfigureAwait(false);
+                market = m;
                 return $"bid {m.Bid?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"} / ask {m.Ask?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "-"}, {m.Depth.Count} depth level(s)";
             }),
             (AvanzaRoutes.PriceChart.Name, async () =>
@@ -135,6 +158,11 @@ public sealed class AvanzaProbe
                 return $"{history.Bars.Count} bar(s) at resolution {history.Resolution}";
             }),
         };
+
+        if (options.Preflight)
+        {
+            steps.Add(("preflight", () => PreflightAsync(options, tradingAccounts, instrument, market, ct)));
+        }
 
         foreach ((string route, Func<Task<string>> run) in steps)
         {
@@ -156,6 +184,14 @@ public sealed class AvanzaProbe
             {
                 results.Add(new(route, ProbeStatus.Skipped, ex.Message));
             }
+            catch (PreflightFaultException ex)
+            {
+                results.Add(new(route, ex.Status, ex.Message));
+                if (ex.Status == ProbeStatus.Stopped)
+                {
+                    return results;
+                }
+            }
             catch (Exception ex) when (ex is BrokerException or ArgumentException)
             {
                 results.Add(new(route, ProbeStatus.HttpError, ex.Message));
@@ -165,9 +201,59 @@ public sealed class AvanzaProbe
         return results;
     }
 
+    /// <summary>A hypothetical 1-share buy at the ask (rounded to the tick), checked but never placed.</summary>
+    private async Task<string> PreflightAsync(
+        ProbeOptions options, IReadOnlyList<TradingAccount> accounts, InstrumentTradingParams? p, MarketSnapshot? m, CancellationToken ct)
+    {
+        if (p is null || m is null)
+        {
+            throw new SkipException("needs the orderbook and marketdata steps to succeed first");
+        }
+
+        TradingAccount[] tradable = [.. accounts.Where(a => a.IsTradable)];
+        TradingAccount[] chosen = options.AccountSuffix is { Length: > 0 } suffix
+            ? [.. tradable.Where(a => a.Id.Value.EndsWith(suffix.Trim(), StringComparison.Ordinal))]
+            : tradable;
+        if (chosen.Length != 1)
+        {
+            throw new SkipException(options.AccountSuffix is null
+                ? $"{tradable.Length} tradable account(s); pick one with --account <last digits>"
+                : $"{chosen.Length} tradable account(s) end with '{options.AccountSuffix}'; need exactly one");
+        }
+
+        decimal reference = m.Ask ?? m.Last ?? throw new SkipException("no ask or last price to check against");
+        decimal limit = p.TickSizes.RoundForOrder(reference, OrderSide.Buy);
+        var request = new PreflightRequest(chosen[0].Id, p.OrderbookId, p.Isin, p.Currency, p.MarketPlace, OrderSide.Buy, 1, limit);
+        PreflightOutcome outcome = await _preflight.CheckAsync(request, ct).ConfigureAwait(false);
+        string what = string.Create(System.Globalization.CultureInfo.InvariantCulture, $"hypothetical BUY 1 {p.TickerSymbol} @ {limit} on {chosen[0].Id.Masked}; nothing placed");
+        if (outcome.Fault != BrokerFault.None || outcome.Validation is null)
+        {
+            ProbeStatus status = outcome.Fault switch
+            {
+                BrokerFault.SchemaDrift => ProbeStatus.Drift,
+                BrokerFault.SessionExpired => ProbeStatus.Stopped,
+                _ => ProbeStatus.HttpError,
+            };
+            throw new PreflightFaultException(status, $"{outcome.Problem} ({what})");
+        }
+
+        string validation = outcome.Validation.AllValid
+            ? $"validate: all {outcome.Validation.Checks.Count} valid"
+            : $"validate: NOT valid: {string.Join(", ", outcome.Validation.Failures)}";
+        string fee = outcome.Fee is { } f
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"fee: commission {f.Commission:0.00}, total fees {f.AllFees:0.00}, total {f.TotalSum:0.00} {f.Currency}")
+            : $"fee: {outcome.Problem}";
+        return $"{validation}; {fee} ({what})";
+    }
+
     private static PortfolioSnapshotSummary Summarize(Core.Accounts.PortfolioSnapshot s) => new(s.Positions.Count, s.Cash.Count);
 
     private readonly record struct PortfolioSnapshotSummary(int Positions, int Cash);
 
     private sealed class SkipException(string message) : Exception(message);
+
+    private sealed class PreflightFaultException(ProbeStatus status, string message) : Exception(message)
+    {
+        public ProbeStatus Status { get; } = status;
+    }
 }

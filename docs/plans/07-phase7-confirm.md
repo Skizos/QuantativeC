@@ -1,8 +1,8 @@
 # 07 — Phase 7: Confirm mode (real orders, each one typed by you)
 
-- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). Phase 6 is complete; the usability work
-  that comes with this plan (`qa status`, `qa paper strategy`, automatic history refresh) is done. Implementation
-  starts with step 1; steps 7–8 wait on the owner's capture (O4, O5).
+- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Step 1 done 2026-09-26** (see Step
+  notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
+  automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5).
 - **Scope:** master plan §4 Phase 7; ADR 0003 §2 (BrokerPreflight), §3 (startup HMAC check), §5 (Confirm UX), §6
   (live reconciliation); ADR 0002 (fail-safe gateway); CLAUDE.md "Absolute safety rules".
 - **Gate:**
@@ -127,6 +127,33 @@ Nothing is taken from memory.
 8. **Docs and gate:**
    - `docs/cli.md`, `docs/guide.md` §8 made current, and this plan's Results
    - the full test run with output, and the handover checklist for O9
+
+## Step notes
+
+**Step 1: pre-trade calls (done 2026-09-26).**
+- **Research:** both clients are unchanged since their pins. Qluxzz has neither route. The Go SDK's `trading/service.go` and `types.go` @ `43f3902` give both routes and every field (`docs/research/avanza-endpoints.md`). Neither client has a real recorded answer, so the DTOs are marked provisional.
+- **Routes:** `AvanzaPreflightRoutes` in the routes file (`preflight.validate`, `preflight.fee`), with `RoutesVersion` 2026-09-26.2.
+  - Internal, Tier A, POST.
+  - Not in `AvanzaRoutes.All`, not order routes, and not matched by the forbidden-route pattern.
+  - Only `AvanzaPreflight` uses them (IL-scanning architecture test).
+- **DTOs:** strict Tier A. The validate body mirrors the Go struct with explicit nulls. The fee body is all strings, with the price written without trailing zeros (`"70.85"`).
+  - Money strings accept a dot or a Swedish comma, e.g. `"3 426,16"`.
+  - An unreadable or negative amount, or a currency that is not a 3-letter code, is drift.
+- **Port:** `IBrokerPreflight` in Core, returning a `PreflightOutcome` (validation, fee, fault, problem) and never throwing for broker failures:
+  - drift ⇒ `SchemaDrift`
+  - 401/403 ⇒ `SessionExpired`
+  - 404 ⇒ `EndpointGone`
+  - other failures (after the read pipeline's retries) ⇒ no fault, and the part is missing
+  - a validation fault skips the fee call
+- **Trading:**
+  - `BrokerPreflight.From(outcome)` feeds R21: a missing validation fails R21 live, and `valid:false` fails it and names the check.
+  - `FeeComparison` gives R9 Avanza's fee (plus FX fee) when it is in SEK, else the model's, and flags differences above 1 SEK.
+  - The gateway wiring comes with step 3, once a live mode can exist at all.
+- **`qa probe --preflight [--account 123]`:** records the real answers for a hypothetical 1-share buy at the ask; nothing is placed. The recorded routes are then parsed strictly by `RecordedFixtureTests` like every other route. This lets you confirm the DTOs **before** O4.
+- **Open question for you:** ADR 0003 makes any `valid:false` a hard reject. If Avanza's `commissionWarning` turns out to fire for ordinary small orders (the probe will show it), that rule needs your decision.
+- **Tests:**
+  - Avanza: 22 preflight, 3 architecture and 1 CLI.
+  - Trading: 6 R21 and fee tests.
 
 ## Test map (planned)
 

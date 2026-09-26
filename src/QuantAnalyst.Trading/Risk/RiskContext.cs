@@ -21,7 +21,15 @@ public sealed record OpenOrderView(Guid ClientOrderId, OrderbookId OrderbookId, 
 public sealed record RecentIntent(OrderbookId OrderbookId, OrderSide Side, long Volume, decimal? LimitPrice, DateTimeOffset AtUtc);
 
 /// <summary>Avanza's own <c>validate</c> answer (R21; live modes only).</summary>
-public sealed record BrokerPreflight(bool AllValid, IReadOnlyList<string> Failures);
+public sealed record BrokerPreflight(bool AllValid, IReadOnlyList<string> Failures)
+{
+    /// <summary>The R21 input from a preflight, or null when no validation answer came back (R21 then fails live).</summary>
+    public static BrokerPreflight? From(Core.Broker.PreflightOutcome outcome)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+        return outcome.Validation is { } v ? new BrokerPreflight(v.AllValid, v.Failures) : null;
+    }
+}
 
 /// <summary>Whether the constants behind costs, calendar and tick sizes were checked by the owner (R20).</summary>
 public sealed record VerifiedConstants(bool Courtage, bool Calendar, bool TickTable)
