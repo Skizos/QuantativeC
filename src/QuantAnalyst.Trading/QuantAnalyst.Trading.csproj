@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="QuantAnalyst.Trading.Tests" />
+    <InternalsVisibleTo Include="QuantAnalyst.Avanza.Tests" />
   </ItemGroup>
 
   <ItemGroup>

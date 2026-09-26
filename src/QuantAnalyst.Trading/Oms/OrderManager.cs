@@ -202,8 +202,16 @@ public sealed class OrderManager(AuditLog audit, HaltController halts, TimeProvi
     }
 
     /// <summary>Applies a (partial) fill. Overfilling or filling a closed order halts trading.</summary>
-    public void ApplyFill(Guid clientOrderId, long volume, decimal price, decimal fees, string source)
+    public void ApplyFill(Guid clientOrderId, long volume, decimal price, decimal fees, string source) =>
+        ApplyFillValue(clientOrderId, volume, volume * price, fees, source);
+
+    /// <summary>
+    /// Applies a fill given its total value (several deals at different prices, as reconciliation finds them), so the
+    /// order's filled value stays exact instead of going through a rounded average price.
+    /// </summary>
+    public void ApplyFillValue(Guid clientOrderId, long volume, decimal value, decimal fees, string source)
     {
+        decimal price = volume > 0 ? value / volume : 0m;
         OmsOrder order = Get(clientOrderId);
         OmsState from, to;
         lock (_lock)
@@ -226,13 +234,13 @@ public sealed class OrderManager(AuditLog audit, HaltController halts, TimeProvi
             }
 
             order.FilledVolume += volume;
-            order.FilledValue += volume * price;
+            order.FilledValue += value;
             order.Fees += fees;
             order.State = to;
             order.UpdatedUtc = time.GetUtcNow();
         }
 
-        audit.Append("oms-fill", new { clientOrderId, volume, price, fees, source, from = from.ToString(), to = to.ToString(), filled = order.FilledVolume, of = order.Volume });
+        audit.Append("oms-fill", new { clientOrderId, volume, price = decimal.Round(price, 6), value, fees, source, from = from.ToString(), to = to.ToString(), filled = order.FilledVolume, of = order.Volume });
     }
 
     private OmsOrder Get(Guid clientOrderId) =>

@@ -141,6 +141,17 @@ public sealed class PaperOrderChannelTests : IDisposable
     }
 
     [Fact]
+    public async Task SeveralRestingOrders_ShareTheTenPercent_OldestFirst()
+    {
+        Market(last: 100.5m, total: 10_000);
+        OrderSubmitResult first = await Place(Order(OrderSide.Buy, 6, 100.3m));
+        OrderSubmitResult second = await Place(Order(OrderSide.Buy, 50, 100.2m));
+        Market(last: 100.0m, total: 10_100); // 100 traded through both: 10 in all
+        _channel.OnQuote(_quotes.Latest(Eric)!);
+        Assert.Equal([(first.BrokerOrderId, 6L), (second.BrokerOrderId, 4L)], _fills.Select(f => ((OrderId?)f.BrokerOrderId, f.Volume)));
+    }
+
+    [Fact]
     public async Task VolumeTradedBeforeTheOrder_OrAcrossADailyReset_IsNotCounted()
     {
         _quotes.Set(Eric, _time.GetUtcNow(), 100.4m, 500, 100.6m, 700, 100.5m, totalVolume: null); // no volume yet

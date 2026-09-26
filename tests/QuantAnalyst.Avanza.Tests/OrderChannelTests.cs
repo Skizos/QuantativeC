@@ -274,3 +274,39 @@ public sealed class OrderChannelTests
         public Task<AccountSnapshot> GetAsync(CancellationToken ct) => throw new InvalidOperationException("not used");
     }
 }
+
+/// <summary>The live reconciliation source over the fake server (provisional fixtures; Phase 7 uses it for real).</summary>
+public sealed class LiveReconciliationTests
+{
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    [Fact]
+    public async Task TheFixtureOrder_ReconcilesAgainstAnOmsThatPlacedIt_AndIsAStrangerOtherwise()
+    {
+        using var rig = new TestRig();
+        await rig.Connection.Authenticator.LoginAsync(Ct);
+        var source = new QuantAnalyst.Trading.Reconciliation.GatewayBrokerState(rig.Connection.Gateway, rig.Time);
+        var account = new AccountId("9990001");
+
+        (OrderManager oms, HaltController halts, var reconciler) = New(rig, account);
+        Assert.Contains("did not place", Assert.Single((await reconciler.RunAsync(source, Ct)).Mismatches), StringComparison.Ordinal);
+        Assert.True(halts.IsActive(HaltReason.Reconciliation));
+
+        (oms, halts, reconciler) = New(rig, account);
+        OmsOrder o = oms.Create(Guid.CreateVersion7(), account, new OrderbookId("5240"), "ERIC B", OrderSide.Buy, 10, 69.5m);
+        oms.Transition(o.ClientOrderId, OmsState.Sent, "test");
+        oms.Transition(o.ClientOrderId, OmsState.Working, "test", new OrderId("700000001"));
+        var report = await reconciler.RunAsync(source, Ct);
+        Assert.True(report.Clean, string.Join("; ", report.Mismatches));
+        Assert.Equal(OmsState.Working, o.State);
+        Assert.DoesNotContain(rig.Server.Requests, r => AvanzaOrderRoutes.All.Any(route => r.PathAndQuery == route.Path()));
+    }
+
+    private static (OrderManager, HaltController, QuantAnalyst.Trading.Reconciliation.Reconciler) New(TestRig rig, AccountId account)
+    {
+        var audit = new AuditLog(Path.Combine(rig.Root, "audit-" + Guid.NewGuid().ToString("N")), rig.Time);
+        var halts = new HaltController(audit, rig.Time);
+        var oms = new OrderManager(audit, halts, rig.Time);
+        return (oms, halts, new QuantAnalyst.Trading.Reconciliation.Reconciler(oms, halts, audit, rig.Time, account));
+    }
+}

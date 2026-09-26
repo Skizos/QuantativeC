@@ -2,7 +2,9 @@ using QuantAnalyst.Analytics.Backtesting;
 using QuantAnalyst.Core;
 using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Market;
+using QuantAnalyst.Core.Orders;
 using QuantAnalyst.Trading.Model;
+using QuantAnalyst.Trading.Reconciliation;
 
 namespace QuantAnalyst.Trading.Paper;
 
@@ -14,7 +16,7 @@ namespace QuantAnalyst.Trading.Paper;
 /// volume at that level; the rest rests.</item>
 /// <item>Resting: fills only when a later trade prints <b>through</b> the limit (last &lt; buy limit, last &gt; sell
 /// limit; a touch is not a fill), at the limit, capped at 10 % of the traded-volume increment since the order last
-/// looked.</item>
+/// looked. Several resting orders in one instrument share that 10 %, oldest first.</item>
 /// <item>Courtage from the book's courtage class, charged per order: each fill pays the difference between the courtage
 /// on the order's cumulative filled value and what it has paid so far, so the minimum fee is paid once. FX fee for
 /// non-SEK instruments.</item>
@@ -22,7 +24,7 @@ namespace QuantAnalyst.Trading.Paper;
 /// </list>
 /// Fill and end events are raised under the channel's lock, so they reach the OMS in order and never race a cancel.
 /// </summary>
-public sealed class PaperOrderChannel : ISimulatedOrderChannel
+public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSource
 {
     public const string ChannelName = "paper";
 
@@ -31,6 +33,7 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel
 
     private readonly Lock _lock = new();
     private readonly Dictionary<OrderId, Resting> _resting = [];
+    private readonly List<BrokerDeal> _deals = [];
     private readonly PaperBook _book;
     private readonly CostModel _costs;
     private readonly IQuoteSource _quotes;
@@ -107,7 +110,7 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel
 
             var id = new OrderId($"PAPER-{++_next}");
             Quote? quote = _quotes.Latest(order.OrderbookId);
-            var resting = new Resting(order, id, spec, quote?.TotalVolumeTraded);
+            var resting = new Resting(order, id, spec, quote?.TotalVolumeTraded, _time.GetUtcNow());
             _resting[id] = resting;
             Reserve(resting);
 
@@ -156,6 +159,8 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel
         int fills = 0;
         lock (_lock)
         {
+            // Our resting orders share the printed liquidity, first in first out: together they take at most 10 %.
+            long taken = 0;
             foreach (Resting r in _resting.Values.Where(r => r.Order.OrderbookId == quote.OrderbookId).OrderBy(r => r.Sequence).ToList())
             {
                 if (quote.TotalVolumeTraded is not { } total)
@@ -177,16 +182,30 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel
                 }
 
                 bool through = r.Order.Side == OrderSide.Buy ? last < r.Order.LimitPrice : last > r.Order.LimitPrice;
-                long quantity = Lots(Math.Min(r.Remaining, (long)decimal.Floor(Participation * increment)), r.Spec.LotSize);
+                long cap = (long)decimal.Floor(Participation * increment) - taken;
+                long quantity = Lots(Math.Min(r.Remaining, cap), r.Spec.LotSize);
                 if (through && quantity > 0)
                 {
                     Fill(r, quantity, r.Order.LimitPrice, "traded through the limit");
+                    taken += quantity;
                     fills++;
                 }
             }
         }
 
         return fills;
+    }
+
+    /// <summary>The paper "broker" state for reconciliation: resting orders and the session's deals.</summary>
+    public Task<BrokerSnapshot> GetAsync(CancellationToken ct)
+    {
+        lock (_lock)
+        {
+            BrokerOrder[] open = [.. _resting.Values.OrderBy(r => r.Sequence).Select(r => new BrokerOrder(
+                r.BrokerId, r.Order.Account, r.Order.OrderbookId, r.Spec.Ticker, r.Order.Side, r.Order.LimitPrice, r.Remaining, r.Order.Volume,
+                "ACTIVE", "NORMAL", r.CreatedUtc, r.Order.ValidUntil, Modifiable: false, Deletable: true))];
+            return Task.FromResult(new BrokerSnapshot(open, [.. _deals], _time.GetUtcNow()));
+        }
     }
 
     /// <summary>Ends every resting order (day orders at the close, or a shutdown). Returns how many ended.</summary>
@@ -216,6 +235,7 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel
         _book.ApplyFill(r.Order.ClientOrderId, r.Order.OrderbookId, r.Spec.Ticker, r.Order.Side, quantity, price, courtage, fx, now);
         r.Filled += quantity;
         r.FilledValue = cumulative;
+        _deals.Add(new BrokerDeal($"{r.BrokerId}-{_deals.Count + 1}", r.BrokerId, r.Order.Account, r.Order.OrderbookId, r.Order.Side, price, quantity, now));
         r.CourtagePaid += courtage;
         if (r.Remaining == 0)
         {
@@ -250,7 +270,7 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel
 
     private static decimal Round(decimal sek) => decimal.Round(sek, 2, MidpointRounding.AwayFromZero);
 
-    private sealed class Resting(ApprovedOrder order, OrderId brokerId, InstrumentSpec spec, decimal? volumeSeen)
+    private sealed class Resting(ApprovedOrder order, OrderId brokerId, InstrumentSpec spec, decimal? volumeSeen, DateTimeOffset createdUtc)
     {
         private static long _sequence;
 
@@ -259,6 +279,8 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel
         public OrderId BrokerId { get; } = brokerId;
 
         public InstrumentSpec Spec { get; } = spec;
+
+        public DateTimeOffset CreatedUtc { get; } = createdUtc;
 
         public long Sequence { get; } = Interlocked.Increment(ref _sequence);
 
