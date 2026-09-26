@@ -23,12 +23,12 @@ The order DTOs stay **provisional** until the owner captures a real web-app orde
 
 | Question | Decision | Why |
 |---|---|---|
-| ADR 0003 status | It is still "Proposed". Phase 6 implements it as written for **Backtest and Paper**. Please accept or amend it before Phase 7, since Phase 7 sends real orders. | Nothing in Phase 6 can place a real order, so building to the proposal is safe and makes it concrete. |
+| ADR 0003 status | **Accepted by the owner on 2026-09-26.** Phase 6 implements it for **Backtest and Paper**. | Nothing in Phase 6 can place a real order, so building to the proposal is safe and makes it concrete. |
 | Who can create an order for a broker | `IBrokerOrderChannel`, `ApprovedOrder` and `OrderSubmitResult` live in Core. `ApprovedOrder` has an **internal constructor** visible only to `QuantAnalyst.Trading`, and inside Trading only `OrderGateway` creates one. An IL-scanning test checks that no other method calls the channel. | ADR 0002/0003: "only `OrderGateway` may reach order methods", enforced by the compiler and by a test. |
 | Projects | New `src/QuantAnalyst.Trading` (depends on Core, Data, Analytics) and `tests/QuantAnalyst.Trading.Tests`. `AvanzaOrderChannel` lives in `QuantAnalyst.Avanza`. | The master plan's layout. |
-| Paper account | A simulated book: starting cash and courtage class from `config/paper.json` (default **avanza-start, 45,000 SEK**, the same as the backtest defaults). Positions, cash and fills persist in `state/paper/` (git-ignored). The account id is `PAPER`. R1 (account allowlist) applies to real accounts only. | Paper must not touch the real account; the book is the source of truth for Paper reconciliation. |
+| Paper account | A simulated book: starting cash and courtage class from `config/paper.json` (default **avanza-start, 5,000 SEK**, the owner's starting capital, the same as the backtest defaults). Positions, cash and fills persist in `state/paper/` (git-ignored). The account id is `PAPER`. R1 (account allowlist) applies to real accounts only. | Paper must not touch the real account; the book is the source of truth for Paper reconciliation. |
 | Instrument allowlist (R2) | `config/universe.json`, keyed by **orderbook id**. It starts **empty**, so every order is rejected until you add names with `qa universe add <TICKER>` (from the instrument master, offline). | There is no OMXS30 membership file yet. An empty allowlist fails safe. |
-| Risk limits | `config/risk-limits.json` with ADR 0003's defaults, validated at startup. With 45,000 SEK, R6 (min(25,000 SEK, 10 % of account value)) allows **4,500 SEK per order**. | ADR 0003 §4, unchanged. The small cap is intended while testing; tune it deliberately later. |
+| Risk limits | `config/risk-limits.json` with ADR 0003's defaults, validated at startup. With 5,000 SEK, R6 (min(25,000 SEK, 10 % of account value)) allows **500 SEK per order** and R7 **1,000 SEK per instrument**. | ADR 0003 §4, unchanged. The small cap is intended while testing; tune it deliberately later. |
 | When Paper decides | Phase 5's daily strategies decide once per trading day, **after the open** (default 09:10 Stockholm), on daily bars through **yesterday's close**. Their orders are day limits placed right after. | The same timing as the backtest: decide on bar t, trade on t+1. No intraday bar has to be invented. |
 | Limit price in Paper | The live reference price (last trade if fresh, else mid) ± the offset, rounded passively to the tick. | ADR 0003 R5 collars limits at ±2 % of the live reference, so anchoring on yesterday's close would be rejected after most gaps. The backtest anchors on the decision close; this difference is stated in the Paper report. |
 | Paper fills | ADR 0003 §8: a marketable limit fills at the ask (buys) or bid (sells), up to the displayed volume, and the rest rests. A resting limit fills only when a later trade **prints through** it, capped at 10 % of the printed volume increment. Courtage and FX fee come from the courtage class. | Conservative about queue position, and it matches the backtest's "touch is not a fill". |
@@ -136,8 +136,9 @@ Every step writes an audit record. A submit timeout, transport error, 5xx or unr
 **Not done in Phase 6 (by design or waiting on you):**
 - **Step 7:** EOD report (fills vs VWAP, rule violations, reconciliation) and the owner's promotion command with an HMAC record. Both are needed before your 10 Paper days can be assessed.
 - **A real web-app order capture** (buy and sell, sanitized) before Phase 7. It finalizes the order DTOs, including the `profit` question, and the deals format.
-- **Your inputs:**
-  - starting capital (45,000 is a placeholder)
-  - whether the FX fee is 0.25 % in every class
-  - whether Avanza charges the minimum courtage once per order when it fills in parts
-  - ADR 0003 acceptance before Phase 7
+- **Answered by the owner (2026-09-26):**
+  - starting capital **about 5,000 SEK**: `config/paper.json` and `config/backtest-defaults.json` use 5,000
+  - the FX fee does not apply in every class: Start has none while under its limit (`costs.avanza-start.json` has 0; the other classes keep 0.25 %)
+  - **ADR 0003 accepted**
+- **Still open:** whether Avanza charges the minimum courtage once per order when it fills in parts. It doesn't matter on Start (no courtage), only on the other classes.
+- **Consequence of 5,000 SEK under ADR 0003's limits:** 500 SEK per order (R6), 1,000 SEK per instrument (R7), 100 SEK daily loss stop (R19). A share priced above 500 SEK can't be bought at all, and a target is reached over at least two days. Changing that means changing `config/risk-limits.json`, which is your call.

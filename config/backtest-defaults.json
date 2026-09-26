@@ -1,6 +1,6 @@
 {
   "format": "qa-backtest-defaults/1",
   "costs": "avanza-start",
-  "cash": 45000,
-  "note": "Used by qa backtest when --costs or --cash is not given. The owner starts on Avanza's Start class (2026-09-26), which can only be chosen with less than 50,000 SEK; cash 45,000 is a placeholder under that limit until the owner sets the real starting capital. Compare classes for a trade size with: qa costs --amount 20000"
+  "cash": 5000,
+  "note": "Used by qa backtest when --costs or --cash is not given. The owner starts on Avanza's Start class with about 5,000 SEK (2026-09-26); Start can only be chosen with less than 50,000 SEK. Compare classes for a trade size with: qa costs --amount 500"
 }
