@@ -1,6 +1,6 @@
 # 06 — Phase 6: Trading core + Paper mode
 
-- **Status:** in progress (started 2026-09-26 at the owner's request, while Phase 4's live stream recording waits for Monday).
+- **Status:** steps 1–6 implemented and gated 2026-09-26 (see Results); step 7 (EOD report, promotion) next. Started 2026-09-26 at the owner's request.
 - **Scope:** master plan §4 Phase 6; ADR 0002 (fail-safe gateway, two ports); ADR 0003 (modes, pipeline, R1–R21, OMS, kill switch, paper fills); CLAUDE.md "Absolute safety rules".
 - **Gate:**
   - all trading tests green, including one pass and one fail test per risk check R1–R21
@@ -107,6 +107,37 @@ Every step writes an audit record. A submit timeout, transport error, 5xx or unr
 - **The source scan** now allows the three order-entry literals only inside `AvanzaOrderRoutes`. Stop-loss, fund-order and money-movement paths stay forbidden everywhere.
 - **The Paper spy moves to step 6.** It needs `qa paper run` to exist, so it can check that a whole Paper session against the fake server sends zero order-route requests.
 
+**Step 6 (reconciler, CLI, Paper session):**
+- **Reconciler.** One implementation serves both sources: the paper channel every day (resting orders plus the session's deals) and the read gateway for Phase 7 (`GatewayBrokerState`).
+  - Live reconciliation **fails closed on the first live fill**, because the deals mapper refuses non-empty lists until a deal has been recorded. Recording one is a Phase 7 prerequisite.
+  - An order at the broker that the OMS did not place counts as a mismatch. **Don't place manual orders in the app on the algorithm's account.**
+- **Fill-model fix found while testing.** Several resting paper orders in one instrument each took 10 % of the same printed volume. They now share it, oldest first.
+- **Reconciliation fills** are booked by total value (`ApplyFillValue`), so the order's filled value stays exact instead of going through a rounded average price.
+- **`qa paper run` checks everything it can before the one login:** the promotion state, limits, paper config, allowlist, courtage class and calendar. It refuses to start while the kill switch is active.
+- **The session loop** reconciles before it ticks the kill switch. So an Unknown order reaching 2 minutes is reconciled (and possibly resolved as "not placed") before the kill switch's > 2 min trigger looks at it.
+- **Session lock.** `state/session.lock` stops a second session and an offline `qa kill --reset` under a running one. A lock left by a dead process is stale and gets taken over.
+- **Promotion guard.** Hook rule 6 plus settings deny rules block the promotion command in any form, and any write to the local promotion state, for Claude.
+  - The hook also stopped two of my own commit messages that quoted them, which is intended. Messages now go through a file.
+- **Spy test race, fixed in the test.** The driver moved the fake clock while the CLI was still logging in. Under full-suite load, the kill file then existed before the kill switch was built, so the CLI took its correct refuse-to-start path instead of the in-session path the test expects.
+  - The driver now holds the clock until the session streams.
+  - The refuse-to-start path has its own test.
+
 ## Results
 
-(Filled in at the gate.)
+**Gate (2026-09-26): met in code and CI; the Paper days themselves are yours.**
+
+| Gate item | Evidence |
+|---|---|
+| All trading tests green, one pass and one fail test per R1–R21 | `RiskEngineTests`: fail-alone and at-the-boundary theories for all 21 checks. Trading tests **210**, Avanza tests (incl. CLI, channel, architecture, spy) **257**; managed total **707**, 0 failed, two full runs. |
+| Paper spy green | `PaperSpyTests`: a full `qa paper run` against the fake Avanza server decides at 09:10, places a paper buy of 63 ERIC B (R6-clipped to 4,500 SEK), fills it at the ask, reconciles clean. There are **zero requests to any order route**, and the only POSTs are login steps. There are also tests for a kill during the session, an active kill at startup, and the checks made before login. |
+| Only `OrderGateway` calls `IBrokerOrderChannel`; only `AvanzaOrderChannel` uses order routes | `OrderArchitectureTests` (IL scan of all 7 production assemblies, positive controls, a mutation check), and the source-literal scan in `ArchitectureTests`. |
+| Confirm/Auto cannot start | The gateway refuses them and any channel that is not simulated. `PromotionState.Effective` refuses modes above the record or not yet built. Both are tested, including against the real Avanza channel. |
+
+**Not done in Phase 6 (by design or waiting on you):**
+- **Step 7:** EOD report (fills vs VWAP, rule violations, reconciliation) and the owner's promotion command with an HMAC record. Both are needed before your 10 Paper days can be assessed.
+- **A real web-app order capture** (buy and sell, sanitized) before Phase 7. It finalizes the order DTOs, including the `profit` question, and the deals format.
+- **Your inputs:**
+  - starting capital (45,000 is a placeholder)
+  - whether the FX fee is 0.25 % in every class
+  - whether Avanza charges the minimum courtage once per order when it fills in parts
+  - ADR 0003 acceptance before Phase 7

@@ -186,3 +186,47 @@ Plan, fill model and formulas: `docs/plans/05-phase5-backtesting.md`. Every run 
 - **Paths:** the ledger defaults to `research/trial-ledger.jsonl` at the repository root (change it with `--ledger`). Config comes from `./config`, else from next to `qa` (change it with `--config-dir`).
 
 Exit codes of `qa backtest run`: 0 ok, 1 error, 2 the run was logged but rejected (holdout, look-ahead) or failed.
+
+## Paper trading (Phase 6)
+
+Plan, decisions and gate: `docs/plans/06-phase6-trading-core.md`; rules: ADR 0003. In Paper mode every order goes
+through the whole pipeline (lots → tick rounding → risk checks R1–R21 → `OrderGateway` → OMS) and is filled by a
+simulated channel on **live quotes**. **Nothing is ever sent to Avanza:** Avanza is read for quotes and tick tables
+only. Confirm and Auto cannot start in Phase 6.
+
+| Verb | What it does |
+|---|---|
+| `qa universe list` / `qa universe add ERIC-B [VOLV-B …]` / `qa universe remove ERIC-B` | The instrument allowlist (risk check R2), `config/universe.json`, by orderbook id. It starts **empty**, so every order is rejected until you add names. `add` looks the ticker up offline in the instrument master (`qa history import` first). SEK instruments only. |
+| `qa risk-limits [--account-value 100000]` | Every limit with its R number, sized for the paper cash (45,000 SEK allows **4,500 SEK per order**) or the value you give. |
+| `qa paper run --strategy ma-cross --param fast=20 --param slow=100 [--duration 3600]` | One Paper session. Before any login it checks the promotion state, the limits, `config/paper.json`, the allowlist (1–5 names, each is streamed) and the courtage class. Then: one read-only login, tick tables from Avanza, live quotes, and at the decision time (09:10 by default) the strategy decides on bars through **yesterday** and places day limit orders, paced 13 s apart. Orders fill on the live quotes by the ADR 0003 §8 model and expire at the close. The session runs until two minutes after the close, or `--duration` seconds; Ctrl+C stops early and cancels everything. |
+| `qa paper status` | The paper book (`state/paper/book.json`): cash, positions at cost, realised P&L, fees; and whether a session is running. |
+| `qa kill [--reason "…"]` | **Kill switch.** Writes `./KILL`: a running session halts within a second and cancels every working order through the gateway. Without a session, the next one refuses to start. |
+| `qa kill --status` / `qa kill --reset [--reason "…"]` | Shows / clears the kill switch. Reset works only while no session runs (`state/session.lock`) and is audited. |
+| `qa audit verify [--dir audit]` | Checks the audit log's hash chain across all days (`audit/YYYY-MM-DD.jsonl`, one record per pipeline step). Exit 2 when broken. |
+
+**Before your first session:**
+1. `qa history import ERIC-B` (and your other names). Then import again every evening: the session refuses to decide unless the history ends on the previous trading day.
+2. `qa universe add ERIC-B …` (at most 5 names).
+3. Check `config/paper.json`: courtage class (`avanza-start`), starting cash (45,000 SEK placeholder), decision time (09:10). An existing `state/paper/book.json` keeps its own cash and class. Move it away to start over.
+4. `qa risk-limits` to see what the limits allow.
+
+**How Paper decides and fills:**
+- **Targets become orders like the backtest's:** whole lots, a 1 % cash buffer, a 10 % no-trade band, and limits 50 bps toward the market.
+  - The limit is anchored on the **live** reference price (last trade if fresh, else the mid), not yesterday's close; R5's ±2 % collar would reject most gaps otherwise.
+  - Orders are clipped to what R6 (per order) and R7 (per position) allow, so a large target is reached over several days.
+- **Marketable at entry:** fills at the ask (buys) or bid (sells), up to the displayed volume. The rest rests.
+- **Resting:** fills only when a later trade prints **through** the limit, at the limit, taking at most 10 % of the traded volume (shared by your resting orders, oldest first). A touch is not a fill.
+- **Courtage** comes from the courtage class, charged per order (the minimum once), plus the FX fee for non-SEK instruments.
+
+**Safety:**
+- **Unknown outcomes:** a submit with an unknown outcome is never retried, and it blocks its instrument (R18) until reconciliation resolves it.
+- **Reconciliation:** runs every 30 s. A mismatch halts trading, and if it lasts more than 60 s the kill switch fires.
+- **The kill switch fires automatically on:**
+  - 3 consecutive rejects
+  - the daily loss stop (−2 %)
+  - schema drift or a gone order endpoint
+  - an order Unknown for more than 2 minutes
+  - a reconciliation mismatch lasting more than 60 s
+- **Promotion to Confirm is your step** (ADR 0003 §3). Claude's settings and hook block both that command and any write to the local promotion state.
+
+Exit codes of `qa paper run`: 0 ok, 1 error, 3 halted (the kill switch fired, or was active at start), 4 login locked.
