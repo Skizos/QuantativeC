@@ -15,6 +15,8 @@
 
 Base URL for everything: `https://www.avanza.se`.
 
+**Re-checked 2026-09-26 (Phase 6):** the GitHub commit lists of both clients show no commits after the pins above (Qluxzz newest is still `a6a18a9`, 2026-09-21; avanza-sdk-go newest is still `43f3902`, 2026-07-05). §4 was re-read from those commits: `avanza/avanza.py` `place_order`/`edit_order`/`delete_order` and `constants.py`, and avanza-sdk-go `trading/types.go`.
+
 ## 1. Authentication (username + password + TOTP)
 
 Source: Qluxzz `avanza/avanza.py` (`__authenticate`, `__validate_2fa`) and `avanza/credentials.py`.
