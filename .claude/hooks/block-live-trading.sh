@@ -46,4 +46,14 @@ if printf '%s' "$input" | grep -Eiq -- "holdout\.json" \
   deny "command would change config/holdout.json (the final backtest holdout is the owner's to unlock)."
 fi
 
+# 6) Promotion (ADR 0003 §3): 'qa promote' raises the highest allowed trading mode. Only the owner runs it, and
+#    Claude never writes promotion/state.json (reading it is fine).
+if printf '%s' "$input" | grep -Eiq -- "(^|[^A-Za-z0-9_-])(qa(\.ps1|\.exe|\.dll)?|--)[[:space:]]+promote([^A-Za-z0-9_-]|$)"; then
+  deny "command runs 'qa promote' (promotion is the owner's step, ADR 0003 §3)."
+fi
+if printf '%s' "$input" | grep -Eiq -- "promotion/state\.json" \
+   && printf '%s' "$input" | grep -Eiq -- "(>|sed[^|;&]*-i|(^|[^a-z])(tee|mv|cp|rm|truncate|dd|install|chmod|ln)[[:space:]]|python|perl|ruby|node|pwsh|powershell|git[[:space:]]+(checkout|restore|rm|mv|reset|stash|apply)|Set-Content|Out-File|Remove-Item|Move-Item|Copy-Item)"; then
+  deny "command would change promotion/state.json (the owner's promotion record, ADR 0003 §3)."
+fi
+
 exit 0

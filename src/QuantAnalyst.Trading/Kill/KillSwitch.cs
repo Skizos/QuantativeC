@@ -128,6 +128,43 @@ public sealed class KillSwitch : IDisposable
         File.WriteAllText(killFile, string.Create(CultureInfo.InvariantCulture, $"{time.GetUtcNow():O} {reason}\n"));
     }
 
+    /// <summary>Whether a kill is recorded on disk (the flag file or <c>killed.json</c>), for <c>qa kill --status</c>.</summary>
+    public static KillRecord? RecordedKill(string killFile, string stateDirectory)
+    {
+        string state = Path.Combine(stateDirectory, StateFileName);
+        if (File.Exists(state))
+        {
+            return ReadState(state);
+        }
+
+        return File.Exists(killFile)
+            ? new KillRecord(File.GetLastWriteTimeUtc(killFile), "file " + KillFileName, File.ReadAllText(killFile).Trim())
+            : null;
+    }
+
+    /// <summary>
+    /// <c>qa kill --reset</c> while no session runs. A running session holds its orders in memory, so it must be
+    /// stopped first (it ends its paper orders on the way out). Removes <c>./KILL</c> and <c>killed.json</c>.
+    /// </summary>
+    public static KillResetResult ResetOffline(string killFile, string stateDirectory, AuditLog audit, string why)
+    {
+        ArgumentNullException.ThrowIfNull(audit);
+        if (SessionLock.Holder(stateDirectory) is { } holder)
+        {
+            return new KillResetResult(false, $"Not reset: a trading session is running ({holder}). Stop it (Ctrl+C), then reset.");
+        }
+
+        if (RecordedKill(killFile, stateDirectory) is not { } record)
+        {
+            return new KillResetResult(false, "The kill switch is not active.");
+        }
+
+        File.Delete(killFile);
+        File.Delete(Path.Combine(stateDirectory, StateFileName));
+        audit.Append("kill-reset", new { why, offline = true, record.Source, record.Reason });
+        return new KillResetResult(true, $"Kill switch reset ({record.Source}: {record.Reason}).");
+    }
+
     /// <summary>Fires the kill switch. Idempotent: the first trigger's source and reason are kept.</summary>
     public void Trigger(string source, string reason)
     {

@@ -1,0 +1,5 @@
+{
+  "format": "qa-universe/1",
+  "note": "Instrument allowlist (ADR 0003 R2), by Avanza orderbook id. Edit with 'qa universe add|remove'. An empty list rejects every order.",
+  "instruments": []
+}

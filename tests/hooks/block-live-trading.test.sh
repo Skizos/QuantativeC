@@ -62,4 +62,19 @@ check 0 'cat config/holdout.json'
 check 0 'git diff -- config/holdout.json'
 check 0 'grep -n locked config/holdout.json'
 
+# Promotion is the owner's (ADR 0003 §3)
+check 2 'qa promote --to Confirm'
+check 2 './qa promote'
+check 2 '.\qa.ps1 promote --to Confirm'
+check 2 'dotnet run --project src/QuantAnalyst.Cli -- promote'
+check 2 'dotnet src/QuantAnalyst.Cli/bin/Debug/net10.0/qa.dll promote'
+check 2 'echo {} > promotion/state.json'
+check 2 'cp promotion/state.template.json promotion/state.json'
+check 2 'rm promotion/state.json'
+check 0 'cat promotion/state.json'
+check 0 'cat promotion/state.template.json'
+check 0 'qa paper run'
+check 0 'grep -rn promote docs/'
+check 0 'qa kill --reset'
+
 exit "$fail"

@@ -44,7 +44,11 @@
       "Edit(./secrets/**)",
       "Write(./secrets/**)",
       "Edit(./config/holdout.json)",
-      "Write(./config/holdout.json)"
+      "Write(./config/holdout.json)",
+      "Edit(./promotion/state.json)",
+      "Write(./promotion/state.json)",
+      "Bash(qa promote:*)",
+      "Bash(./qa promote:*)"
     ]
   },
   "hooks": {
