@@ -564,9 +564,16 @@ internal static partial class AvanzaCommands
             return code;
         }
         catch (Exception ex) when (ex is BrokerException or SecretStoreException or ArgumentException or IOException or InvalidDataException
-                                       or HistoryImportException or HistoryStoreException or CalendarConfigException)
+                                       or HistoryImportException or HistoryStoreException or CalendarConfigException
+                                   || DataCommands.IsStoreFailure(ex))
         {
             Flush(buffer, output, redactor);
+            if (DataCommands.IsStoreFailure(ex))
+            {
+                error.WriteLine(redactor.Redact($"error: {DataCommands.StoreFailureMessage(ex)}"));
+                return 1;
+            }
+
             (int code, string prefix) = ex switch
             {
                 LoginLockedException => (ExitLocked, "LOCKED"),

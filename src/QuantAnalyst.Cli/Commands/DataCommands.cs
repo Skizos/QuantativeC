@@ -151,11 +151,31 @@ internal static class DataCommands
         {
             return body(w);
         }
-        catch (Exception ex) when (ex is HistoryStoreException or CalendarConfigException or DuckDB.NET.Data.DuckDBException)
+        catch (Exception ex) when (ex is HistoryStoreException or CalendarConfigException || IsStoreFailure(ex))
         {
-            throw new InvalidDataException(ex.Message, ex);
+            throw new InvalidDataException(StoreFailureMessage(ex), ex);
         }
     });
+
+    /// <summary>
+    /// Failures opening or using the DuckDB store, including its native library not loading. They become a readable
+    /// "error:" line instead of an unhandled exception.
+    /// </summary>
+    public static bool IsStoreFailure(Exception ex) =>
+        ex is System.Data.Common.DbException or DllNotFoundException or BadImageFormatException or EntryPointNotFoundException
+        || (ex is TypeInitializationException t && t.InnerException is not null && IsStoreFailure(t.InnerException));
+
+    public static string StoreFailureMessage(Exception ex)
+    {
+        Exception root = ex is TypeInitializationException { InnerException: { } inner } ? inner : ex;
+        return root switch
+        {
+            System.Data.Common.DbException => $"the history store could not be used: {root.Message}",
+            DllNotFoundException or BadImageFormatException or EntryPointNotFoundException =>
+                $"DuckDB's native library could not be loaded ({root.GetType().Name}: {root.Message}). Rebuild with 'dotnet build QuantAnalyst.sln' and run qa from the build output.",
+            _ => root.Message,
+        };
+    }
 
     public static HistoryStore OpenExisting(string path) =>
         File.Exists(path) ? HistoryStore.Open(path) : throw new ArgumentException($"No history store at '{path}'. Run 'qa history import <TICKER>' first.");

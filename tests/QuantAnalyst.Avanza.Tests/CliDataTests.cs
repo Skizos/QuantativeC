@@ -149,6 +149,21 @@ public sealed class CliDataTests : IDisposable
     }
 
     [Fact]
+    public void StoreThatCannotBeOpened_IsAReadableError_NotACrash()
+    {
+        string directory = Path.Combine(_root, "a-folder-not-a-file");
+        Directory.CreateDirectory(directory);
+        (int code, string output, string error) = Qa(true, "history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", directory);
+        Assert.True(code == 1, output + error);
+        Assert.StartsWith("error: the history store could not be used:", error, StringComparison.Ordinal);
+
+        File.WriteAllText(Store, "this is not a DuckDB file");
+        (code, _, error) = Qa(false, "history", "show", "ERIC-B", "--store", Store);
+        Assert.Equal(1, code);
+        Assert.StartsWith("error: the history store could not be used:", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HistoryShow_WithoutAStore_SaysWhatToDo()
     {
         (int code, _, string error) = Qa(false, "history", "show", "ERIC-B", "--store", Store);
