@@ -420,6 +420,22 @@ public sealed class OrderGateway : IDisposable
             _oms.TryTransition(order.ClientOrderId, OmsState.Working, "fill arrived before the submit reply", fill.BrokerOrderId, OmsState.Sent);
 
             _oms.ApplyFill(fill.ClientOrderId, fill.Volume, fill.Price, fill.Courtage + fill.FxFee, fill.How.Length == 0 ? _channel.Name : $"{_channel.Name}: {fill.How}");
+
+            // The evidence the end-of-day report checks fills against (ADR 0003 §8).
+            _audit.Append("sim-fill", new
+            {
+                fill.ClientOrderId,
+                order.Ticker,
+                side = order.Side.ToString(),
+                limit = order.LimitPrice,
+                fill.Volume,
+                fill.Price,
+                fill.Courtage,
+                fill.FxFee,
+                fill.How,
+                fill.WindowVwap,
+                fill.ArrivalPrice,
+            });
         }
         catch (InvalidOperationException ex)
         {

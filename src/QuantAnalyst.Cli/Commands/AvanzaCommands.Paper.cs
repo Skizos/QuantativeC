@@ -45,11 +45,12 @@ internal static partial class AvanzaCommands
         var auditDir = new Option<string>("--audit-dir") { Description = "Audit folder", DefaultValueFactory = _ => TradingCommands.DefaultAuditDir };
         var killFile = new Option<string>("--kill-file") { Description = "The kill flag file", DefaultValueFactory = _ => TradingCommands.DefaultKillFile };
         var promotionDir = new Option<string>("--promotion-dir") { Description = "Promotion state folder", DefaultValueFactory = _ => "promotion" };
+        var reportsDir = new Option<string>("--reports-dir") { Description = "End-of-day reports folder", DefaultValueFactory = _ => TradingCommands.DefaultReportsDir };
         var command = new Command(
             "run",
             "Run one Paper session: after the open, decide on bars through yesterday, place day limit orders through the risk engine, fill them on live quotes, end them at the close. Read-only towards Avanza.");
         common.AddTo(command, json: false);
-        foreach (Option o in new Option[] { strategy, param, duration, configDir, store, auditDir, killFile, promotionDir })
+        foreach (Option o in new Option[] { strategy, param, duration, configDir, store, auditDir, killFile, promotionDir, reportsDir })
         {
             command.Options.Add(o);
         }
@@ -155,7 +156,14 @@ internal static partial class AvanzaCommands
             var subscriptions = composers.Select(c => c.Quotes.Subscribe(capacity: 256)).ToList();
             var pumps = subscriptions.Select(s => PumpQuotesAsync(s, quotes, channel)).ToList();
             var feeds = composers.Select(c => StopAllOnFailure(c.RunAsync(stop.Token), stop)).ToList();
-            var session = new PaperSession(gateway, channel, book, kill, reconciler, halts, setup.Schedule, audit, time, Decide, output);
+            string EndOfDayReport(DateOnly day)
+            {
+                Trading.Reports.EodReport report = Trading.Reports.EodReport.Build(audit.Directory, day, time);
+                string saved = report.Save(parse.GetValue(reportsDir)!);
+                return $"{report.Summary()} Saved to {saved}.";
+            }
+
+            var session = new PaperSession(gateway, channel, book, kill, reconciler, halts, setup.Schedule, audit, time, Decide, output, EndOfDayReport);
             PaperSessionSummary summary;
             try
             {

@@ -189,7 +189,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - Untouched limits do not fill.
 - The 10y × 300 synthetic benchmark is saved.
 
-### Phase 6 — Trading core + Paper mode (steps 1–6 implemented and gated 2026-09-26; EOD report and promotion next; plan and results in `docs/plans/06-phase6-trading-core.md`)
+### Phase 6 — Trading core + Paper mode (implemented and gated 2026-09-26, EOD report and promotion included; your 10 Paper days next; plan and results in `docs/plans/06-phase6-trading-core.md`)
 - **Gateways:** `IBrokerGateway` / `IBrokerOrderChannel` with Avanza, Paper and Backtest implementations. The Avanza order channel is **implemented but fixture-tested only**.
 - **Pipeline:** `OrderGateway`, `PreTradeRiskEngine` (ADR 0003), OMS + Reconciler, `HaltController`, `KillSwitch` (CLI / API / `./KILL` file / automatic), `Scheduler`, hash-chained audit log.
 - **Tests:** architecture tests plus a Paper spy (zero order-route requests at the HTTP handler level).

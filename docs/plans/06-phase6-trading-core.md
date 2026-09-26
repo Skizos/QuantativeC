@@ -1,6 +1,6 @@
 # 06 — Phase 6: Trading core + Paper mode
 
-- **Status:** steps 1–6 implemented and gated 2026-09-26 (see Results); step 7 (EOD report, promotion) next. Started 2026-09-26 at the owner's request.
+- **Status:** implemented and gated 2026-09-26 (steps 1–7, see Results). What remains is the owner's 10 clean Paper days and the promotion. Started 2026-09-26 at the owner's request.
 - **Scope:** master plan §4 Phase 6; ADR 0002 (fail-safe gateway, two ports); ADR 0003 (modes, pipeline, R1–R21, OMS, kill switch, paper fills); CLAUDE.md "Absolute safety rules".
 - **Gate:**
   - all trading tests green, including one pass and one fail test per risk check R1–R21
@@ -122,6 +122,25 @@ Every step writes an audit record. A submit timeout, transport error, 5xx or unr
   - The driver now holds the clock until the session streams.
   - The refuse-to-start path has its own test.
 
+**Step 7 (end-of-day report, promotion):**
+- **The report is rebuilt from the audit log alone** (`EodReport.Build`): the day's `audit/YYYY-MM-DD.jsonl` plus a whole-chain check. It never reads session memory or earlier report files, so it can be regenerated (`qa report eod`), and the promotion gate trusts nothing a person could edit unnoticed.
+- **Fill sanity (ADR 0003 §8).**
+  - The paper channel tracks the market's VWAP over each order's life, from volume increments at the last price. It attaches the VWAP and the arrival mid to every fill, and the gateway audits both (`sim-fill`).
+  - A fill made at entry has no window, so it is compared with the arrival mid.
+  - The deviation is signed "worse than the reference". A fill more than ±200 bps away (the R5 collar) is an outlier.
+- **Violations vs events.**
+  - Violations are system faults or unsafe states, including an order created without a passing risk check just before it: an independent re-check of the pipeline from the audit.
+  - Risk rejections, a manual kill, the daily loss stop and data halts are events: the rules working.
+- **The Confirm gate counts clean Paper days after the last day that was not clean.** Taking all history would let one early bug block promotion forever. Taking the latest ten would allow a problem inside the evidence. It also needs ≥ 1 order sent and an intact audit chain.
+- **Promotion records** (ADR 0003 §3):
+  - **Signature:** HMAC-SHA256 over a canonical JSON (fixed field order, `hmac` excluded), keyed by 32 random bytes in Windows Credential Manager (`QuantAnalyst:Promotion`, created by `--init-key` and never shown). Verification uses a constant-time compare.
+  - **Evidence:** each record pins its evidence reports by SHA-256, plus one hash over the list.
+  - **What `Verify` checks:** signatures, the mode chain from Paper, `maxAllowed` against the last record, and unchanged evidence.
+  - **Promotion needs** the exact mode name typed (case-sensitive). One step at a time; demotion needs no gate but is typed and signed.
+  - **Auto waits for Phase 7**, because its gate needs Confirm results.
+- **Promoting to Confirm does not start Confirm.** `PromotionState.Effective` still refuses it ("Phase 7"). Phase 7 adds the startup check: Confirm/Auto run only when `Promotion.Verify` passes.
+- **Claude never runs the promotion command.** Hook rule 6 and the deny rules block it, and they stopped some of my own edits whose command text contained its name; those were written with the editor tools instead. Its tests run in-process with an in-memory key store; Credential Manager is never touched.
+
 ## Results
 
 **Gate (2026-09-26): met in code and CI; the Paper days themselves are yours.**
@@ -133,8 +152,12 @@ Every step writes an audit record. A submit timeout, transport error, 5xx or unr
 | Only `OrderGateway` calls `IBrokerOrderChannel`; only `AvanzaOrderChannel` uses order routes | `OrderArchitectureTests` (IL scan of all 7 production assemblies, positive controls, a mutation check), and the source-literal scan in `ArchitectureTests`. |
 | Confirm/Auto cannot start | The gateway refuses them and any channel that is not simulated. `PromotionState.Effective` refuses modes above the record or not yet built. Both are tested, including against the real Avanza channel. |
 
+| End-of-day report and promotion (step 7) | `EodReportTests`: a real Paper session's report, every violation kind vs events, a broken chain. `PromotionGateTests`: 10-day rule, restart after a problem day, incomplete/Confirm/no-order/broken-audit cases. `PromotionSigningTests`: HMAC, tamper cases, chain, evidence. `CliPromotionTests`: `qa report eod|gate`, `--init-key`, gate refusal, typed confirmation, signed record, `--verify` catching an edited report, demotion, Auto refused. Managed total **728**, 0 failed. |
+
+**Phase 6 is complete in code.** What remains is calendar time and your inputs.
+
 **Not done in Phase 6 (by design or waiting on you):**
-- **Step 7:** EOD report (fills vs VWAP, rule violations, reconciliation) and the owner's promotion command with an HMAC record. Both are needed before your 10 Paper days can be assessed.
+- **Your 10 clean Paper days.** Run `qa paper run` each trading day and check `qa report gate`. Then `qa promote --init-key` once, and `qa promote --to Confirm`.
 - **A real web-app order capture** (buy and sell, sanitized) before Phase 7. It finalizes the order DTOs, including the `profit` question, and the deals format.
 - **Answered by the owner (2026-09-26):**
   - starting capital **about 5,000 SEK**: `config/paper.json` and `config/backtest-defaults.json` use 5,000

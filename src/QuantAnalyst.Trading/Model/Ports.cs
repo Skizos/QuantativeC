@@ -45,7 +45,12 @@ public interface IAccountState
 
 /// <summary>A fill reported by a simulated channel.</summary>
 /// <param name="How">How the model filled it (e.g. "marketable at entry"), for the audit log.</param>
-public sealed record SimulatedFill(Guid ClientOrderId, OrderId BrokerOrderId, long Volume, decimal Price, decimal Courtage, decimal FxFee, DateTimeOffset AtUtc, string How = "");
+/// <param name="WindowVwap">VWAP of the market's prints between the order's entry and this fill, or null when none printed
+/// (ADR 0003 §8: the end-of-day sanity comparison).</param>
+/// <param name="ArrivalPrice">The mid (else last) when the order arrived; the comparison price for fills at entry.</param>
+public sealed record SimulatedFill(
+    Guid ClientOrderId, OrderId BrokerOrderId, long Volume, decimal Price, decimal Courtage, decimal FxFee, DateTimeOffset AtUtc, string How = "",
+    decimal? WindowVwap = null, decimal? ArrivalPrice = null);
 
 /// <summary>
 /// Marker and event source for simulated channels (Paper, Backtest). Declared in Trading, which QuantAnalyst.Avanza does

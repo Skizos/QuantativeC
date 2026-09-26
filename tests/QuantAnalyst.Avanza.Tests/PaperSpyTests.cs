@@ -78,7 +78,7 @@ public sealed class PaperSpyTests : IDisposable
     private string[] PaperArgs(double seconds) =>
         ["paper", "run", "--strategy", "buy-and-hold", "--duration", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
          "--config-dir", Config, "--store", Store, "--state-dir", State, "--audit-dir", Audit, "--kill-file", KillFile,
-         "--promotion-dir", Path.Combine(_root, "promotion"), "--login", "totp"];
+         "--promotion-dir", Path.Combine(_root, "promotion"), "--reports-dir", Path.Combine(_root, "reports"), "--login", "totp"];
 
     /// <summary>Runs the CLI on a worker while this thread moves the fake clock and keeps the depth stream alive.</summary>
     private async Task<(int Code, string Output, string Error)> RunPaper(double seconds, Action<DateTimeOffset>? onTick = null)
@@ -121,6 +121,8 @@ public sealed class PaperSpyTests : IDisposable
         Assert.Contains("decision: 1 order(s)", output, StringComparison.Ordinal);
         Assert.True(output.Contains("Buy 63 ERIC B: Accepted (Filled, filled 63/63 @ 70.86)", StringComparison.Ordinal), output); // R6: 4,500 SEK
         Assert.Contains("Reconciliation: clean", output, StringComparison.Ordinal);
+        Assert.Contains("Report (partial day): 2026-09-28 INCOMPLETE: 1 sent, 1 accepted", output, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(_root, "reports", "2026-09-28.json")));
 
         RecordedRequest[] session = [.. _server.Requests.Skip(before)];
         Assert.NotEmpty(session);

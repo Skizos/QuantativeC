@@ -110,7 +110,8 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
 
             var id = new OrderId($"PAPER-{++_next}");
             Quote? quote = _quotes.Latest(order.OrderbookId);
-            var resting = new Resting(order, id, spec, quote?.TotalVolumeTraded, _time.GetUtcNow());
+            decimal? arrival = quote is { Bid: { } b, Ask: { } a } ? (b + a) / 2 : quote?.Last;
+            var resting = new Resting(order, id, spec, quote?.TotalVolumeTraded, _time.GetUtcNow(), arrival);
             _resting[id] = resting;
             Reserve(resting);
 
@@ -181,6 +182,10 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
                     continue;
                 }
 
+                // The market's VWAP over the order's life (end-of-day fill sanity), from volume increments at the last price.
+                r.MarketValue += increment * last;
+                r.MarketVolume += increment;
+
                 bool through = r.Order.Side == OrderSide.Buy ? last < r.Order.LimitPrice : last > r.Order.LimitPrice;
                 long cap = (long)decimal.Floor(Participation * increment) - taken;
                 long quantity = Lots(Math.Min(r.Remaining, cap), r.Spec.LotSize);
@@ -247,7 +252,8 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
             Reserve(r);
         }
 
-        Filled?.Invoke(new SimulatedFill(r.Order.ClientOrderId, r.BrokerId, quantity, price, courtage, fx, now, why));
+        decimal? vwap = r.MarketVolume > 0 ? decimal.Round(r.MarketValue / r.MarketVolume, 6) : null;
+        Filled?.Invoke(new SimulatedFill(r.Order.ClientOrderId, r.BrokerId, quantity, price, courtage, fx, now, why, vwap, r.ArrivalPrice));
     }
 
     private void Reserve(Resting r)
@@ -270,7 +276,7 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
 
     private static decimal Round(decimal sek) => decimal.Round(sek, 2, MidpointRounding.AwayFromZero);
 
-    private sealed class Resting(ApprovedOrder order, OrderId brokerId, InstrumentSpec spec, decimal? volumeSeen, DateTimeOffset createdUtc)
+    private sealed class Resting(ApprovedOrder order, OrderId brokerId, InstrumentSpec spec, decimal? volumeSeen, DateTimeOffset createdUtc, decimal? arrivalPrice)
     {
         private static long _sequence;
 
@@ -281,6 +287,12 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
         public InstrumentSpec Spec { get; } = spec;
 
         public DateTimeOffset CreatedUtc { get; } = createdUtc;
+
+        public decimal? ArrivalPrice { get; } = arrivalPrice;
+
+        public decimal MarketValue { get; set; }
+
+        public decimal MarketVolume { get; set; }
 
         public long Sequence { get; } = Interlocked.Increment(ref _sequence);
 

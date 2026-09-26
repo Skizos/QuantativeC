@@ -28,6 +28,12 @@ internal sealed record AvanzaCliServices(
     /// <summary>Gets the clock for long-running verbs (<c>qa paper run</c>); tests pass a fake one.</summary>
     public TimeProvider Time { get; init; } = TimeProvider.System;
 
+    /// <summary>Gets where typed confirmations are read (the promotion command); tests pass their own.</summary>
+    public TextReader Input { get; init; } = Console.In;
+
+    /// <summary>Gets the owner's promotion key store: Windows Credential Manager (ADR 0003 §3).</summary>
+    public Func<Trading.Modes.IPromotionKeyStore> PromotionKeys { get; init; } = PromotionKeyStores.Default;
+
     public static AvanzaCliServices Default { get; } = new(
         (options, secrets, prompt, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor, prompt),
         CreateSecretStore);

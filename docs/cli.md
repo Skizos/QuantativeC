@@ -203,6 +203,8 @@ only. Confirm and Auto cannot start in Phase 6.
 | `qa kill [--reason "…"]` | **Kill switch.** Writes `./KILL`: a running session halts within a second and cancels every working order through the gateway. Without a session, the next one refuses to start. |
 | `qa kill --status` / `qa kill --reset [--reason "…"]` | Shows / clears the kill switch. Reset works only while no session runs (`state/session.lock`) and is audited. |
 | `qa audit verify [--dir audit]` | Checks the audit log's hash chain across all days (`audit/YYYY-MM-DD.jsonl`, one record per pipeline step). Exit 2 when broken. |
+| `qa report eod [--date yyyy-MM-dd \| --all] [--json]` | The end-of-day report of a day, **rebuilt from the audit log**, saved to `reports/eod/YYYY-MM-DD.json`. It covers orders sent and accepted, risk rejections by check, and every paper fill against the market's VWAP over the fill window (or the arrival mid for fills at entry). It also shows reconciliation runs, violations, events, and the day's value and fees. `qa paper run` writes it at the close, and a partial one when stopped early. |
+| `qa report gate` | Rebuilds every day and shows how far you are from the Confirm gate. |
 
 **Before your first session:**
 1. `qa history import ERIC-B` (and your other names). Then import again every evening: the session refuses to decide unless the history ends on the previous trading day.
@@ -231,3 +233,33 @@ only. Confirm and Auto cannot start in Phase 6.
 - **Promotion to Confirm is your step** (ADR 0003 §3). Claude's settings and hook block both that command and any write to the local promotion state.
 
 Exit codes of `qa paper run`: 0 ok, 1 error, 3 halted (the kill switch fired, or was active at start), 4 login locked.
+
+**What the end-of-day report counts:**
+- **Violations** mean the system misbehaved or was unsafe:
+  - an OMS invariant or reconciliation halt
+  - schema drift or a gone endpoint
+  - a refused fill, or a fill outside its limit
+  - an order sent without a passing risk check just before it
+  - an order still Unknown at the close
+  - an automatic kill (other than the daily loss stop)
+  - a broken audit chain
+- **Events** are the rules working: risk rejections, a manual kill, the daily loss stop, a stale-data halt.
+- **Clean day:** complete (it reached the close), no violations, every reconciliation matched, and every fill within ±200 bps of its reference (the R5 collar).
+
+## Promotion (your command, ADR 0003 §3)
+
+`qa promote` raises (or lowers) the highest mode the program may run in. It is **yours**: Claude's hook and settings block it, and block any write to `promotion/state.json`.
+
+| Command | What it does |
+|---|---|
+| `qa promote --init-key` | Once: creates your promotion key in Windows Credential Manager (`QuantAnalyst:Promotion`). It signs every record, and it is never shown. Windows only. |
+| `qa promote --to Confirm [--operator you]` | Checks the Confirm gate from the rebuilt reports, prints it, and asks you to type `Confirm` exactly. Then it appends an HMAC-SHA256-signed record to `promotion/state.json`, with the evidence reports' SHA-256 hashes, and sets `maxAllowed`. Nothing is written if the gate is not met or you type anything else. |
+| `qa promote --to Paper` | Lowers the mode. No gate, but typed and signed the same way. |
+| `qa promote --verify` | Checks every record's signature, the mode chain (each record starts where the last ended), `maxAllowed`, and that no evidence file changed. |
+
+**The Confirm gate:**
+- **10 clean Paper trading days in a row.** Any day that is not clean restarts the count, and it is never part of the evidence.
+- **At least one order sent** in those days.
+- **An intact audit chain.**
+
+Promoting to Confirm does **not** start Confirm mode: it arrives in Phase 7, which will refuse to start unless `qa promote --verify` would pass. Auto's gate needs Confirm results (20 confirmed live orders, slippage within the backtest's assumption), so `--to Auto` waits for Phase 7.

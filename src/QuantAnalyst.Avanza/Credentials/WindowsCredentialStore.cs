@@ -53,6 +53,10 @@ public sealed partial class WindowsCredentialStore(string targetPrefix = Windows
     /// <summary>True when a generic credential with this target exists (the value is not returned).</summary>
     public static bool Exists(string target) => Read(target) is not null;
 
+    /// <summary>The password of a generic credential as a <see cref="Secret"/>, or null when it does not exist or is empty.</summary>
+    public static Secret? ReadSecret(string target) =>
+        Read(target) is { Blob.Length: > 0 } c ? new Secret(c.Blob) : null;
+
     /// <summary>Creates or replaces a generic credential (local machine persistence).</summary>
     public static unsafe void Write(string target, string userName, Secret secret)
     {

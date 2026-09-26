@@ -12,21 +12,24 @@ using QuantAnalyst.Trading.Risk;
 namespace QuantAnalyst.Cli.Commands;
 
 /// <summary>
-/// Trading verbs that need no broker (Phase 6): <c>qa universe</c>, <c>qa risk-limits</c>, <c>qa audit verify</c> and
-/// <c>qa kill</c>. <c>qa paper run</c> comes next.
+/// Trading verbs that need no broker (Phase 6): <c>qa universe</c>, <c>qa risk-limits</c>, <c>qa audit verify</c>,
+/// <c>qa kill</c>, <c>qa report</c> and the owner's <c>qa promote</c> (TradingCommands.Promotion.cs). <c>qa paper run</c>
+/// lives with the Avanza verbs because it logs in.
 /// </summary>
-internal static class TradingCommands
+internal static partial class TradingCommands
 {
     public const string DefaultAuditDir = "audit";
     public const string DefaultStateDir = "state";
     public const string DefaultKillFile = "KILL";
 
-    public static IEnumerable<Command> Create()
+    public static IEnumerable<Command> Create(AvanzaCliServices services)
     {
         yield return UniverseCommand();
         yield return RiskLimitsCommand();
         yield return AuditCommand();
         yield return KillCommand();
+        yield return ReportCommand();
+        yield return PromoteCommand(services);
     }
 
     public static Option<string?> ConfigDirOption() =>

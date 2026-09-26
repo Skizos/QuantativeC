@@ -33,7 +33,8 @@ public sealed record PaperSessionSummary(
 /// <item>at the close ends the day orders and reports the day.</item>
 /// </list>
 /// On the way out it cancels everything still working through the gateway and ends the rest, so no paper order
-/// outlives the session. Quotes reach the paper channel from the caller (<see cref="PaperOrderChannel.OnQuote"/>).
+/// outlives the session. <c>endOfDayReport</c> (the CLI's end-of-day report writer) runs at the close, and for a partial
+/// day when the session stops earlier. Quotes reach the paper channel from the caller (<see cref="PaperOrderChannel.OnQuote"/>).
 /// </summary>
 public sealed class PaperSession(
     OrderGateway gateway,
@@ -46,7 +47,8 @@ public sealed class PaperSession(
     AuditLog audit,
     TimeProvider time,
     Func<CancellationToken, Task<PlanResult>> decide,
-    TextWriter output)
+    TextWriter output,
+    Func<DateOnly, string>? endOfDayReport = null)
 {
     public static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan ReconcileEvery = TimeSpan.FromSeconds(30);
@@ -88,6 +90,11 @@ public sealed class PaperSession(
             await gateway.CancelAllAsync("session stopped", CancellationToken.None).ConfigureAwait(false);
             channel.EndOfDay("session stopped");
             await ReconcileAsync(CancellationToken.None).ConfigureAwait(false);
+            DateOnly today = OrderGateway.StockholmDate(time.GetUtcNow());
+            if (_endedOn != today)
+            {
+                Report(today, partial: true);
+            }
         }
 
         PaperSessionSummary summary = Summarize();
@@ -136,6 +143,25 @@ public sealed class PaperSession(
             audit.Append("end-of-day", new { date = today, ended, day });
             output.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"{Local(now)} close: {ended} order(s) expired. Value {day.AccountValue:N2} SEK ({Change(day):+0.00%;-0.00%} today), cash {day.Cash:N2}, fees {day.FeesPaid:N2}."));
+            Report(today, partial: false);
+        }
+    }
+
+    private void Report(DateOnly date, bool partial)
+    {
+        if (endOfDayReport is null)
+        {
+            return;
+        }
+
+        try
+        {
+            output.WriteLine((partial ? "Report (partial day): " : "Report: ") + endOfDayReport(date));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            // The audit log still has everything; 'qa report eod' can rebuild the report later.
+            output.WriteLine($"The end-of-day report could not be written ({ex.Message}); rebuild it with 'qa report eod --date {date:yyyy-MM-dd}'.");
         }
     }
 
