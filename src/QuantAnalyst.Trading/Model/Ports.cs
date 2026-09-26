@@ -44,7 +44,8 @@ public interface IAccountState
 }
 
 /// <summary>A fill reported by a simulated channel.</summary>
-public sealed record SimulatedFill(Guid ClientOrderId, OrderId BrokerOrderId, long Volume, decimal Price, decimal Courtage, decimal FxFee, DateTimeOffset AtUtc);
+/// <param name="How">How the model filled it (e.g. "marketable at entry"), for the audit log.</param>
+public sealed record SimulatedFill(Guid ClientOrderId, OrderId BrokerOrderId, long Volume, decimal Price, decimal Courtage, decimal FxFee, DateTimeOffset AtUtc, string How = "");
 
 /// <summary>
 /// Marker and event source for simulated channels (Paper, Backtest). Declared in Trading, which QuantAnalyst.Avanza does

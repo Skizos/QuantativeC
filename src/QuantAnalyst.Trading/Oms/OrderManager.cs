@@ -170,6 +170,37 @@ public sealed class OrderManager(AuditLog audit, HaltController halts, TimeProvi
         audit.Append("oms-state", new { clientOrderId, from = from.ToString(), to = to.ToString(), why, brokerOrderId = brokerOrderId?.Value });
     }
 
+    /// <summary>
+    /// Moves an order to <paramref name="to"/> only if it is in one of <paramref name="from"/>, atomically. Returns false
+    /// (and changes nothing) otherwise, for paths that race with fills (a reply and a fill arriving together).
+    /// </summary>
+    public bool TryTransition(Guid clientOrderId, OmsState to, string why, OrderId? brokerOrderId, params OmsState[] from)
+    {
+        OmsOrder order = Get(clientOrderId);
+        OmsState was;
+        lock (_lock)
+        {
+            was = order.State;
+            if (!from.Contains(was))
+            {
+                return false;
+            }
+
+            if (!IsAllowed(was, to))
+            {
+                throw Invariant($"illegal transition {was} -> {to} for {clientOrderId} ({why})");
+            }
+
+            order.State = to;
+            order.Message = why;
+            order.BrokerOrderId ??= brokerOrderId;
+            order.UpdatedUtc = time.GetUtcNow();
+        }
+
+        audit.Append("oms-state", new { clientOrderId, from = was.ToString(), to = to.ToString(), why, brokerOrderId = brokerOrderId?.Value });
+        return true;
+    }
+
     /// <summary>Applies a (partial) fill. Overfilling or filling a closed order halts trading.</summary>
     public void ApplyFill(Guid clientOrderId, long volume, decimal price, decimal fees, string source)
     {

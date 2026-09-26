@@ -1,0 +1,7 @@
+{
+  "format": "qa-paper/1",
+  "costs": "avanza-start",
+  "cash": 45000,
+  "decision_time": "09:10",
+  "note": "The Paper account (Phase 6). costs names config/costs.<name>.json; cash starts a NEW book only (state/paper/book.json keeps its own cash once it exists). decision_time is Stockholm time, after the open: daily strategies decide on bars through yesterday's close and place day limit orders. 45,000 SEK is a placeholder under the Start class limit (50,000) until the owner sets the real starting capital."
+}

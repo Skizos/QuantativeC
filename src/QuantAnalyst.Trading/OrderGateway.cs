@@ -238,10 +238,9 @@ public sealed class OrderGateway : IDisposable
         {
             case SubmitOutcome.Accepted when result.BrokerOrderId is { } id:
                 _consecutiveBrokerRejects = 0;
-                if (order.State == OmsState.Sent)
-                {
-                    _oms.Transition(order.ClientOrderId, OmsState.Working, "accepted", id);
-                }
+
+                // A fill may already have moved it on (see OnFill).
+                _oms.TryTransition(order.ClientOrderId, OmsState.Working, "accepted", id, OmsState.Sent);
 
                 return new SubmitResult(SubmitStatus.Accepted, intent, prepared, report, order, result.Message);
 
@@ -292,15 +291,15 @@ public sealed class OrderGateway : IDisposable
         switch (result.Outcome)
         {
             case SubmitOutcome.Accepted:
-                if (_oms.Find(clientOrderId)!.IsOpen)
-                {
-                    _oms.Transition(clientOrderId, OmsState.Cancelled, "cancelled: " + reason);
-                }
-
+                // A fill that raced the cancel may have completed it; then it stays Filled.
+                _oms.TryTransition(clientOrderId, OmsState.Cancelled, "cancelled: " + reason, null, OmsState.Working, OmsState.PartiallyFilled);
                 break;
             case SubmitOutcome.Unknown:
-                _oms.Transition(clientOrderId, OmsState.Unknown, "cancel outcome unknown: " + result.Message);
-                OutcomeUnknown?.Invoke(order);
+                if (_oms.TryTransition(clientOrderId, OmsState.Unknown, "cancel outcome unknown: " + result.Message, null, OmsState.Working, OmsState.PartiallyFilled))
+                {
+                    OutcomeUnknown?.Invoke(order);
+                }
+
                 break;
             default:
                 // Refused (e.g. already filled): the order stays as it is until the next fill or reconciliation.
@@ -400,12 +399,9 @@ public sealed class OrderGateway : IDisposable
         try
         {
             // A fill can arrive before PlaceAsync returns (a marketable order); it proves the order was accepted.
-            if (order.State == OmsState.Sent)
-            {
-                _oms.Transition(order.ClientOrderId, OmsState.Working, "filled before the submit returned", fill.BrokerOrderId);
-            }
+            _oms.TryTransition(order.ClientOrderId, OmsState.Working, "fill arrived before the submit reply", fill.BrokerOrderId, OmsState.Sent);
 
-            _oms.ApplyFill(fill.ClientOrderId, fill.Volume, fill.Price, fill.Courtage + fill.FxFee, _channel.Name);
+            _oms.ApplyFill(fill.ClientOrderId, fill.Volume, fill.Price, fill.Courtage + fill.FxFee, fill.How.Length == 0 ? _channel.Name : $"{_channel.Name}: {fill.How}");
         }
         catch (InvalidOperationException ex)
         {
@@ -417,9 +413,9 @@ public sealed class OrderGateway : IDisposable
     private void OnEnded(OrderId brokerOrderId, string reason)
     {
         OmsOrder? order = _oms.FindByBrokerId(brokerOrderId);
-        if (order is { IsOpen: true, State: not OmsState.Unknown })
+        if (order is not null)
         {
-            _oms.Transition(order.ClientOrderId, OmsState.Cancelled, reason, brokerOrderId);
+            _oms.TryTransition(order.ClientOrderId, OmsState.Cancelled, reason, brokerOrderId, OmsState.Working, OmsState.PartiallyFilled);
         }
     }
 

@@ -76,6 +76,24 @@ Every step writes an audit record. A submit timeout, transport error, 5xx or unr
 | Avanza channel | provisional request bodies; SUCCESS → Working with the order id; ERROR → Rejected with the message; timeout/5xx/404/garbage → Unknown, no retry |
 | Audit | hash chain verifies across days; an edited or deleted line is detected; account ids masked |
 
+## Step notes
+
+**Step 3 (pipeline, OMS, gateway):**
+- A fill can reach the OMS before the channel's submit reply (a marketable paper order). The fill proves the order exists, so the order moves Sent → Working → fill. If the reply is then lost, the order keeps its fills; it is not made Unknown.
+- Transitions that race with fills use a compare-and-set (`TryTransition`), so a late reply or a cancel can never trip the OMS invariant halt.
+
+**Step 4 (Paper channel, book, kill switch, schedule):**
+- **Trade-through fills are priced at the limit.** Only the last print is known, so the model takes the worst price the order allows.
+- **The marketable test runs once, at entry,** as ADR 0003 §8 says. A resting order whose limit the market later crosses fills only on trade-throughs.
+- **Courtage is charged per order, not per partial fill.** Each fill pays courtage(cumulative value) minus what the order has already paid, so the minimum fee is paid once per order. **Owner to confirm:** does Avanza charge the minimum once per order (per day) when an order fills in several parts? Per-fill charging would make many small paper fills look much more expensive.
+- **Kill-switch cancels run on the 1 s tick, not inside `Trigger`.** Automatic triggers fire inside a gateway call (for example, the third broker reject), and cancelling there would wait on that same call. The halt itself is immediate.
+- `state/killed.json` makes a kill survive restarts. An unreadable file still counts as killed.
+- `Reset` refuses while any order is open or Unknown, or while a reconciliation halt is active.
+- The daily loss stop fires at **−2 % or worse**, the same boundary at which R19 starts rejecting.
+- **The paper book** lives in `state/paper/book.json`, rewritten atomically after every fill, with the fills appended to `fills.jsonl`.
+  - An existing book wins over `config/paper.json`, and a note says so. A damaged book is refused, never replaced.
+  - The first snapshot of each Stockholm day fixes the start-of-day value used by R19.
+
 ## Results
 
 (Filled in at the gate.)
