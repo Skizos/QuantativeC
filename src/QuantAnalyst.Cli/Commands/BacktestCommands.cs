@@ -107,9 +107,16 @@ internal static class BacktestCommands
         DateOnly? to = DataCommands.ParseDate(parse.GetValue(o.To), "--to");
 
         string? synthetic = parse.GetValue(o.Synthetic), tickers = parse.GetValue(o.Tickers);
-        if ((synthetic is null) == (tickers is null))
+        if (synthetic is not null && tickers is not null)
         {
-            throw new ArgumentException("Give exactly one data source: --synthetic <N>x<T> or --tickers A,B,...");
+            throw new ArgumentException("Give one data source: --synthetic <N>x<T> or --tickers A,B,... (without either: the allowlist).");
+        }
+
+        if (synthetic is null && tickers is null)
+        {
+            tickers = AllowlistTickers(configDir)
+                      ?? throw new ArgumentException("Give a data source: --tickers A,B,... (imported history) or --synthetic <N>x<T>. Without either, the backtest uses the allowlist, which is empty: qa universe add ERIC-B");
+            notes.Add($"Tickers: the allowlist in {Path.Combine(configDir, Trading.Risk.Universe.FileName)} ({tickers}).");
         }
 
         ulong seed = 0;
@@ -604,6 +611,26 @@ internal static class BacktestCommands
         }
 
         throw new ArgumentException($"No {HoldoutPolicy.FileName} found (./config or next to qa); pass --config-dir. Backtests do not run without the holdout policy.");
+    }
+
+    /// <summary>The allowlist's tickers as a comma list, or null when there is none (no file or no entries).</summary>
+    private static string? AllowlistTickers(string configDir)
+    {
+        string path = Path.Combine(configDir, Trading.Risk.Universe.FileName);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            Trading.Risk.Universe universe = Trading.Risk.Universe.Load(path);
+            return universe.Entries.Count == 0 ? null : string.Join(",", universe.Entries.Select(e => e.Ticker));
+        }
+        catch (Trading.Risk.TradingConfigException ex)
+        {
+            throw new ArgumentException(ex.Message, ex);
+        }
     }
 
     /// <summary>--ledger, else research/trial-ledger.jsonl at the repository root above the current directory.</summary>

@@ -294,7 +294,8 @@ public sealed class BacktestCliTests : IDisposable
     [Fact]
     public void BadArguments_AreReadableErrors()
     {
-        Assert.Contains("exactly one data source", Qa("backtest", "run", "--strategy", "buy-and-hold").Error, StringComparison.Ordinal);
+        Assert.Contains("allowlist, which is empty", Qa("backtest", "run", "--strategy", "buy-and-hold").Error, StringComparison.Ordinal);
+        Assert.Contains("Give one data source", Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60", "--tickers", "ERIC-B").Error, StringComparison.Ordinal);
         Assert.Contains("<instruments>x<bars>", Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "5by10").Error, StringComparison.Ordinal);
         Assert.Contains("unknown parameter", Qa("backtest", "run", "--strategy", "ma-cross", "--param", "fast=5", "--param", "slow=9", "--param", "x=1", "--synthetic", "2x60").Error, StringComparison.Ordinal);
         Assert.Contains("not key=value", Qa("backtest", "run", "--strategy", "ma-cross", "--param", "fast", "--synthetic", "2x60").Error, StringComparison.Ordinal);
@@ -326,6 +327,23 @@ public sealed class BacktestCliTests : IDisposable
         (code, _, error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--tickers", "FNAUCT", "--store", storePath);
         Assert.Equal(1, code);
         Assert.Contains("continuous trading", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_WithoutTickers_UsesTheAllowlist()
+    {
+        string storePath = Path.Combine(_dir, "quant.duckdb");
+        using (HistoryStore store = HistoryStore.Open(storePath))
+        {
+            store.RegisterSource(AvanzaChartImporter.AvanzaPriceChart);
+            AddInstrument(store, "5240", "ERIC B", TradingModel.Continuous, new DateTimeOffset(2026, 9, 25, 16, 0, 0, TimeSpan.Zero), 60m);
+        }
+
+        File.WriteAllText(Path.Combine(_config, "universe.json"), """{ "format": "qa-universe/1", "instruments": [ { "orderbook_id": "5240", "ticker": "ERIC B", "name": "Ericsson B" } ] }""");
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--store", storePath);
+        Assert.True(code == 0, error);
+        Assert.Contains("Tickers: the allowlist", output, StringComparison.Ordinal);
+        Assert.Equal(["ERIC B"], Assert.Single(new TrialLedger(Ledger).ReadAll()).Universe);
     }
 
     private static void AddInstrument(HistoryStore store, string id, string ticker, TradingModel model, DateTimeOffset knownAt, decimal price)

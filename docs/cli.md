@@ -34,6 +34,23 @@ In this document, `qa …` means any of these.
 
 These are model outputs for research, not financial advice.
 
+## `qa status`: start here
+
+`qa status` shows, in one screen, everything a trading day depends on, marks each line `ok`, `todo`, `warn` or `FAIL`, and ends with **numbered next steps** in the order to take them. It is offline and read-only (no login, nothing written), so run it whenever you are unsure what to do. The daily routine around it is in `docs/guide.md`.
+
+It checks:
+- the native engine's ABI
+- the mode and promotion state
+- the kill switch and a running session
+- the paper account (courtage class, cash, decision time) and the limits for that cash
+- the paper book
+- the saved strategy, and whether the trial ledger has a backtest of it on imported history
+- the allowlist and how far each name's history reaches
+- the calendar's verification
+- the audit chain, the last session's report, and the progress towards the Confirm gate
+
+A `FAIL` line (a kill switch that is on, a broken audit chain, a file that doesn't load) comes first in the next steps. Otherwise the last step says when to start the next session, e.g. "Next session: Monday 2026-09-28. Start it that morning before 09:10: qa paper run".
+
 ## `qa price`
 
 | Model | Example |
@@ -161,7 +178,7 @@ Plan, fill model and formulas: `docs/plans/05-phase5-backtesting.md`. Every run 
 | Verb | What it does |
 |---|---|
 | `qa backtest run --strategy ma-cross --param fast=20 --param slow=100 --synthetic 300x2520 [--seed N] [--drift 0.05]` | One run on seeded synthetic data (GBM, weekdays from 2015-01-05). Prints the data labels, cost status, metrics, Deflated Sharpe and the ledger id. |
-| `qa backtest run --strategy buy-and-hold --tickers "ERIC B,VOLV B" [--from] [--to]` | The same on imported Avanza history (`qa history import` first). Only continuously traded instruments are accepted. The output is labelled **NOT survivorship-free, NOT point-in-time, current names only**. |
+| `qa backtest run --strategy buy-and-hold [--tickers ERIC-B,VOLV-B] [--from] [--to]` | The same on imported Avanza history (`qa history import` first). **Without `--tickers` (and without `--synthetic`) it uses your allowlist** (`config/universe.json`). `ERIC-B` and `"ERIC B"` both work. Only continuously traded instruments are accepted. The output is labelled **NOT survivorship-free, NOT point-in-time, current names only**. |
 | `qa backtest sweep --strategy ma-cross --grid fast=10,20,50 --grid slow=100,200 --synthetic 50x2520` | Every combination is run and logged. Prints the top rows, the PBO (CSCV) across the combinations, and the Deflated Sharpe Ratio of the best against every completed trial in the study. |
 | `qa costs [--amount 5000,20000,100000] [--capital 40000]` | Avanza's courtage classes (Start, Mini, Small, Medium, Fast Pris) with what one order of each amount costs in each class, and the cheapest class you can use. `--capital` drops classes you can't choose (Start: capital under 50,000 SEK). An order can't be larger than your capital, so Start is never offered for orders of 50,000 SEK or more. |
 | `qa trials list [--study <key>] [--last 20] [--json]` | The ledger, newest last. |
@@ -203,7 +220,8 @@ only. Confirm and Auto cannot start in Phase 6.
 |---|---|
 | `qa universe list` / `qa universe add ERIC-B [VOLV-B …]` / `qa universe remove ERIC-B` | The instrument allowlist (risk check R2), `config/universe.json`, by orderbook id. It starts **empty**, so every order is rejected until you add names. `add` looks the ticker up offline in the instrument master (`qa history import` first). SEK instruments only. |
 | `qa risk-limits [--account-value 100000]` | Every limit with its R number, sized for the paper cash (5,000 SEK allows **500 SEK per order** and **1,000 SEK per instrument**) or the value you give. |
-| `qa paper run --strategy ma-cross --param fast=20 --param slow=100 [--duration 3600]` | One Paper session. Before any login it checks the promotion state, the limits, `config/paper.json`, the allowlist (1–5 names, each is streamed) and the courtage class. Then: one read-only login, tick tables from Avanza, live quotes, and at the decision time (09:10 by default) the strategy decides on bars through **yesterday** and places day limit orders, paced 13 s apart. Orders fill on the live quotes by the ADR 0003 §8 model and expire at the close. The session runs until two minutes after the close, or `--duration` seconds; Ctrl+C stops early and cancels everything. |
+| `qa paper strategy ma-cross --param fast=20 --param slow=100` | Saves the strategy Paper trades in `config/paper.json`, after checking its name and parameters. Without a name it shows the saved one; `--clear` removes it. It notes when the trial ledger has no backtest of exactly that strategy on imported history. |
+| `qa paper run [--strategy … --param …] [--duration 3600]` | One Paper session, with the saved strategy unless you give `--strategy`. Before any login it checks the promotion state, the limits, `config/paper.json`, the strategy, the allowlist (1–5 names, each is streamed) and the courtage class. Then: one read-only login, tick tables from Avanza, and **each name's daily history brought up to the last trading day** (read-only chart calls, a year back when there is none; if that fails it warns, and the decision refuses history that doesn't reach yesterday). It streams live quotes, and at the decision time (09:10 by default) the strategy decides on bars through **yesterday** and places day limit orders, paced 13 s apart. Started after 09:10, it decides at once. Orders fill on the live quotes by the ADR 0003 §8 model and expire at the close. The session runs until two minutes after the close, or `--duration` seconds; Ctrl+C stops early and cancels everything. |
 | `qa paper status` | The paper book (`state/paper/book.json`): cash, positions at cost, realised P&L, fees; and whether a session is running. |
 | `qa kill [--reason "…"]` | **Kill switch.** Writes `./KILL`: a running session halts within a second and cancels every working order through the gateway. Without a session, the next one refuses to start. |
 | `qa kill --status` / `qa kill --reset [--reason "…"]` | Shows / clears the kill switch. Reset works only while no session runs (`state/session.lock`) and is audited. |
@@ -211,11 +229,12 @@ only. Confirm and Auto cannot start in Phase 6.
 | `qa report eod [--date yyyy-MM-dd \| --all] [--json]` | The end-of-day report of a day, **rebuilt from the audit log**, saved to `reports/eod/YYYY-MM-DD.json`. It covers orders sent and accepted, risk rejections by check, and every paper fill against the market's VWAP over the fill window (or the arrival mid for fills at entry). It also shows reconciliation runs, violations, events, and the day's value and fees. `qa paper run` writes it at the close, and a partial one when stopped early. |
 | `qa report gate` | Rebuilds every day and shows how far you are from the Confirm gate. |
 
-**Before your first session:**
-1. `qa history import ERIC-B` (and your other names). Then import again every evening: the session refuses to decide unless the history ends on the previous trading day.
+**Before your first session** (`qa status` lists whichever of these are still missing):
+1. `qa history import ERIC-B` (and your other names) so they are in the instrument master. After that, `qa paper run` keeps the history up to date itself.
 2. `qa universe add ERIC-B …` (at most 5 names).
-3. Check `config/paper.json`: courtage class (`avanza-start`), starting cash (5,000 SEK), decision time (09:10). An existing `state/paper/book.json` keeps its own cash and class. Move it away to start over.
-4. `qa risk-limits` to see what the limits allow.
+3. `qa backtest run --strategy …` to see how a strategy did on those names, then `qa paper strategy <name> --param …` to save it.
+4. Check `config/paper.json`: courtage class (`avanza-start`), starting cash (5,000 SEK), decision time (09:10). An existing `state/paper/book.json` keeps its own cash and class. Move it away to start over.
+5. `qa risk-limits` to see what the limits allow.
 
 **How Paper decides and fills:**
 - **Targets become orders like the backtest's:** whole lots, a 1 % cash buffer, a 10 % no-trade band, and limits 50 bps toward the market.

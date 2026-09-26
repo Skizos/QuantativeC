@@ -2,10 +2,13 @@ using System.Collections.Concurrent;
 using System.CommandLine;
 using System.Globalization;
 using QuantAnalyst.Analytics.Backtesting;
+using QuantAnalyst.Avanza;
 using QuantAnalyst.Core;
+using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
 using QuantAnalyst.Data.Calendar;
+using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Live;
 using QuantAnalyst.Data.Store;
 using QuantAnalyst.Trading;
@@ -30,6 +33,7 @@ internal static partial class AvanzaCommands
     {
         var command = new Command("paper", "Paper trading (Phase 6): the full order pipeline with simulated fills on live quotes. Nothing is sent to Avanza.");
         command.Subcommands.Add(PaperRun(services));
+        command.Subcommands.Add(PaperStrategyCommand());
         command.Subcommands.Add(PaperStatus());
         return command;
     }
@@ -37,8 +41,8 @@ internal static partial class AvanzaCommands
     private static Command PaperRun(AvanzaCliServices services)
     {
         var common = new Common();
-        var strategy = new Option<string>("--strategy") { Description = $"Strategy: {string.Join(", ", StrategyCatalog.Names)}", Required = true };
-        var param = new Option<string[]>("--param") { Description = "Strategy parameter key=value (repeatable)", AllowMultipleArgumentsPerToken = false };
+        var strategy = new Option<string?>("--strategy") { Description = $"Strategy: {string.Join(", ", StrategyCatalog.Names)} (default: the one saved with 'qa paper strategy')" };
+        var param = new Option<string[]>("--param") { Description = "Strategy parameter key=value (repeatable; with --strategy)", AllowMultipleArgumentsPerToken = false };
         var duration = new Option<double?>("--duration") { Description = "Seconds to run (default: until two minutes after today's close)" };
         var configDir = TradingCommands.ConfigDirOption();
         var store = DataCommands.StoreOption();
@@ -48,7 +52,7 @@ internal static partial class AvanzaCommands
         var reportsDir = new Option<string>("--reports-dir") { Description = "End-of-day reports folder", DefaultValueFactory = _ => TradingCommands.DefaultReportsDir };
         var command = new Command(
             "run",
-            "Run one Paper session: after the open, decide on bars through yesterday, place day limit orders through the risk engine, fill them on live quotes, end them at the close. Read-only towards Avanza.");
+            "Run one Paper session: bring the allowlist's daily history up to yesterday, decide after the open, place day limit orders through the risk engine, fill them on live quotes, end them at the close. Read-only towards Avanza.");
         common.AddTo(command, json: false);
         foreach (Option o in new Option[] { strategy, param, duration, configDir, store, auditDir, killFile, promotionDir, reportsDir })
         {
@@ -60,9 +64,8 @@ internal static partial class AvanzaCommands
             TimeProvider time = services.Time;
             string stateDir = parse.GetValue(common.StateDir)!;
             PaperSetup setup = PaperSetup.Load(TradingCommands.ResolveConfigDir(parse.GetValue(configDir)), parse.GetValue(promotionDir)!);
-            StrategyDefinition definition = StrategyCatalog.Create(parse.GetValue(strategy)!, BacktestCommands.ParseParams(parse.GetValue(param)));
+            StrategyDefinition definition = ChooseStrategy(parse.GetValue(strategy), parse.GetValue(param), setup.Paper);
             string storePath = parse.GetValue(store)!;
-            DataCommands.OpenExisting(storePath).Dispose(); // fail before login when there is no history
 
             output.WriteLine($"Paper session: {definition.Spec.Describe()} on {string.Join(", ", setup.Universe.Entries.Select(e => e.Ticker))}; courtage class {setup.Costs.DisplayName ?? setup.Costs.Name}; mode {setup.Mode} (promotion: {setup.Promotion.MaxAllowed}).");
             foreach (string warning in setup.Warnings)
@@ -80,6 +83,16 @@ internal static partial class AvanzaCommands
             {
                 InstrumentTradingParams p = await ctx.Connection.Gateway.GetTradingParamsAsync(entry.OrderbookId, ctx.Ct).ConfigureAwait(false);
                 specs.Add(new InstrumentSpec(entry.OrderbookId, entry.Ticker, p.Name, p.Currency, Math.Max(1, p.TradingUnit), p.TickSizes, TickTableVerified: true));
+            }
+
+            try
+            {
+                await RefreshHistoryAsync(ctx, storePath, setup, time, output).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is BrokerException or HistoryImportException)
+            {
+                // Informational data (ADR 0002 Tier B): the session still runs; the decision refuses stale history itself.
+                output.WriteLine($"WARNING: the history could not be brought up to date ({ex.Message}); the decision uses what is stored.");
             }
 
             var catalog = new InstrumentCatalog(specs);
@@ -137,7 +150,8 @@ internal static partial class AvanzaCommands
                 ? (seconds is > 0 and <= 16 * 3600 ? start.AddSeconds(seconds) : throw new ArgumentException("--duration must be in (0, 57600] seconds."))
                 : setup.Schedule.Plan(OrderGateway.StockholmDate(start)) is { } today && start < today.CloseUtc.AddMinutes(2)
                     ? today.CloseUtc.AddMinutes(2)
-                    : throw new ArgumentException($"No session left today; the next decision is {MarketTime.ToStockholm(setup.Schedule.NextDecision(start).DecisionUtc):yyyy-MM-dd HH:mm} (Stockholm). Start it then, or pass --duration.");
+                    : throw new ArgumentException(
+                        $"No session left today. The next one is {MarketTime.ToStockholm(setup.Schedule.NextDecision(start).DecisionUtc):dddd yyyy-MM-dd}: start 'qa paper run' that morning before {setup.Paper.DecisionTime:HH\\:mm}. (--duration <seconds> runs a session now, outside market hours nothing trades.)");
 
             output.WriteLine($"Running until {MarketTime.ToStockholm(stopAt):yyyy-MM-dd HH:mm} (Stockholm). Stop early with Ctrl+C or 'qa kill'.");
             using var stop = CancellationTokenSource.CreateLinkedTokenSource(ctx.Ct);
@@ -210,6 +224,134 @@ internal static partial class AvanzaCommands
         return command;
     }
 
+    private static Command PaperStrategyCommand()
+    {
+        var name = new Argument<string?>("name") { Description = $"Strategy: {string.Join(", ", StrategyCatalog.Names)}. Leave out to show the saved one.", Arity = ArgumentArity.ZeroOrOne };
+        var param = new Option<string[]>("--param") { Description = "Strategy parameter key=value (repeatable)", AllowMultipleArgumentsPerToken = false };
+        var clear = new Option<bool>("--clear") { Description = "Remove the saved strategy" };
+        var configDir = TradingCommands.ConfigDirOption();
+        var ledger = new Option<string?>("--ledger") { Description = $"Trial ledger to look for its backtests (default: <repository>/{TrialLedger.DefaultPath})" };
+        var command = new Command("strategy", "Save the strategy 'qa paper run' trades (in config/paper.json), or show it. Offline.");
+        command.Arguments.Add(name);
+        command.Options.Add(param);
+        command.Options.Add(clear);
+        command.Options.Add(configDir);
+        command.Options.Add(ledger);
+        command.SetAction(parse => TradingCommands.Execute(parse, w =>
+        {
+            string path = Path.Combine(TradingCommands.ResolveConfigDir(parse.GetValue(configDir)), PaperConfig.FileName);
+            string? chosen = parse.GetValue(name);
+            if (parse.GetValue(clear))
+            {
+                if (chosen is not null)
+                {
+                    throw new ArgumentException("Give a strategy name or --clear, not both.");
+                }
+
+                PaperConfig.SaveStrategy(path, null);
+                w.WriteLine($"Removed the saved strategy from {path}; 'qa paper run' now needs --strategy.");
+                return 0;
+            }
+
+            if (chosen is null)
+            {
+                if (parse.GetValue(param) is { Length: > 0 })
+                {
+                    throw new ArgumentException("--param needs a strategy name, e.g. qa paper strategy ma-cross --param fast=20 --param slow=100");
+                }
+
+                PaperStrategy? saved = PaperConfig.Load(path).Strategy;
+                w.WriteLine(saved is null
+                    ? $"No strategy saved in {path}. Save one, e.g.: qa paper strategy ma-cross --param fast=20 --param slow=100"
+                    : $"Saved strategy: {StrategyCatalog.Create(saved.Name, saved.Parameters).Spec.Describe()} ({path}). 'qa paper run' trades it.");
+                return 0;
+            }
+
+            StrategyDefinition definition = StrategyCatalog.Create(chosen, BacktestCommands.ParseParams(parse.GetValue(param)));
+            PaperConfig.SaveStrategy(path, new PaperStrategy(definition.Spec.Name, definition.Spec.Parameters));
+            w.WriteLine($"Saved {definition.Spec.Describe()} in {path}. 'qa paper run' now trades it without arguments.");
+            if (BacktestedTrials(definition.Spec, parse.GetValue(ledger)) is 0)
+            {
+                w.WriteLine($"Note: the trial ledger has no backtest of exactly this on imported history. See how it did first: qa backtest run --strategy {new PaperStrategy(definition.Spec.Name, definition.Spec.Parameters).CommandLine()}");
+            }
+
+            return 0;
+        }));
+        return command;
+    }
+
+    /// <summary>--strategy (with its --param values), else the strategy saved in paper.json.</summary>
+    private static StrategyDefinition ChooseStrategy(string? name, string[]? parameters, PaperConfig paper)
+    {
+        if (name is not null)
+        {
+            return StrategyCatalog.Create(name, BacktestCommands.ParseParams(parameters));
+        }
+
+        if (parameters is { Length: > 0 })
+        {
+            throw new ArgumentException("--param needs --strategy (or save both with 'qa paper strategy <name> --param ...').");
+        }
+
+        return paper.Strategy is { } saved
+            ? StrategyCatalog.Create(saved.Name, saved.Parameters)
+            : throw new ArgumentException("No strategy: save one once with 'qa paper strategy ma-cross --param fast=20 --param slow=100' (or pass --strategy).");
+    }
+
+    /// <summary>Backtests of this exact strategy on imported (not synthetic) history, or null when the ledger is not found.</summary>
+    internal static int? BacktestedTrials(StrategySpec spec, string? ledgerPath = null)
+    {
+        try
+        {
+            var ledger = new TrialLedger(BacktestCommands.ResolveLedger(ledgerPath));
+            if (!File.Exists(ledger.Path))
+            {
+                return 0;
+            }
+
+            return ledger.ReadAll().Count(t => t.Strategy == spec.Name && t.Status == TrialStatus.Ok && t.DataSource != SyntheticMarket.SourceName
+                && t.Parameters.Count == spec.Parameters.Count && spec.Parameters.All(p => t.Parameters.TryGetValue(p.Key, out string? v) && v == p.Value));
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or InvalidDataException or System.Text.Json.JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Brings every allowlisted instrument's daily bars up to the last trading day before today (read-only chart calls,
+    /// the same as 'qa history import'), so a session never stops at the decision for want of yesterday's bar.
+    /// </summary>
+    private static async Task RefreshHistoryAsync(Ctx ctx, string storePath, PaperSetup setup, TimeProvider time, TextWriter output)
+    {
+        DateOnly through = PreviousTradingDay(setup.Calendar, OrderGateway.StockholmDate(time.GetUtcNow()));
+        string source = AvanzaChartImporter.AvanzaPriceChart.Name;
+        using HistoryStore history = HistoryStore.Open(storePath);
+        foreach (UniverseEntry entry in setup.Universe.Entries)
+        {
+            IReadOnlyList<StoredBar> bars = history.GetSource(source) is null ? [] : history.GetDailyBars(entry.OrderbookId, source);
+            DateOnly? last = bars.Count > 0 ? bars[^1].Bar.Date : null;
+            if (last >= through)
+            {
+                continue;
+            }
+
+            // A week of overlap catches restated bars; with no history, a year gives the strategies their look-back.
+            DateOnly from = last is { } l ? l.AddDays(-7) : through.AddYears(-1);
+            InstrumentTradingParams p = await ctx.Connection.Gateway.GetTradingParamsAsync(entry.OrderbookId, ctx.Ct).ConfigureAwait(false);
+            history.UpsertInstrument(InstrumentRecord.FromTradingParams(p), "avanza-orderbook", AvanzaConnection.OrderbookSourceVersion, p.KnownAtUtc);
+            var provider = new AvanzaChartImporter(ctx.Connection.Gateway, time, AvanzaConnection.PriceChartSourceVersion);
+            ImportReport report = await new HistoryImporter(history, time, setup.Calendar)
+                .ImportAsync(provider, entry.OrderbookId, from, through, ctx.Ct).ConfigureAwait(false);
+            output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"History: {entry.Ticker} brought up to {report.LastDate:yyyy-MM-dd} ({report.Bars.New} new bar(s), {report.Bars.Restated} restated)."));
+            foreach (string warning in report.Warnings)
+            {
+                output.WriteLine($"warning: {warning}");
+            }
+        }
+    }
+
     private static Command PaperStatus()
     {
         var stateDir = new Option<string>("--state-dir") { Description = "State folder", DefaultValueFactory = _ => TradingCommands.DefaultStateDir };
@@ -238,7 +380,7 @@ internal static partial class AvanzaCommands
         return command;
     }
 
-    private static DateOnly PreviousTradingDay(MarketCalendar calendar, DateOnly today)
+    internal static DateOnly PreviousTradingDay(MarketCalendar calendar, DateOnly today)
     {
         for (DateOnly d = today.AddDays(-1); d > today.AddDays(-15); d = d.AddDays(-1))
         {

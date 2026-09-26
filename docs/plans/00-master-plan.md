@@ -203,7 +203,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - sane paper fills
 - `qa promote --to Confirm` writes the signed promotion record (ADR 0003 §3)
 
-### Phase 7 — Confirm mode
+### Phase 7 — Confirm mode (planned 2026-09-26: steps, decisions and the exact remaining-work list in `docs/plans/07-phase7-confirm.md`; how you will use it in `docs/guide.md`)
 - **Pre-card calls:** before the card, `validate` + `preliminaryfee` run as read-only POSTs. They are pre-trade helpers, never order endpoints.
 - **Order card:** instrument, side, volume, limit, SEK value, **Avanza fee vs model fee**, reason, and every risk-check result.
 - **Confirmation:** typed `<TICKER> JA`, 30 s expiry, one order per confirmation. `rebalance --execute` confirms one order at a time.

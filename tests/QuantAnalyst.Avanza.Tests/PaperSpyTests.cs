@@ -75,18 +75,18 @@ public sealed class PaperSpyTests : IDisposable
         Assert.Equal(0, Qa(TimeProvider.System, "universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
     }
 
-    private string[] PaperArgs(double seconds) =>
-        ["paper", "run", "--strategy", "buy-and-hold", "--duration", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+    private string[] PaperArgs(double seconds, bool savedStrategy = false) =>
+        ["paper", "run", .. savedStrategy ? Array.Empty<string>() : ["--strategy", "buy-and-hold"], "--duration", seconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
          "--config-dir", Config, "--store", Store, "--state-dir", State, "--audit-dir", Audit, "--kill-file", KillFile,
          "--promotion-dir", Path.Combine(_root, "promotion"), "--reports-dir", Path.Combine(_root, "reports"), "--login", "totp"];
 
     /// <summary>Runs the CLI on a worker while this thread moves the fake clock and keeps the depth stream alive.</summary>
-    private async Task<(int Code, string Output, string Error)> RunPaper(double seconds, Action<DateTimeOffset>? onTick = null)
+    private async Task<(int Code, string Output, string Error)> RunPaper(double seconds, Action<DateTimeOffset>? onTick = null, bool savedStrategy = false)
     {
         var conn = new SseConnection();
         _server.Serve(conn);
         await conn.Event("info", "connected", "e0", 1000);
-        Task<(int, string, string)> run = Task.Run(() => Qa(_time, PaperArgs(seconds)), TestContext.Current.CancellationToken);
+        Task<(int, string, string)> run = Task.Run(() => Qa(_time, PaperArgs(seconds, savedStrategy)), TestContext.Current.CancellationToken);
 
         // Login and setup need no clock; hold the fake clock until the session streams (or stops), so it starts at
         // 09:09:40 however slow the machine is.
@@ -118,6 +118,7 @@ public sealed class PaperSpyTests : IDisposable
         (int code, string output, string error) = await RunPaper(seconds: 60);
 
         Assert.True(code == 0, output + error);
+        Assert.DoesNotContain("History:", output, StringComparison.Ordinal); // imported through Friday already
         Assert.Contains("decision: 1 order(s)", output, StringComparison.Ordinal);
         Assert.True(output.Contains("Buy 63 ERIC B: Accepted (Filled, filled 63/63 @ 70.86)", StringComparison.Ordinal), output); // R6: 4,500 SEK
         Assert.Contains("Reconciliation: clean", output, StringComparison.Ordinal);
@@ -134,6 +135,38 @@ public sealed class PaperSpyTests : IDisposable
         Assert.Equal(63, book.RootElement.GetProperty("positions")[0].GetProperty("quantity").GetInt64());
         Assert.True(AuditLog.Verify(Audit).Valid);
         Assert.False(File.Exists(Path.Combine(State, "session.lock"))); // released
+    }
+
+    [Fact]
+    public async Task ASavedStrategy_AndAnAllowlist_AreEnough_TheSessionImportsTheHistoryItNeeds()
+    {
+        File.WriteAllText(Path.Combine(Config, "universe.json"), """{ "format": "qa-universe/1", "instruments": [ { "orderbook_id": "5240", "ticker": "ERIC B", "name": "Ericsson B" } ] }""");
+        Assert.Equal(0, Qa(TimeProvider.System, "paper", "strategy", "buy-and-hold", "--config-dir", Config, "--ledger", Path.Combine(_root, "ledger.jsonl")).Code);
+        Assert.False(File.Exists(Store));
+
+        (int code, string output, string error) = await RunPaper(seconds: 60, savedStrategy: true);
+
+        Assert.True(code == 0, output + error);
+        Assert.Contains("Paper session: buy-and-hold(entry=5) on ERIC B", output, StringComparison.Ordinal);
+        Assert.Contains("History: ERIC B brought up to 2026-09-25 (2 new bar(s), 0 restated).", output, StringComparison.Ordinal);
+        Assert.Contains("decision: 1 order(s)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain(_server.Requests, r => AvanzaOrderRoutes.All.Any(route => r.PathAndQuery.StartsWith(route.PathTemplate, StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task AFailedHistoryRefresh_IsAWarning_AndTheDecisionRefusesStaleHistory()
+    {
+        Assert.Equal(0, Qa(TimeProvider.System, "history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-24", "--store", Store,
+            "--state-dir", State, "--login", "totp").Code);
+        Assert.Equal(0, Qa(TimeProvider.System, "universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
+        _server.On(AvanzaRoutes.PriceChart, _ => FakeAvanza.Status(System.Net.HttpStatusCode.OK, """{ "surprise": true }"""));
+
+        (int code, string output, string error) = await RunPaper(seconds: 40);
+
+        Assert.True(code == 0, output + error);
+        Assert.Contains("WARNING: the history could not be brought up to date", output, StringComparison.Ordinal);
+        Assert.Contains("decision failed: the history ends 2026-09-24, not on the last trading day 2026-09-25", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("Accepted", output, StringComparison.Ordinal);
     }
 
     [Fact]

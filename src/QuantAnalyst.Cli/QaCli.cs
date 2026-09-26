@@ -42,7 +42,9 @@ internal static class QaCli
     internal static RootCommand Build(AvanzaCliServices avanza)
     {
         var root = new RootCommand(
-            "QuantAnalyst for Avanza - quant research, risk tools and read-only Avanza access. Model outputs only; not financial advice.");
+            "QuantAnalyst for Avanza - quant research, risk tools, read-only Avanza access and paper trading. Model outputs only; not financial advice."
+            + Environment.NewLine + "Start with: qa status (what is set up, what is missing, what to do next). The daily routine: docs/guide.md.");
+        root.Subcommands.Add(StatusCommand.Create(avanza));
         root.Subcommands.Add(PriceCommand.Create());
         root.Subcommands.Add(RiskCommand.Create());
         root.Subcommands.Add(OptimizeCommand.Create());

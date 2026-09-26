@@ -188,7 +188,7 @@ internal static class DataCommands
         }
 
         return (id is not null ? store.GetInstrument(new OrderbookId(id), asOfUtc) : store.FindByTicker(ticker!, asOfUtc))
-               ?? throw new ArgumentException($"'{ticker ?? id}' is not in the instrument master{(asOfUtc is null ? string.Empty : " at that time")}. Run 'qa history import' first.");
+               ?? throw new ArgumentException($"'{ticker ?? id}' is not in the instrument master{(asOfUtc is null ? string.Empty : " at that time")}. Run 'qa history import {(ticker is null ? "--id " + id : ticker)}' first.");
     }
 
     public static DateOnly? ParseDate(string? text, string option) =>
