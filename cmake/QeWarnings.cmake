@@ -11,5 +11,7 @@ function(qe_set_warnings target)
             -Wdouble-promotion -Wformat=2 -Wundef
             $<$<COMPILE_LANGUAGE:CXX>:-Wold-style-cast -Wnon-virtual-dtor -Woverloaded-virtual>
             $<$<BOOL:${QE_WARNINGS_AS_ERRORS}>:-Werror>)
+        # Debug builds check std::span/vector bounds like MSVC's checked iterators do (no ABI change).
+        target_compile_definitions(${target} PRIVATE $<$<CONFIG:Debug>:_GLIBCXX_ASSERTIONS>)
     endif()
 endfunction()

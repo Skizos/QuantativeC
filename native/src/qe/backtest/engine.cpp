@@ -207,6 +207,7 @@ std::size_t Engine::step(std::span<const Bar> bars, std::span<const Order> order
     // through later, and MOO/MOC belong to their auction), so no order fills twice and the fill
     // count never exceeds the order count.
     std::size_t count = 0;
+    Fill fill;
     for (Phase phase : {Phase::Open, Phase::Continuous, Phase::Close}) {
         for (int side : {-1, 1}) { // sells first: their proceeds can pay for buys in the same phase
             for (std::size_t k = 0; k < orders.size(); ++k) {
@@ -215,8 +216,9 @@ std::size_t Engine::step(std::span<const Bar> bars, std::span<const Order> order
                 if (o.side != side || !bar.valid) {
                     continue;
                 }
-                if (try_fill(o, static_cast<std::int32_t>(k), bar, phase, out[count])) {
-                    ++count;
+                // Fill into a local: out[count] is past the end once every order has filled.
+                if (try_fill(o, static_cast<std::int32_t>(k), bar, phase, fill)) {
+                    out[count++] = fill;
                 }
             }
         }
