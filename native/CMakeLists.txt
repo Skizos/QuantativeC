@@ -1,5 +1,6 @@
 # qe_impl: all C++ engine code as a static library (unit tests link it directly).
 add_library(qe_impl STATIC
+    src/qe/backtest/engine.cpp
     src/qe/core/interp.cpp
     src/qe/core/math.cpp
     src/qe/core/rng.cpp
