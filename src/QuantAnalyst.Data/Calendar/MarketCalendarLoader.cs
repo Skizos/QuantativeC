@@ -53,6 +53,11 @@ public static class MarketCalendarLoader
             dto = JsonSerializer.Deserialize(File.ReadAllBytes(path), CalendarJsonContext.Default.CalendarFileDto)
                   ?? throw new CalendarConfigException($"{Path.GetFileName(path)} is empty.");
         }
+        catch (JsonException ex) when (ex.Path == "$.verified_on")
+        {
+            throw new CalendarConfigException(
+                $"{Path.GetFileName(path)}: verified_on must be null (not checked yet) or the date you checked the file, in quotes, e.g. \"2026-09-26\".", ex);
+        }
         catch (JsonException ex)
         {
             throw new CalendarConfigException($"{Path.GetFileName(path)}: {ex.Message}", ex);

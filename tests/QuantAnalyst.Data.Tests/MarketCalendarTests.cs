@@ -123,11 +123,17 @@ public sealed class MarketCalendarTests
     [InlineData("\"timeZone\": \"Europe/Stockholm\"", "\"timeZone\": \"UTC\"", "timeZone")]
     [InlineData("\"verified_on\": null", "\"verified_on\": null, \"extra\": 1", "extra")]
     [InlineData("\"verified_on\": null", "\"verified_on\": \"yesterday\"", "yyyy-MM-dd")]
+    [InlineData("\"verified_on\": null", "\"verified_on\": true", "verified_on must be null (not checked yet) or the date you checked the file, in quotes, e.g. \"2026-09-26\".")]
     [InlineData("\"year\": 2026", "\"year\": 2027", "must be named")]
     public void BadFilesAreRejected(string find, string replace, string expected)
     {
         using var dir = new TempDir();
-        string text = File.ReadAllText(Path.Combine(ConfigDir, MarketCalendarLoader.FileName("XSTO", 2026)));
+        // Start from the committed file with verified_on reset, so this test does not depend on whether the owner
+        // has verified the calendar yet.
+        string text = System.Text.RegularExpressions.Regex.Replace(
+            File.ReadAllText(Path.Combine(ConfigDir, MarketCalendarLoader.FileName("XSTO", 2026))),
+            "\"verified_on\": [^,\\r\\n]+",
+            "\"verified_on\": null");
         Assert.Contains(find, text, StringComparison.Ordinal);
         File.WriteAllText(dir.File(MarketCalendarLoader.FileName("XSTO", 2026)), text.Replace(find, replace, StringComparison.Ordinal));
         var ex = Assert.Throws<CalendarConfigException>(() => MarketCalendarLoader.LoadDirectory(dir.Path));
