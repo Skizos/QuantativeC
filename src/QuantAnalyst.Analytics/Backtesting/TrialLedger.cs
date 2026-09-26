@@ -200,11 +200,15 @@ public sealed class TrialLedger(string path)
     /// <summary>Number of completed trials in a study and the standard deviation of their per-period Sharpe ratios.</summary>
     public (int Trials, double SharpeStd) StudyStats(string study)
     {
-        double[] sharpes = [.. ReadAll()
-            .Where(r => r.Study == study && r.Status == TrialStatus.Ok && r.Metrics is { } m && double.IsFinite(m.SharpePerPeriod))
-            .Select(r => r.Metrics!.SharpePerPeriod)];
+        double[] sharpes = StudySharpes(study);
         return (sharpes.Length, sharpes.Length < 2 ? double.NaN : StdDev(sharpes));
     }
+
+    /// <summary>Per-period Sharpe ratios of the completed trials of a study, in ledger order.</summary>
+    public double[] StudySharpes(string study) =>
+        [.. ReadAll()
+            .Where(r => r.Study == study && r.Status == TrialStatus.Ok && r.Metrics is { } m && double.IsFinite(m.SharpePerPeriod))
+            .Select(r => r.Metrics!.SharpePerPeriod)];
 
     /// <summary>
     /// True when the file is locked by another writer or reader: Windows ERROR_SHARING_VIOLATION/ERROR_LOCK_VIOLATION,
