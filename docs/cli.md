@@ -1,11 +1,25 @@
 # `qa` command-line tool
 
-`qa` is `src/QuantAnalyst.Cli`. Build it with `dotnet build QuantAnalyst.sln`. It needs the native library staged by `cmake --build --preset dev` (see `docs/setup.md`).
+`qa` is `src/QuantAnalyst.Cli`. It needs the native library built once by `.\build.ps1` (or `cmake --build --preset dev`; see `docs/setup.md`).
 
-```bash
-dotnet run --project src/QuantAnalyst.Cli -- <command> [options]
-# or the built executable: src/QuantAnalyst.Cli/bin/Debug/net10.0/qa
+`qa` is **not on your PATH**, so typing a bare `qa` fails with "The term 'qa' is not recognized". Use the launcher at the repository root instead. It rebuilds qa when the sources changed (e.g. after `git pull`) and runs it with the repository as its working folder:
+
+```powershell
+cd C:\path\to\QuantativeC
+.\qa history import ERIC-B          # PowerShell 7 (Windows, macOS, Linux)
 ```
+
+To type just `qa` from any folder, add one line to your PowerShell profile (`notepad $PROFILE`, then open a new window):
+
+```powershell
+function qa { & 'C:\path\to\QuantativeC\qa.ps1' @args }
+```
+
+Without the launcher, either of these works:
+- `dotnet run --project src/QuantAnalyst.Cli -- <command> [options]`
+- the built executable `src\QuantAnalyst.Cli\bin\Debug\net10.0\qa.exe`, run from the repository folder so `data\` and `config\` are found
+
+In this document, `qa …` means any of these.
 
 **Output conventions:**
 - Numbers are parsed and printed with the **invariant culture**: use `0.05`, not `0,05`, even on a Swedish Windows.
