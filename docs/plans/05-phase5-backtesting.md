@@ -1,6 +1,6 @@
 # 05 — Phase 5: Honest backtesting
 
-- **Status:** in progress (started 2026-09-26, in parallel with Phase 4's stop point, at the owner's request).
+- **Status:** implemented and gated on synthetic data (2026-09-26); real-data runs wait for the history import. Started in parallel with Phase 4's stop point, at the owner's request.
 - **Scope:** master plan §4 Phase 5; CLAUDE.md "Backtesting rules"; ADR 0001 (C ABI); ADR 0003 (costs, limits).
 - **Gate:**
   - the leakage canary is caught
@@ -127,4 +127,28 @@ Real-data runs read `data/quant.duckdb` (Phase 4 import) and label it "Avanza hi
 
 ## Results
 
-(Filled in at the gate.)
+Gate run on 2026-09-26 in the cloud container (Linux x64, GCC 13.3, .NET 10.0.12). Test counts at 7389223: native dev 127/127, ASan + UBSan 126/126 (the allocation test does not run under sanitizers), managed 447 (1 skipped, Windows-only).
+
+| Gate item | Evidence | Result |
+|---|---|---|
+| **The leakage canary is caught** | `BacktestRunnerTests.LeakageCanary_IsRejected_AndLogged`: a strategy whose factory reads tomorrow's close from the data it is given. `ReadingTheNextBarThroughTheWindow_IsRejected`: one that indexes past the current bar. | Both are rejected as `RejectedLeakage` and logged. Honest strategies (buy-and-hold, ma-cross, random-targets) pass the same check. |
+| **A random strategy is not significant after deflation** | `DeflationGateTests`: 200 random-target strategies on a driftless random walk (20 instruments × 756 days, seed 20260926). | The best has annualised Sharpe 1.02 and PSR(0) 0.961: significant before deflation. Its **DSR is 0.414** (< 0.95), and **PBO is 0.388**. |
+| **Untouched limits do not fill** | gtest `BacktestEngine.UntouchedLimitsDoNotFill`: limits at the low/high (a touch), and beyond it | No fills. A trade-through fills at the limit; a gap fills at the open. |
+| **10 y × 300 benchmark saved** | `bench/results/phase5-cloud-linux-x64-managed.{json,md}` (BenchmarkDotNet, Release) | **169 ms** per full run (2520 steps, decisions, orders, 8 truncation replays, metrics); 77 ms without the leakage check; 0.83 s end to end through the CLI. |
+
+**What the first logged run shows (ledger T000001, runner `claude`):**
+- The CLI run of the benchmark configuration (300 names, 1 MSEK, MA-cross 20/100) lost 96 %.
+- The cause was 25,412 fills × the 39 SEK minimum courtage on 3,333 SEK slices.
+- With Avanza's minimum fee, many small positions are ruinous; the cost model makes that visible.
+
+**Found and fixed on the way:**
+- **Engine UB:** the engine formed a reference one past the fill buffer once every order had filled; MSVC's checked `std::span` caught it in CI. Debug builds now also define `_GLIBCXX_ASSERTIONS`, so GCC/Clang check the same thing.
+- **Ledger locking:**
+  - The TrialLedger's lock retry gave up after about 1 s on Windows, where concurrent writers each fsync.
+  - Readers had no retry at all.
+  - Both now wait up to 30 s, and only on lock contention.
+
+**Open (needs you):**
+- **Real-data backtests:** they need a working `qa history import`. The code path (`--tickers`) is tested against a temporary store.
+- **Cost model:** check `config/costs.avanza-small.json` against Avanza's price list and set `verified_on`. Every result says UNVERIFIED until then.
+- **OMXS30 membership:** there is no membership file yet, so real universes are "current names only (survivorship-biased)".

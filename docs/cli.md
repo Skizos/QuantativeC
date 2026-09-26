@@ -133,3 +133,36 @@ These verbs never talk to Avanza.
 
 - **Store:** `data/quant.duckdb` by default (git-ignored). Change it with `--store`.
 - **Calendar files:** read from `./config`, else from next to `qa`. Change the folder with `--config-dir`.
+
+## Backtesting (offline, Phase 5)
+
+Plan, fill model and formulas: `docs/plans/05-phase5-backtesting.md`. Every run is appended to the TrialLedger
+(`research/trial-ledger.jsonl`, committed), rejected runs included. These are model outputs, not advice.
+
+| Verb | What it does |
+|---|---|
+| `qa backtest run --strategy ma-cross --param fast=20 --param slow=100 --synthetic 300x2520 [--seed N] [--drift 0.05]` | One run on seeded synthetic data (GBM, weekdays from 2015-01-05). Prints the data labels, cost status, metrics, Deflated Sharpe and the ledger id. |
+| `qa backtest run --strategy buy-and-hold --tickers "ERIC B,VOLV B" [--from] [--to]` | The same on imported Avanza history (`qa history import` first). Only continuously traded instruments are accepted. The output is labelled **NOT survivorship-free, NOT point-in-time, current names only**. |
+| `qa backtest sweep --strategy ma-cross --grid fast=10,20,50 --grid slow=100,200 --synthetic 50x2520` | Every combination is run and logged. Prints the top rows, the PBO (CSCV) across the combinations, and the Deflated Sharpe Ratio of the best against every completed trial in the study. |
+| `qa trials list [--study <key>] [--last 20] [--json]` | The ledger, newest last. |
+| `qa trials verify` | Checks the hash chain. Any edited, deleted or reordered line is reported, with exit code 1. |
+
+**Strategies:**
+- `buy-and-hold [entry=5]`: equal weight, bought during the first `entry` bars, then held.
+- `ma-cross fast=… slow=…`: long an instrument while its fast SMA is above the slow one; a fixed 1/N slice each.
+- `random-targets seed=… [rebalance=21] [p=0.5]`: random long-only weights. This is the null model for deflation tests.
+
+**Orders and costs:**
+- `--order limit|moo|moc` (default `limit`).
+- Limits sit `--limit-offset-bps 50` from the decision close and are rounded passively to the instrument's tick.
+- Trades inside a 10 % no-trade band are skipped; entries and exits always trade.
+- Costs come from `config/costs.<name>.json` (`--costs avanza-small`). They print as **UNVERIFIED** until you check them against Avanza's price list and set `verified_on`.
+- Starting cash is set with `--cash` (default 1,000,000 SEK).
+
+**Guards:**
+- **Holdout:** `config/holdout.json` locks bars from 2025-10-01. Without `--to`, data is clipped before that date (store data is not even read past it). An explicit `--to` inside the holdout is refused and logged as `rejected-holdout`. A missing policy file stops every run. Only you unlock it.
+- **Look-ahead:** a strategy that reads past the current bar is rejected and logged as `rejected-leakage`. So is one whose decisions change when later bars are removed: 8 decision points are replayed on truncated data.
+- **Runner:** the ledger records `QA_RUNNER` as the runner. Claude's sessions set `claude` (`.claude/settings.json`); set your own, e.g. `QA_RUNNER=owner`.
+- **Paths:** the ledger defaults to `research/trial-ledger.jsonl` at the repository root (change it with `--ledger`). Config comes from `./config`, else from next to `qa` (change it with `--config-dir`).
+
+Exit codes of `qa backtest run`: 0 ok, 1 error, 2 the run was logged but rejected (holdout, look-ahead) or failed.
