@@ -23,6 +23,12 @@ internal enum QeStructId
     RebalanceConfig = 16,
     RebalanceTrade = 17,
     RebalanceSummary = 18,
+    BtConfig = 19,
+    BtInstrument = 20,
+    BtBar = 21,
+    BtOrder = 22,
+    BtFill = 23,
+    BtState = 24,
 }
 
 /// <summary>Mirror of <c>qe_mc_config</c> (32 bytes).</summary>
@@ -119,6 +125,36 @@ internal readonly struct QeRebalanceConfig
         MinTradeValue = options.MinTradeValue;
         FeeMin = options.FeeMin;
         FeeRate = options.FeeRate;
+    }
+}
+
+/// <summary>Mirror of <c>qe_bt_config</c> (64 bytes).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal readonly struct QeBtConfig
+{
+    internal const int QeBtConfigSize = 64;
+
+    internal readonly int StructSize;
+    internal readonly int Reserved;
+    internal readonly double InitialCash;
+    internal readonly double CourtageMin;
+    internal readonly double CourtageRate;
+    internal readonly double FxFeeRate;
+    internal readonly double SlippageBps;
+    internal readonly double HalfSpreadBps;
+    internal readonly double ParticipationCap;
+
+    internal QeBtConfig(BacktestConfig config)
+    {
+        StructSize = QeBtConfigSize;
+        Reserved = 0;
+        InitialCash = config.InitialCash;
+        CourtageMin = config.CourtageMin;
+        CourtageRate = config.CourtageRate;
+        FxFeeRate = config.FxFeeRate;
+        SlippageBps = config.SlippageBps;
+        HalfSpreadBps = config.HalfSpreadBps;
+        ParticipationCap = config.ParticipationCap;
     }
 }
 

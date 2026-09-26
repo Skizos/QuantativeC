@@ -36,6 +36,10 @@ static_assert(sizeof(qe_cov_config) == 16 && sizeof(qe_var_es) == 32);
 static_assert(sizeof(qe_opt_config) == 32 && sizeof(qe_opt_result) == 16);
 static_assert(sizeof(qe_rebalance_asset) == 32 && sizeof(qe_rebalance_config) == 48);
 static_assert(sizeof(qe_rebalance_trade) == 40 && sizeof(qe_rebalance_summary) == 40);
+// ABI 1.2
+static_assert(sizeof(qe_bt_config) == 64 && sizeof(qe_bt_instrument) == 16 &&
+              sizeof(qe_bt_bar) == 48);
+static_assert(sizeof(qe_bt_order) == 32 && sizeof(qe_bt_fill) == 56 && sizeof(qe_bt_state) == 64);
 
 namespace {
 
@@ -206,6 +210,46 @@ QE_API qe_status QE_CALL qe_struct_layout(std::int32_t struct_id,
                 offsetof(qe_rebalance_summary, total_fees),
                 offsetof(qe_rebalance_summary, tracking_error),
                 offsetof(qe_rebalance_summary, trades), offsetof(qe_rebalance_summary, feasible)});
+            return QE_OK;
+        case QE_STRUCT_BT_CONFIG:
+            *out = make_layout<qe_bt_config>(std::array<std::size_t, 9>{
+                offsetof(qe_bt_config, struct_size), offsetof(qe_bt_config, reserved),
+                offsetof(qe_bt_config, initial_cash), offsetof(qe_bt_config, courtage_min),
+                offsetof(qe_bt_config, courtage_rate), offsetof(qe_bt_config, fx_fee_rate),
+                offsetof(qe_bt_config, slippage_bps), offsetof(qe_bt_config, half_spread_bps),
+                offsetof(qe_bt_config, participation_cap)});
+            return QE_OK;
+        case QE_STRUCT_BT_INSTRUMENT:
+            *out = make_layout<qe_bt_instrument>(std::array<std::size_t, 3>{
+                offsetof(qe_bt_instrument, lot_size), offsetof(qe_bt_instrument, foreign_currency),
+                offsetof(qe_bt_instrument, reserved)});
+            return QE_OK;
+        case QE_STRUCT_BT_BAR:
+            *out = make_layout<qe_bt_bar>(std::array<std::size_t, 7>{
+                offsetof(qe_bt_bar, open), offsetof(qe_bt_bar, high), offsetof(qe_bt_bar, low),
+                offsetof(qe_bt_bar, close), offsetof(qe_bt_bar, volume), offsetof(qe_bt_bar, valid),
+                offsetof(qe_bt_bar, reserved)});
+            return QE_OK;
+        case QE_STRUCT_BT_ORDER:
+            *out = make_layout<qe_bt_order>(std::array<std::size_t, 6>{
+                offsetof(qe_bt_order, instrument), offsetof(qe_bt_order, side),
+                offsetof(qe_bt_order, type), offsetof(qe_bt_order, reserved),
+                offsetof(qe_bt_order, quantity), offsetof(qe_bt_order, limit_price)});
+            return QE_OK;
+        case QE_STRUCT_BT_FILL:
+            *out = make_layout<qe_bt_fill>(std::array<std::size_t, 9>{
+                offsetof(qe_bt_fill, instrument), offsetof(qe_bt_fill, side),
+                offsetof(qe_bt_fill, type), offsetof(qe_bt_fill, order_index),
+                offsetof(qe_bt_fill, quantity), offsetof(qe_bt_fill, price),
+                offsetof(qe_bt_fill, courtage), offsetof(qe_bt_fill, fx_fee),
+                offsetof(qe_bt_fill, spread_slippage_cost)});
+            return QE_OK;
+        case QE_STRUCT_BT_STATE:
+            *out = make_layout<qe_bt_state>(std::array<std::size_t, 8>{
+                offsetof(qe_bt_state, cash), offsetof(qe_bt_state, equity),
+                offsetof(qe_bt_state, gross_exposure), offsetof(qe_bt_state, courtage),
+                offsetof(qe_bt_state, fx_fees), offsetof(qe_bt_state, spread_slippage),
+                offsetof(qe_bt_state, fills), offsetof(qe_bt_state, orders)});
             return QE_OK;
         default:
             return fail(QE_E_INVALID_ARG, "unknown struct_id");

@@ -8,8 +8,8 @@ public static class QeAbi
     /// <summary>The <c>QE_ABI_MAJOR</c> this assembly was written against.</summary>
     public const int ExpectedMajor = 1;
 
-    /// <summary>The minimum <c>QE_ABI_MINOR</c> this assembly requires.</summary>
-    public const int ExpectedMinor = 1;
+    /// <summary>The minimum <c>QE_ABI_MINOR</c> this assembly requires (1.2: backtest engine).</summary>
+    public const int ExpectedMinor = 2;
 
     private static readonly Lazy<Version> NativeVersionLazy = new(ReadNativeVersion);
 

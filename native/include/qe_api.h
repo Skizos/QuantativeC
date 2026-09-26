@@ -40,7 +40,7 @@ extern "C" {
 /* ---- Versioning --------------------------------------------------------------------------- */
 
 #define QE_ABI_MAJOR 1
-#define QE_ABI_MINOR 1 /* 1.1: pricing, risk and portfolio batch APIs */
+#define QE_ABI_MINOR 2 /* 1.1: pricing, risk and portfolio batch APIs; 1.2: backtest engine */
 
 /* ---- Status codes ------------------------------------------------------------------------- */
 
@@ -75,6 +75,15 @@ typedef int32_t qe_status;
 #define QE_OPT_RISK_PARITY 2 /* equal risk contribution, long-only; bounds must be NULL */
 #define QE_OPT_HRP 3         /* hierarchical risk parity, long-only; bounds must be NULL */
 
+/* qe_bt_order.type / qe_bt_fill.type */
+#define QE_BT_LIMIT 0 /* day limit order; fills only if traded through (a touch is not a fill) */
+#define QE_BT_MARKET_ON_OPEN 1  /* opening auction: open +/- (half-spread + slippage) */
+#define QE_BT_MARKET_ON_CLOSE 2 /* closing auction: close +/- (half-spread + slippage) */
+
+/* qe_bt_order.side / qe_bt_fill.side */
+#define QE_BT_BUY 1
+#define QE_BT_SELL (-1)
+
 #define QE_STRUCT_ENGINE_CONFIG 1
 #define QE_STRUCT_BS_INPUT 2
 #define QE_STRUCT_BS_OUTPUT 3
@@ -93,6 +102,13 @@ typedef int32_t qe_status;
 #define QE_STRUCT_REBALANCE_CONFIG 16
 #define QE_STRUCT_REBALANCE_TRADE 17
 #define QE_STRUCT_REBALANCE_SUMMARY 18
+/* ABI 1.2 */
+#define QE_STRUCT_BT_CONFIG 19
+#define QE_STRUCT_BT_INSTRUMENT 20
+#define QE_STRUCT_BT_BAR 21
+#define QE_STRUCT_BT_ORDER 22
+#define QE_STRUCT_BT_FILL 23
+#define QE_STRUCT_BT_STATE 24
 
 #define QE_LAYOUT_MAX_FIELDS 16
 
@@ -249,8 +265,73 @@ typedef struct qe_rebalance_summary {
     int32_t feasible; /* 1 when cash_after >= cash_buffer */
 } qe_rebalance_summary;
 
+/* ---- ABI 1.2: backtest (docs/plans/05-phase5-backtesting.md "Engine") ---------------------- */
+
+typedef struct qe_bt_config {
+    int32_t struct_size;
+    int32_t reserved; /* 0 */
+    double initial_cash;
+    double courtage_min; /* courtage = max(courtage_min, courtage_rate * notional) */
+    double courtage_rate;
+    double fx_fee_rate;       /* on the notional of foreign-currency instruments */
+    double slippage_bps;      /* market-type fills only */
+    double half_spread_bps;   /* market-type fills only */
+    double participation_cap; /* (0, 1]: share of the bar's volume one instrument may trade */
+} qe_bt_config;
+
+typedef struct qe_bt_instrument {
+    int64_t lot_size;         /* >= 1 */
+    int32_t foreign_currency; /* 1 = the FX fee applies */
+    int32_t reserved;         /* 0 */
+} qe_bt_instrument;
+
+typedef struct qe_bt_bar {
+    double open;
+    double high;
+    double low;
+    double close;
+    double volume;
+    int32_t valid;    /* 0 = no trading on this bar (holiday, halt, not listed): nothing fills */
+    int32_t reserved; /* 0 */
+} qe_bt_bar;
+
+typedef struct qe_bt_order {
+    int32_t instrument; /* index into the instruments given to qe_bt_create */
+    int32_t side;       /* QE_BT_BUY or QE_BT_SELL */
+    int32_t type;       /* QE_BT_* */
+    int32_t reserved;   /* 0 */
+    int64_t quantity;   /* shares, a positive multiple of the lot size */
+    double limit_price; /* QE_BT_LIMIT only */
+} qe_bt_order;
+
+typedef struct qe_bt_fill {
+    int32_t instrument;
+    int32_t side;
+    int32_t type;
+    int32_t order_index; /* index into the orders of the qe_bt_step call */
+    int64_t quantity;
+    double price;
+    double courtage;
+    double fx_fee;
+    double spread_slippage_cost; /* |price - auction price| * quantity for market-type fills */
+} qe_bt_fill;
+
+typedef struct qe_bt_state {
+    double cash;
+    double equity;          /* cash + positions at the last valid close */
+    double gross_exposure;  /* positions at the last valid close */
+    double courtage;        /* cumulative */
+    double fx_fees;         /* cumulative */
+    double spread_slippage; /* cumulative */
+    int64_t fills;          /* cumulative */
+    int64_t orders;         /* cumulative */
+} qe_bt_state;
+
 /* Opaque engine handle. */
 typedef struct qe_engine qe_engine;
+
+/* Opaque backtest handle (ABI 1.2). Not thread-safe: one thread at a time per handle. */
+typedef struct qe_backtest qe_backtest;
 
 /* ---- Functions ---------------------------------------------------------------------------- */
 
@@ -354,6 +435,35 @@ QE_API qe_status QE_CALL qe_rebalance(const qe_rebalance_config* config,
                                       const qe_rebalance_asset* assets, int64_t count,
                                       qe_rebalance_trade* out_trades,
                                       qe_rebalance_summary* out_summary) QE_NOEXCEPT;
+
+/* ---- ABI 1.2: backtest ------------------------------------------------------------------- */
+
+/* Creates a backtest over count instruments (their order fixes the instrument indices).
+ *out is NULL on failure. */
+QE_API qe_status QE_CALL qe_bt_create(const qe_bt_config* config,
+                                      const qe_bt_instrument* instruments, int64_t count,
+                                      qe_backtest** out) QE_NOEXCEPT;
+
+/* Destroys a backtest. Passing NULL is a no-op that returns QE_OK. */
+QE_API qe_status QE_CALL qe_bt_destroy(qe_backtest* backtest) QE_NOEXCEPT;
+
+/*
+ * Processes one bar: bars holds one entry per instrument (bar_count == instrument count) and
+ * orders are the day orders for this bar, decided at the previous close. Fills go to fills in
+ * the order they happened (opening auction, continuous, closing auction; sells before buys);
+ * *fill_count receives how many. An order fills at most once, so fill_capacity >= order_count
+ * always suffices; a smaller buffer returns QE_E_BUFFER_TOO_SMALL with *fill_count set to
+ * order_count. The state after the bar goes to *out_state. On any failure the backtest is
+ * unchanged. orders/fills may be NULL only when order_count == 0.
+ */
+QE_API qe_status QE_CALL qe_bt_step(qe_backtest* backtest, const qe_bt_bar* bars, int64_t bar_count,
+                                    const qe_bt_order* orders, int64_t order_count,
+                                    qe_bt_fill* fills, int64_t fill_capacity, int64_t* fill_count,
+                                    qe_bt_state* out_state) QE_NOEXCEPT;
+
+/* Copies the current positions (shares) into out; count must equal the instrument count. */
+QE_API qe_status QE_CALL qe_bt_positions(const qe_backtest* backtest, int64_t* out,
+                                         int64_t count) QE_NOEXCEPT;
 
 #ifdef __cplusplus
 } /* extern "C" */

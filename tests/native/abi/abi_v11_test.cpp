@@ -25,12 +25,12 @@ qe_bs_input option(double k, std::int32_t type) {
     return qe_bs_input{100, k, 0.05, 0.0, 0.2, 1.0, type, 0};
 }
 
-TEST(Abi11Version, MinorIsOne) {
+TEST(Abi11Version, MinorIsAtLeastOne) {
     std::int32_t major = 0;
     std::int32_t minor = 0;
     ASSERT_EQ(qe_abi_version(&major, &minor), QE_OK);
     EXPECT_EQ(major, 1);
-    EXPECT_EQ(minor, 1);
+    EXPECT_GE(minor, 1); // later minors keep every 1.1 export
 }
 
 TEST_F(Abi11, GreeksBatchPricesAndFlagsDegenerateElements) {

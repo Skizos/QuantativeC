@@ -20,6 +20,12 @@ _Static_assert(sizeof(qe_rebalance_asset) == 32 && sizeof(qe_rebalance_config) =
                "rebalance in");
 _Static_assert(sizeof(qe_rebalance_trade) == 40 && sizeof(qe_rebalance_summary) == 40,
                "rebalance out");
+/* ABI 1.2 */
+_Static_assert(sizeof(qe_bt_config) == 64 && sizeof(qe_bt_instrument) == 16, "bt config sizes");
+_Static_assert(sizeof(qe_bt_bar) == 48 && offsetof(qe_bt_bar, valid) == 40, "bt bar");
+_Static_assert(sizeof(qe_bt_order) == 32 && offsetof(qe_bt_order, quantity) == 16, "bt order");
+_Static_assert(sizeof(qe_bt_fill) == 56 && offsetof(qe_bt_fill, price) == 24, "bt fill");
+_Static_assert(sizeof(qe_bt_state) == 64 && offsetof(qe_bt_state, fills) == 48, "bt state");
 
 int qe_c_compat_abi_major(void);
 

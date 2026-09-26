@@ -1,6 +1,6 @@
 # ADR 0001 — Native interop: flat C ABI + `[LibraryImport]`
 
-- **Status:** Accepted (implemented in Phase 1; ABI 1.1 additions in Phase 2)
+- **Status:** Accepted (implemented in Phase 1; ABI 1.1 additions in Phase 2; ABI 1.2 backtest engine in Phase 5)
 - **Deciders:** project owner
 - **Related:** CLAUDE.md "Interop rules", `docs/research/versions.md`
 

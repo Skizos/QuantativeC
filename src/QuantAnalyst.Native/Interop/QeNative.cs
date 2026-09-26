@@ -91,4 +91,22 @@ internal static unsafe partial class QeNative
     [LibraryImport(LibraryName, EntryPoint = "qe_rebalance")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial QeStatus Rebalance(QeRebalanceConfig* config, RebalanceAsset* assets, long count, RebalanceTrade* outTrades, RebalanceSummary* outSummary);
+
+    // ---- ABI 1.2: backtest
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_bt_create")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus BtCreate(QeBtConfig* config, BacktestInstrument* instruments, long count, out QeBacktestHandle backtest);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_bt_destroy")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus BtDestroy(nint backtest);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_bt_step")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus BtStep(QeBacktestHandle backtest, BacktestBar* bars, long barCount, BacktestOrder* orders, long orderCount, BacktestFill* fills, long fillCapacity, long* fillCount, BacktestState* outState);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_bt_positions")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus BtPositions(QeBacktestHandle backtest, long* positions, long count);
 }

@@ -79,6 +79,32 @@ public sealed class LayoutTests
             typeof(RebalanceSummary).AssemblyQualifiedName!,
             ["portfolioValue", "cashAfter", "totalFees", "trackingError", "trades", "feasible"]
         },
+        {
+            (int)QeStructId.BtConfig,
+            typeof(QeBtConfig).AssemblyQualifiedName!,
+            ["StructSize", "Reserved", "InitialCash", "CourtageMin", "CourtageRate", "FxFeeRate", "SlippageBps", "HalfSpreadBps", "ParticipationCap"]
+        },
+        { (int)QeStructId.BtInstrument, typeof(BacktestInstrument).AssemblyQualifiedName!, ["lotSize", "foreignCurrency", "reserved"] },
+        {
+            (int)QeStructId.BtBar,
+            typeof(BacktestBar).AssemblyQualifiedName!,
+            ["open", "high", "low", "close", "volume", "valid", "reserved"]
+        },
+        {
+            (int)QeStructId.BtOrder,
+            typeof(BacktestOrder).AssemblyQualifiedName!,
+            ["instrument", "side", "type", "reserved", "quantity", "limitPrice"]
+        },
+        {
+            (int)QeStructId.BtFill,
+            typeof(BacktestFill).AssemblyQualifiedName!,
+            ["instrument", "side", "type", "orderIndex", "quantity", "price", "courtage", "fxFee", "spreadSlippageCost"]
+        },
+        {
+            (int)QeStructId.BtState,
+            typeof(BacktestState).AssemblyQualifiedName!,
+            ["cash", "equity", "grossExposure", "courtage", "fxFees", "spreadSlippage", "fills", "orders"]
+        },
     };
 
     [Theory]
@@ -109,6 +135,12 @@ public sealed class LayoutTests
         Assert.Equal(16, Unsafe.SizeOf<BlackScholesOutput>());
         Assert.Equal(80, Unsafe.SizeOf<QeStructLayoutInfo>());
         Assert.Equal(QeEngineConfig.QeEngineConfigSize, Unsafe.SizeOf<QeEngineConfig>());
+        Assert.Equal(QeBtConfig.QeBtConfigSize, Unsafe.SizeOf<QeBtConfig>());
+        Assert.Equal(16, Unsafe.SizeOf<BacktestInstrument>());
+        Assert.Equal(48, Unsafe.SizeOf<BacktestBar>());
+        Assert.Equal(32, Unsafe.SizeOf<BacktestOrder>());
+        Assert.Equal(56, Unsafe.SizeOf<BacktestFill>());
+        Assert.Equal(64, Unsafe.SizeOf<BacktestState>());
     }
 
     [Fact]

@@ -27,6 +27,7 @@ qe_set_warnings(qe_impl)
 
 # qe: the shared library whose ONLY exports are declared in include/qe_api.h.
 add_library(qe SHARED
+    src/api/backtest_api.cpp
     src/api/last_error.cpp
     src/api/portfolio_api.cpp
     src/api/pricing_api.cpp
