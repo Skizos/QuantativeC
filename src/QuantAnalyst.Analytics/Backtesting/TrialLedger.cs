@@ -105,6 +105,9 @@ public sealed class TrialLedger(string path)
     public const string GenesisHash = "0000000000000000000000000000000000000000000000000000000000000000";
     public const string DefaultPath = "research/trial-ledger.jsonl";
 
+    /// <summary>How long a reader or writer waits for another process's lock on the file before giving up.</summary>
+    public static readonly TimeSpan LockTimeout = TimeSpan.FromSeconds(30);
+
     public string Path { get; } = path;
 
     /// <summary>Appends a record (sequence, prevHash and id are assigned here) under an exclusive file lock.</summary>
@@ -116,42 +119,30 @@ public sealed class TrialLedger(string path)
             Directory.CreateDirectory(dir);
         }
 
-        for (int attempt = 0; ; attempt++)
+        return WithLockRetry(() =>
         {
-            try
+            using var stream = new FileStream(Path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            (long lastSequence, string lastHash) = Tail(stream);
+            TrialRecord stamped = record with
             {
-                using var stream = new FileStream(Path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-                (long lastSequence, string lastHash) = Tail(stream);
-                TrialRecord stamped = record with
-                {
-                    Sequence = lastSequence + 1,
-                    Id = string.Create(CultureInfo.InvariantCulture, $"T{lastSequence + 1:000000}"),
-                    PrevHash = lastHash,
-                };
-                string recordJson = JsonSerializer.Serialize(stamped, LedgerJsonContext.Default.TrialRecord);
-                string hash = Hash(lastHash, recordJson);
-                string line = $"{{\"hash\":\"{hash}\",\"record\":{recordJson}}}\n";
-                stream.Seek(0, SeekOrigin.End);
-                stream.Write(Encoding.UTF8.GetBytes(line));
-                stream.Flush(flushToDisk: true);
-                return stamped;
-            }
-            catch (IOException) when (attempt < 50)
-            {
-                Thread.Sleep(20); // another writer holds the lock
-            }
-        }
+                Sequence = lastSequence + 1,
+                Id = string.Create(CultureInfo.InvariantCulture, $"T{lastSequence + 1:000000}"),
+                PrevHash = lastHash,
+            };
+            string recordJson = JsonSerializer.Serialize(stamped, LedgerJsonContext.Default.TrialRecord);
+            string hash = Hash(lastHash, recordJson);
+            string line = $"{{\"hash\":\"{hash}\",\"record\":{recordJson}}}\n";
+            stream.Seek(0, SeekOrigin.End);
+            stream.Write(Encoding.UTF8.GetBytes(line));
+            stream.Flush(flushToDisk: true);
+            return stamped;
+        });
     }
 
     public IReadOnlyList<TrialRecord> ReadAll()
     {
-        if (!File.Exists(Path))
-        {
-            return [];
-        }
-
         var records = new List<TrialRecord>();
-        foreach (string line in File.ReadLines(Path).Where(l => l.Length > 0))
+        foreach (string line in ReadLines().Where(l => l.Length > 0))
         {
             using JsonDocument doc = JsonDocument.Parse(line);
             records.Add(doc.RootElement.GetProperty("record").Deserialize(LedgerJsonContext.Default.TrialRecord)
@@ -164,14 +155,9 @@ public sealed class TrialLedger(string path)
     /// <summary>Checks every line's hash, the chain of prevHash values and the sequence numbers.</summary>
     public LedgerVerification Verify()
     {
-        if (!File.Exists(Path))
-        {
-            return new LedgerVerification(true, 0, null);
-        }
-
         string previous = GenesisHash;
         int n = 0;
-        foreach (string line in File.ReadLines(Path))
+        foreach (string line in ReadLines())
         {
             n++;
             if (line.Length == 0)
@@ -220,6 +206,16 @@ public sealed class TrialLedger(string path)
         return (sharpes.Length, sharpes.Length < 2 ? double.NaN : StdDev(sharpes));
     }
 
+    /// <summary>
+    /// True when the file is locked by another writer or reader: Windows ERROR_SHARING_VIOLATION/ERROR_LOCK_VIOLATION,
+    /// Unix EWOULDBLOCK from .NET's advisory lock (11 on Linux, 35 on macOS).
+    /// </summary>
+    internal static bool IsLockContention(IOException ex)
+    {
+        int code = ex.HResult & 0xFFFF;
+        return OperatingSystem.IsWindows() ? code is 32 or 33 : code is 11 or 35;
+    }
+
     internal static string Hash(string previousHash, string recordJson) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(previousHash + "\n" + recordJson)));
 
@@ -227,6 +223,26 @@ public sealed class TrialLedger(string path)
     {
         double mean = values.Average();
         return Math.Sqrt(values.Sum(v => (v - mean) * (v - mean)) / (values.Count - 1));
+    }
+
+    // A missing file is an empty ledger.
+    private string[] ReadLines() => WithLockRetry(() => File.Exists(Path) ? File.ReadAllLines(Path) : []);
+
+    /// <summary>Retries while another process holds the file (appends fsync, so a busy ledger can take a while).</summary>
+    private static T WithLockRetry<T>(Func<T> action)
+    {
+        long deadline = Environment.TickCount64 + (long)LockTimeout.TotalMilliseconds;
+        while (true)
+        {
+            try
+            {
+                return action();
+            }
+            catch (IOException ex) when (IsLockContention(ex) && Environment.TickCount64 < deadline)
+            {
+                Thread.Sleep(Random.Shared.Next(5, 40));
+            }
+        }
     }
 
     private static (long Sequence, string Hash) Tail(FileStream stream)

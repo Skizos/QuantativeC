@@ -98,21 +98,61 @@ public sealed class TrialLedgerTests : IDisposable
     }
 
     [Fact]
-    public async Task ConcurrentAppends_StayOneChain()
+    public async Task ConcurrentAppendsAndReads_StayOneChain()
     {
         var ledger = new TrialLedger(LedgerPath);
-        await Task.WhenAll(Enumerable.Range(0, 8).Select(w => Task.Run(() =>
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        IEnumerable<Task> writers = Enumerable.Range(0, 8).Select(w => Task.Run(() =>
         {
             for (int i = 0; i < 10; i++)
             {
                 new TrialLedger(LedgerPath).Append(Record(sharpe: (w * 10) + i));
             }
-        }, TestContext.Current.CancellationToken)));
+        }, ct));
+        IEnumerable<Task> readers = Enumerable.Range(0, 2).Select(_ => Task.Run(() =>
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                Assert.True(new TrialLedger(LedgerPath).Verify().Valid);
+            }
+        }, ct));
+        await Task.WhenAll(writers.Concat(readers));
 
         LedgerVerification v = ledger.Verify();
         Assert.True(v.Valid, v.Problem);
         Assert.Equal(80, v.Records);
         Assert.Equal(Enumerable.Range(1, 80).Select(i => (long)i), ledger.ReadAll().Select(r => r.Sequence));
+    }
+
+    [Fact]
+    public async Task AppendWaitsForAnotherProcessLock_LongerThanASecond()
+    {
+        var ledger = new TrialLedger(LedgerPath);
+        ledger.Append(Record());
+        Task<TrialRecord> append;
+        using (var held = new FileStream(LedgerPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            IOException blocked = Assert.ThrowsAny<IOException>(
+                () => new FileStream(LedgerPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None).Dispose());
+            Assert.True(TrialLedger.IsLockContention(blocked), $"HResult 0x{blocked.HResult:X8} is lock contention");
+
+            append = Task.Run(() => ledger.Append(Record()), TestContext.Current.CancellationToken);
+            await Task.Delay(1500, TestContext.Current.CancellationToken);
+            Assert.False(append.IsCompleted);
+        }
+
+        Assert.Equal(2, (await append).Sequence);
+        Assert.True(ledger.Verify().Valid);
+    }
+
+    [Fact]
+    public void OtherIoErrors_AreNotRetried()
+    {
+        // A directory where the file should be: fails at once instead of waiting LockTimeout.
+        Directory.CreateDirectory(LedgerPath);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Assert.ThrowsAny<Exception>(() => new TrialLedger(LedgerPath).Append(Record()));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(5), $"took {watch.Elapsed}");
     }
 
     [Fact]
