@@ -7,6 +7,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="QuantAnalyst.Core.Tests" />
+    <!-- Only Trading creates ApprovedOrder/Modify/Cancel (internal constructors); tests of the order channels need them too. -->
+    <InternalsVisibleTo Include="QuantAnalyst.Trading" />
+    <InternalsVisibleTo Include="QuantAnalyst.Trading.Tests" />
+    <InternalsVisibleTo Include="QuantAnalyst.Avanza.Tests" />
   </ItemGroup>
 
 </Project>
