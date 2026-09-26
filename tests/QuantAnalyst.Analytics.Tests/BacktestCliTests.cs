@@ -9,16 +9,35 @@ using QuantAnalyst.Data.Store;
 
 namespace QuantAnalyst.Analytics.Tests;
 
-/// <summary>qa backtest / qa trials end to end (temp ledgers; synthetic data or a temp DuckDB store).</summary>
+/// <summary>
+/// qa backtest / qa trials end to end (temp ledgers; synthetic data or a temp DuckDB store). The runs use a fixture
+/// config folder (locked holdout from 2025-10-01, unverified costs), so they do not change when the owner verifies
+/// the cost model or unlocks the holdout in the repository's config/.
+/// </summary>
 public sealed class BacktestCliTests : IDisposable
 {
+    private const string FixtureHoldout =
+        "{\"format\":\"qa-holdout/1\",\"locked\":true,\"start\":\"2025-10-01\",\"unlocked_by\":null,\"unlocked_on\":null,\"reason\":null}";
+
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "qa-backtest-cli", Guid.NewGuid().ToString("N"));
 
-    public BacktestCliTests() => Directory.CreateDirectory(_dir);
+    public BacktestCliTests()
+    {
+        Directory.CreateDirectory(_config);
+        File.WriteAllText(Path.Combine(_config, HoldoutPolicy.FileName), FixtureHoldout);
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-small.json"), FixtureCosts());
+    }
+
+    private string _config => Path.Combine(_dir, "config");
 
     private string Ledger => Path.Combine(_dir, "ledger.jsonl");
 
     private static string RepoConfig => Path.Combine(RepoRoot(), "config");
+
+    private static string FixtureCosts(string verifiedOn = "null", string participationCap = "0.10") =>
+        "{\"format\":\"qa-costs/1\",\"name\":\"avanza-small\",\"currency\":\"SEK\",\"courtage\":{\"min\":39.0,\"rate\":0.0015},"
+        + $"\"fx_fee_rate\":0.0025,\"slippage_bps\":5.0,\"half_spread_bps\":5.0,\"participation_cap\":{participationCap},"
+        + $"\"source_url\":\"https://www.avanza.se/priser-och-avgifter.html\",\"verified_on\":{verifiedOn}}}";
 
     public void Dispose()
     {
@@ -32,17 +51,36 @@ public sealed class BacktestCliTests : IDisposable
     }
 
     [Fact]
-    public void RealConfigFiles_Load_HoldoutLocked_CostsUnverified()
+    public void RepositoryConfigFiles_Load_AndLabelTheirStatus()
     {
+        // Whatever the owner has set (locked or not, verified or not), the committed files must load and say so.
         HoldoutPolicy holdout = HoldoutPolicy.Load(Path.Combine(RepoConfig, HoldoutPolicy.FileName));
-        Assert.True(holdout.Locked);
-        Assert.Equal(new DateOnly(2025, 10, 1), holdout.Start);
+        Assert.True(holdout.Start.Year >= 2000);
 
         CostModel costs = CostModel.Load(Path.Combine(RepoConfig, "costs.avanza-small.json"));
-        Assert.Equal(39m, costs.CourtageMin);
-        Assert.Equal(0.0015m, costs.CourtageRate);
-        Assert.False(costs.Verified);
-        Assert.Contains("UNVERIFIED", costs.Label, StringComparison.Ordinal);
+        Assert.True(costs.CourtageMin >= 0 && costs.CourtageRate >= 0);
+        if (costs.Verified)
+        {
+            Assert.Contains($"verified {costs.VerifiedOn:yyyy-MM-dd}", costs.Label, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains("UNVERIFIED", costs.Label, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void VerifiedCosts_AreLabelledVerified_InOutputAndLedger()
+    {
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-small.json"), FixtureCosts(verifiedOn: "\"2026-09-26\""));
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60");
+
+        Assert.True(code == 0, error);
+        Assert.Contains("avanza-small (verified 2026-09-26)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("UNVERIFIED", output, StringComparison.Ordinal);
+        TrialRecord logged = Assert.Single(new TrialLedger(Ledger).ReadAll());
+        Assert.True(logged.CostsVerified);
+        Assert.Null(logged.Note);
     }
 
     [Fact]
@@ -60,8 +98,10 @@ public sealed class BacktestCliTests : IDisposable
         Assert.Throws<BacktestConfigException>(() => HoldoutPolicy.Load(policy));
 
         string costs = Path.Combine(dir, "costs.x.json");
-        File.WriteAllText(costs, File.ReadAllText(Path.Combine(RepoConfig, "costs.avanza-small.json")).Replace("\"participation_cap\": 0.10", "\"participation_cap\": 1.5", StringComparison.Ordinal));
+        File.WriteAllText(costs, FixtureCosts(participationCap: "1.5"));
         Assert.Throws<BacktestConfigException>(() => CostModel.Load(costs));
+        File.WriteAllText(costs, FixtureCosts(verifiedOn: "\"26/09/2026\""));
+        Assert.Throws<BacktestConfigException>(() => CostModel.Load(costs)); // verified_on must be yyyy-MM-dd
     }
 
     [Fact]
@@ -132,11 +172,10 @@ public sealed class BacktestCliTests : IDisposable
     [Fact]
     public void LockedHoldout_ClipsByDefault_AndRefusesAnExplicitRangeIntoIt()
     {
-        string config = Path.Combine(_dir, "config");
+        string config = Path.Combine(_dir, "early-holdout");
         Directory.CreateDirectory(config);
-        File.WriteAllText(Path.Combine(config, HoldoutPolicy.FileName),
-            "{\"format\":\"qa-holdout/1\",\"locked\":true,\"start\":\"2015-06-01\",\"unlocked_by\":null,\"unlocked_on\":null,\"reason\":null}");
-        File.Copy(Path.Combine(RepoConfig, "costs.avanza-small.json"), Path.Combine(config, "costs.avanza-small.json"));
+        File.WriteAllText(Path.Combine(config, HoldoutPolicy.FileName), FixtureHoldout.Replace("2025-10-01", "2015-06-01", StringComparison.Ordinal));
+        File.WriteAllText(Path.Combine(config, "costs.avanza-small.json"), FixtureCosts());
 
         (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x300", "--config-dir", config);
         Assert.True(code == 0, error);
@@ -181,7 +220,8 @@ public sealed class BacktestCliTests : IDisposable
             AddInstrument(store, "9999", "FNAUCT", TradingModel.Unknown, knownAt, 10m);
         }
 
-        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--tickers", "ERIC B", "--store", storePath);
+        // Stored as Avanza's "ERIC B"; typed the way the docs spell it.
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--tickers", "ERIC-B", "--store", storePath);
         Assert.True(code == 0, error);
         Assert.Contains("avanza-price-chart — NOT survivorship-free, NOT point-in-time", output, StringComparison.Ordinal);
         Assert.Contains("current names only", output, StringComparison.Ordinal);
@@ -229,7 +269,7 @@ public sealed class BacktestCliTests : IDisposable
 
         if (args[0] == "backtest" && !args.Contains("--config-dir"))
         {
-            all.AddRange(["--config-dir", RepoConfig]);
+            all.AddRange(["--config-dir", _config]);
         }
 
         using var output = new StringWriter();
