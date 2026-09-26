@@ -1,6 +1,6 @@
 # 10 — The Windows app (WPF): QuantAnalyst without the terminal
 
-- **Status:** planned and started 2026-09-26 at the owner's request: "construct a windows app with dotnet and wpf to make this tool easy to use without having to run commands manually through the terminal".
+- **Status:** built 2026-09-26 (steps 1–3, see Results) at the owner's request: "construct a windows app with dotnet and wpf to make this tool easy to use without having to run commands manually through the terminal". **Not yet seen on Windows:** the first run is yours (`.\qa-app.ps1`).
 - **Scope:** a desktop front end for what exists today (Phases 3–6 plus Phase 7 step 1).
   - status, instruments, strategy + backtest, the daily Paper session, reports
   - the same rules as the CLI: CLAUDE.md "Absolute safety rules", ADR 0002–0004
@@ -71,3 +71,19 @@ Always visible:
 | Session | start builds `paper run` with the login method; stop cancels; kill writes the flag even while the session runs; the book refreshes |
 | Reports | days and their state from the audit log; the gate count |
 | Architecture | Desktop assemblies never touch order routes, the order channel, the preflight or the promotion command; no `--mode` anywhere in their sources |
+
+## Results (2026-09-26)
+
+| Gate item | Status | Evidence |
+|---|---|---|
+| View models tested on Linux | **pass** | `QuantAnalyst.Desktop.Tests`, 32 tests. The engine runs the real CLI code in-process, streams lines, allows one command at a time, is stopped by Cancel like Ctrl+C, gives commands no keyboard, and turns failures into results. The BankID QR code becomes a PNG while a login waits. Every page is covered against a throw-away repository folder: buttons that would log in run against a scripted runner that records their exact command lines, and offline buttons run the real CLI. |
+| WPF builds in CI | **pass (Linux here)** | `dotnet build QuantAnalyst.sln` builds `src/QuantAnalyst.Desktop` with `EnableWindowsTargeting`. The Windows CI job builds it natively. |
+| No path to orders, preflight, promotion or a live mode | **pass** | `OrderArchitectureTests` scans the core's IL: no reference to `OrderGateway`, the order channel, order or preflight routes, `AvanzaPreflight`, `Promotion`, `CreateOrderChannel` or `CreatePreflight`, with a positive control (the KILL button's `KillSwitch`). `AppSafetyTests` scans every `.cs` and `.xaml` of both projects for a mode flag, promotion, or the order plumbing. The app's command lines are all Paper, reads or allowlist edits. |
+| Launcher | **pass (build-only here)** | `pwsh qa-app.ps1 -NoLaunch` rebuilt `qa` through `qa.ps1`, printed the status, found the app up to date and synced the native library next to it. Starting the window and `-Shortcut` need Windows. |
+
+**Found while building it:** an offline `qa kill --reset` before any session had run (no `state` folder yet) deleted `KILL`, then threw before writing its audit record. It now deletes only what exists and always audits, with a regression test (`KillSwitchTests`).
+
+**Your first run (Windows):**
+1. `git pull`
+2. `.\qa-app.ps1 -Shortcut`
+3. Tell me anything that looks wrong or unclear; screenshots help. I can't open a window in my Linux container, so the look and feel is unverified until you see it.

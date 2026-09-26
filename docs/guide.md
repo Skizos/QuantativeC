@@ -7,6 +7,42 @@ folder that is `.\qa …` (the launcher), or plain `qa` once you have added the 
 **When unsure, run `qa status`.** It is offline and read-only, shows what is set up and what is missing, and ends
 with numbered next steps.
 
+## 0. The Windows app (no typing needed)
+
+Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst window.
+
+**Start it:** from the repository folder in PowerShell:
+```powershell
+.\qa-app.ps1              # builds what changed, shows the status once, opens the window
+.\qa-app.ps1 -Shortcut    # the same, plus a "QuantAnalyst" shortcut on your desktop; double-click that from then on
+```
+
+**What you see:**
+- **Header, always visible:**
+  - the yellow **PAPER MODE** banner (nothing is ever sent to Avanza from the app)
+  - the login method (`bankid`, or `totp` for unattended logins)
+  - the red **KILL** button, which stops everything at once, even while a session runs
+- **Status** (the start page): the same checklist as `qa status`, coloured ok / todo / warn / FAIL, the next steps, and one button for the most useful next thing (e.g. **Add instruments**, **Choose a strategy**, **Start the Paper session**).
+- **Instruments:** type a ticker (`ERIC-B`) and press **Add**. It imports a year of prices (one BankID login) and allows the share. **Remove** takes it off the list.
+- **Strategy:**
+  - pick a strategy and fill in its named fields (e.g. fast 20, slow 100)
+  - **Backtest on my instruments** shows how it did
+  - **Use for Paper** saves it
+- **Paper session:**
+  - **Start** logs in (the BankID QR code appears in the window), updates the history, waits for 09:10, and trades on paper until the close
+  - the log scrolls live, and the paper account and positions update by themselves
+  - **Stop** ends the session early, cancelling orders and writing the partial report
+  - after a KILL, clear it here by typing why trading may go on
+- **Reports:** each day, marked CLEAN / NOT CLEAN / INCOMPLETE, with its details and a progress bar towards the 10 clean days.
+- **Bottom bar:** what is running now, and the activity log with every command's full output.
+
+**What stays in the terminal:**
+- promoting to Confirm (`qa promote`, your deliberate step, §6)
+- storing credentials (`qa secrets set`)
+- recordings and the probe
+
+The app and the terminal share the same files, so you can use either, or both.
+
 ## 1. What it does today, and what it does not
 
 | Mode | What happens | Available |

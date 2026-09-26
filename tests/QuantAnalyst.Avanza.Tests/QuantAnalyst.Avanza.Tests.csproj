@@ -13,6 +13,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\QuantAnalyst.Avanza\QuantAnalyst.Avanza.csproj" />
     <ProjectReference Include="..\..\src\QuantAnalyst.Cli\QuantAnalyst.Cli.csproj" />
+    <!-- The architecture tests scan the Windows app's core assembly too. -->
+    <ProjectReference Include="..\..\src\QuantAnalyst.Desktop.Core\QuantAnalyst.Desktop.Core.csproj" />
     <ProjectReference Include="..\..\src\QuantAnalyst.Data\QuantAnalyst.Data.csproj" />
     <!-- Phase 6: the order architecture tests scan Trading's IL, and the gateway must refuse the Avanza channel. -->
     <ProjectReference Include="..\..\src\QuantAnalyst.Trading\QuantAnalyst.Trading.csproj" />

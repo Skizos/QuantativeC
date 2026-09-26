@@ -217,6 +217,8 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - zero unreconciled Unknown states
 - realized slippage within the backtest cost assumptions
 
+**Windows app (added 2026-09-26 at the owner's request):** a WPF window over the same command code, Paper only: status, instruments, strategy + backtest, the Paper session with BankID and KILL, and reports. Plan and results: `docs/plans/10-windows-app.md`; start it with `.\qa-app.ps1`.
+
 ### Phase 8 — Auto mode (hard-limited)
 Auto requires all of the following:
 - **TOTP login enabled:** BankID needs a human at every login, so it cannot run unattended.

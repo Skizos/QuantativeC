@@ -2,6 +2,8 @@
 
 `qa` is `src/QuantAnalyst.Cli`. It needs the native library built once by `.\build.ps1` (or `cmake --build --preset dev`; see `docs/setup.md`).
 
+**Prefer a window?** `.\qa-app.ps1` opens the QuantAnalyst Windows app, which runs these same commands for you. It covers status, instruments, strategy and backtest, the Paper session with BankID and KILL, and reports (`docs/guide.md` §0).
+
 `qa` is **not on your PATH**, so typing a bare `qa` fails with "The term 'qa' is not recognized". Use the launcher at the repository root instead. After a `git pull` it rebuilds what changed and then runs qa with the repository as its working folder:
 - the native library, via `build.ps1 -NoManaged`: a few minutes the first time, and it runs the native tests
 - qa itself

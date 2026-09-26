@@ -16,7 +16,8 @@ namespace QuantAnalyst.Avanza.Tests;
 public sealed class OrderArchitectureTests
 {
     private static readonly string[] Production =
-        ["QuantAnalyst.Core", "QuantAnalyst.Avanza", "QuantAnalyst.Data", "QuantAnalyst.Analytics", "QuantAnalyst.Trading", "qa" /* the CLI */, "QuantAnalyst.Native"];
+        ["QuantAnalyst.Core", "QuantAnalyst.Avanza", "QuantAnalyst.Data", "QuantAnalyst.Analytics", "QuantAnalyst.Trading", "qa" /* the CLI */, "QuantAnalyst.Native",
+         "QuantAnalyst.Desktop.Core" /* the Windows app's logic; its WPF shell is XAML only and is source-scanned in Desktop.Tests */];
 
     private static readonly Lazy<IReadOnlyList<IlReference>> All = new(() =>
         [.. Production.Select(Assembly.Load).SelectMany(IlScanner.References)]);
@@ -60,6 +61,19 @@ public sealed class OrderArchitectureTests
             [nameof(AvanzaOrderRoutes.Delete), nameof(AvanzaOrderRoutes.Modify), nameof(AvanzaOrderRoutes.Place)],
             uses.Where(u => u.Owner == typeof(AvanzaOrderChannel)).Select(u => u.Target.Name).Distinct().Order(StringComparer.Ordinal));
         Assert.Empty(uses.Where(u => u.Owner != typeof(AvanzaOrderChannel)).Select(u => u.ToString()));
+    }
+
+    [Fact]
+    public void TheWindowsApp_NeverTouchesOrderEntry_ThePreflight_OrPromotion()
+    {
+        Type[] forbidden =
+        [
+            typeof(OrderGateway), typeof(IBrokerOrderChannel), typeof(AvanzaOrderRoutes), typeof(AvanzaOrderChannel), typeof(AvanzaPreflightRoutes),
+            typeof(AvanzaPreflight), typeof(Trading.Modes.Promotion),
+        ];
+        IlReference[] app = [.. All.Value.Where(r => r.Caller.Module.Assembly.GetName().Name == "QuantAnalyst.Desktop.Core")];
+        Assert.Contains(app, r => r.Target.DeclaringType == typeof(Trading.Kill.KillSwitch)); // positive control: the KILL button
+        Assert.Empty(app.Where(r => forbidden.Contains(r.Target.DeclaringType) || r.Target.Name is "CreateOrderChannel" or "CreatePreflight").Select(r => r.ToString()));
     }
 
     [Fact]
