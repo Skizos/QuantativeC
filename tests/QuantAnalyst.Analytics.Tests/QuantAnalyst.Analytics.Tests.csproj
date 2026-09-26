@@ -17,6 +17,7 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <None Include="..\..\samples\synthetic-prices.csv" Link="data\synthetic-prices.csv" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Reference\phase5_reference.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
