@@ -416,7 +416,7 @@ internal static class StatusCommand
         }
     }
 
-    private static string NextSession(DateTimeOffset now, TradingSchedule? schedule)
+    internal static string NextSession(DateTimeOffset now, TradingSchedule? schedule)
     {
         if (schedule is null)
         {

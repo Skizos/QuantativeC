@@ -159,8 +159,19 @@ public sealed class KillSwitch : IDisposable
             return new KillResetResult(false, "The kill switch is not active.");
         }
 
-        File.Delete(killFile);
-        File.Delete(Path.Combine(stateDirectory, StateFileName));
+        // Either file may be missing (a KILL written before any session ran has no state folder); a missing one must
+        // not stop the reset half-way, before its audit record.
+        string stateFile = Path.Combine(stateDirectory, StateFileName);
+        if (File.Exists(killFile))
+        {
+            File.Delete(killFile);
+        }
+
+        if (File.Exists(stateFile))
+        {
+            File.Delete(stateFile);
+        }
+
         audit.Append("kill-reset", new { why, offline = true, record.Source, record.Reason });
         return new KillResetResult(true, $"Kill switch reset ({record.Source}: {record.Reason}).");
     }

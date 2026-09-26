@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Windows app's logic without WPF (docs/plans/10-windows-app.md): view models and the in-process engine that runs
+    the same qa command code. Plain net10.0, so everything here is tested on Linux in CI.
+  -->
+  <PropertyGroup>
+    <RootNamespace>QuantAnalyst.Desktop.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="QuantAnalyst.Desktop.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QuantAnalyst.Cli\QuantAnalyst.Cli.csproj" />
+  </ItemGroup>
+
+</Project>

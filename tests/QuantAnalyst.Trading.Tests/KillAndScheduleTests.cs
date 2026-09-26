@@ -53,6 +53,20 @@ public sealed class KillSwitchTests : IDisposable
 
     private string KillFile => _dir.File(KillSwitch.KillFileName);
 
+    [Fact]
+    public void AnOfflineReset_BeforeAnySessionEverRan_ClearsTheFlag_AndIsAudited()
+    {
+        // Found by the Windows app's tests: with no state folder yet, the reset deleted KILL and then threw before
+        // writing its audit record.
+        KillSwitch.Request(KillFile, "before any session", _time);
+        Assert.False(Directory.Exists(StateDir));
+
+        KillResetResult r = KillSwitch.ResetOffline(KillFile, StateDir, _audit, "checked");
+        Assert.True(r.Reset, r.Message);
+        Assert.False(File.Exists(KillFile));
+        Assert.Contains("kill-reset", string.Concat(Directory.GetFiles(_dir.File("audit")).Select(File.ReadAllText)), StringComparison.Ordinal);
+    }
+
     private string StateDir => _dir.File("state");
 
     private KillSwitch Kill(bool watch = false)

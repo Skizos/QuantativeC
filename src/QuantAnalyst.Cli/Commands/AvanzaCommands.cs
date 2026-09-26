@@ -34,6 +34,18 @@ internal sealed record AvanzaCliServices(
     /// <summary>Gets the owner's promotion key store: Windows Credential Manager (ADR 0003 §3).</summary>
     public Func<Trading.Modes.IPromotionKeyStore> PromotionKeys { get; init; } = PromotionKeyStores.Default;
 
+    /// <summary>
+    /// Gets the token that stops a running Avanza verb the way Ctrl+C does (the Windows app's Stop button; a Paper
+    /// session then cancels its working orders and writes its partial report).
+    /// </summary>
+    public CancellationToken Cancellation { get; init; } = CancellationToken.None;
+
+    /// <summary>
+    /// Gets who shows the BankID QR code: null draws it in the terminal. Arguments: the error writer and whether the
+    /// terminal is interactive. The Windows app shows it as an image.
+    /// </summary>
+    public Func<TextWriter, bool, IBankIdPrompt>? BankIdPrompt { get; init; }
+
     public static AvanzaCliServices Default { get; } = new(
         (options, secrets, prompt, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor, prompt),
         CreateSecretStore);
@@ -580,9 +592,9 @@ internal static partial class AvanzaCommands
                 LoginMethod = parse.GetValue(common.Login) == "totp" ? AvanzaLoginMethod.Totp : AvanzaLoginMethod.BankId,
             };
             bool interactive = ReferenceEquals(error, Console.Error) && !Console.IsErrorRedirected;
-            var prompt = new ConsoleBankIdPrompt(error, interactive);
+            IBankIdPrompt prompt = services.BankIdPrompt?.Invoke(error, interactive) ?? new ConsoleBankIdPrompt(error, interactive);
             using AvanzaConnection connection = services.ConnectionFactory(options, secrets, prompt, logger, redactor);
-            int code = body(new Ctx(connection, logger, interactive, CancellationToken.None), buffer).GetAwaiter().GetResult();
+            int code = body(new Ctx(connection, logger, interactive, services.Cancellation), buffer).GetAwaiter().GetResult();
             Flush(buffer, output, redactor);
             return code;
         }

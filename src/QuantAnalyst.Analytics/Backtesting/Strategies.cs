@@ -156,10 +156,35 @@ public sealed class RandomTargets(ulong seed, int rebalance = 21, double p = 0.5
     }
 }
 
+/// <summary>One strategy parameter, for forms and help: its key, its default (null = required) and what it means.</summary>
+public sealed record StrategyParameter(string Key, string? Default, string Description);
+
 /// <summary>The built-in strategies by name, with parameter parsing and validation. Defaults are written into the spec, so the ledger shows every effective value.</summary>
 public static class StrategyCatalog
 {
     public static IReadOnlyList<string> Names { get; } = ["buy-and-hold", "ma-cross", "random-targets"];
+
+    /// <summary>A one-line description of a strategy, for help and the Windows app.</summary>
+    public static string Summary(string name) => name switch
+    {
+        "buy-and-hold" => "Equal weight in every instrument, bought during the first bars and then held.",
+        "ma-cross" => "Holds an instrument while its fast moving average is above its slow one; a fixed equal slice each.",
+        "random-targets" => "Random long-only weights: the null model, to see what luck alone looks like.",
+        _ => throw new ArgumentException($"Unknown strategy '{name}'. Known: {string.Join(", ", Names)}."),
+    };
+
+    /// <summary>The parameters <see cref="Create"/> accepts for a strategy, in order (a test keeps the two in step).</summary>
+    public static IReadOnlyList<StrategyParameter> ParametersOf(string name) => name switch
+    {
+        "buy-and-hold" => [new("entry", "5", "bars over which the position is bought")],
+        "ma-cross" => [new("fast", null, "fast moving average, in bars"), new("slow", null, "slow moving average, in bars (more than fast)")],
+        "random-targets" =>
+        [
+            new("seed", null, "random seed (any whole number)"), new("rebalance", "21", "bars between new random weights"),
+            new("p", "0.5", "chance of holding each instrument"),
+        ],
+        _ => throw new ArgumentException($"Unknown strategy '{name}'. Known: {string.Join(", ", Names)}."),
+    };
 
     /// <summary>Builds a strategy from its CLI name and parameters (unknown names or parameters are errors).</summary>
     public static StrategyDefinition Create(string name, IReadOnlyDictionary<string, string> parameters)

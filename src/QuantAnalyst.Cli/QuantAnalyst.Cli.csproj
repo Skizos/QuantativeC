@@ -9,6 +9,9 @@
   <ItemGroup>
     <InternalsVisibleTo Include="QuantAnalyst.Analytics.Tests" />
     <InternalsVisibleTo Include="QuantAnalyst.Avanza.Tests" />
+    <!-- The Windows app runs the same command code in-process (docs/plans/10-windows-app.md). -->
+    <InternalsVisibleTo Include="QuantAnalyst.Desktop.Core" />
+    <InternalsVisibleTo Include="QuantAnalyst.Desktop.Tests" />
   </ItemGroup>
 
   <ItemGroup>

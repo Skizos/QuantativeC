@@ -214,6 +214,29 @@ public sealed class StrategyTests
         Assert.Throws<ArgumentException>(() => StrategyCatalog.Create("ma-cross", new Dictionary<string, string> { ["fast"] = "5" }));
         Assert.Throws<ArgumentException>(() => StrategyCatalog.Create("nope", new Dictionary<string, string>()));
     }
+
+    [Fact]
+    public void CatalogMetadata_MatchesWhatCreateAccepts()
+    {
+        Dictionary<string, string> samples = new() { ["fast"] = "20", ["slow"] = "100", ["seed"] = "7" };
+        foreach (string name in StrategyCatalog.Names)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(StrategyCatalog.Summary(name)));
+            IReadOnlyList<StrategyParameter> ps = StrategyCatalog.ParametersOf(name);
+            Assert.All(ps, p => Assert.True(p.Default is not null || samples.ContainsKey(p.Key), $"{name}.{p.Key} needs a sample"));
+
+            // Defaults plus a sample for each required key are accepted, and the spec lists exactly the declared keys with those defaults.
+            StrategyDefinition d = StrategyCatalog.Create(name, ps.ToDictionary(p => p.Key, p => p.Default ?? samples[p.Key]));
+            Assert.Equal(ps.Select(p => p.Key).Order(StringComparer.Ordinal), d.Spec.Parameters.Keys.Order(StringComparer.Ordinal));
+            Assert.All(ps.Where(p => p.Default is not null), p => Assert.Equal(StrategyCatalog.Create(name, ps.Where(q => q.Default is null).ToDictionary(q => q.Key, q => samples[q.Key])).Spec.Parameters[p.Key], p.Default));
+
+            // Every required key really is required.
+            Assert.All(ps.Where(p => p.Default is null), p => Assert.Throws<ArgumentException>(() =>
+                StrategyCatalog.Create(name, ps.Where(q => q.Default is null && q.Key != p.Key).ToDictionary(q => q.Key, q => samples[q.Key]))));
+        }
+
+        Assert.Throws<ArgumentException>(() => StrategyCatalog.ParametersOf("nope"));
+    }
 }
 
 public sealed class OrderPlanningTests
