@@ -122,18 +122,20 @@ public sealed class HaltControllerTests
 
 public sealed class TradingConfigTests
 {
-    private static string RepoConfig()
+    internal static string RepoRoot()
     {
         for (DirectoryInfo? d = new(AppContext.BaseDirectory); d is not null; d = d.Parent)
         {
             if (File.Exists(Path.Combine(d.FullName, "QuantAnalyst.sln")))
             {
-                return Path.Combine(d.FullName, "config");
+                return d.FullName;
             }
         }
 
         throw new InvalidOperationException("Repository root not found.");
     }
+
+    private static string RepoConfig() => Path.Combine(RepoRoot(), "config");
 
     [Fact]
     public void CommittedRiskLimits_Load_AndValidate()

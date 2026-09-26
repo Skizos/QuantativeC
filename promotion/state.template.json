@@ -1,0 +1,5 @@
+{
+  "note": "Committed template (ADR 0003 section 3). The real promotion state is promotion/state.json: local, git-ignored, and written only by the owner's 'qa promote' with an HMAC per record. Without it, the highest mode is Paper.",
+  "maxAllowed": "Paper",
+  "records": []
+}
