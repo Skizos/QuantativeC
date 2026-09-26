@@ -1,0 +1,15 @@
+{
+  "format": "qa-costs/1",
+  "name": "avanza-medium",
+  "display_name": "Medium",
+  "currency": "SEK",
+  "courtage": { "min": 69.0, "rate": 0.00069 },
+  "fx_fee_rate": 0.0025,
+  "slippage_bps": 5.0,
+  "half_spread_bps": 5.0,
+  "participation_cap": 0.10,
+  "suits_trades_sek": { "from": 46000, "to": 143500 },
+  "source_url": "https://www.avanza.se/priser-och-avgifter.html",
+  "verified_on": "2026-09-26",
+  "basis": "Nasdaq Stockholm (main market) courtage from the owner's screenshot of Avanza's price list, 2026-09-26: 'Medium. För dig som gör lite större affärer på 46 000 - 143 500 kr' - rörligt courtage 0,069 %, lägsta courtage 69 kr. Other marketplaces (Spotlight Stock Market, NGM, Nordic MTF) from 69 kr; backtests only accept main-market instruments. The FX fee is not on this table (0.25 % as checked earlier). Slippage, half-spread and participation cap are modelling choices."
+}

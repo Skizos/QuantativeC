@@ -151,4 +151,10 @@ Gate run on 2026-09-26 in the cloud container (Linux x64, GCC 13.3, .NET 10.0.12
 **Open (needs you):**
 - **Real-data backtests:** they need a working `qa history import`. The code path (`--tickers`) is tested against a temporary store.
 - ~~**Cost model:** check `config/costs.avanza-small.json` against Avanza's price list and set `verified_on`.~~ Done by the owner on 2026-09-26; the values were unchanged. Runs logged before that (T000001) keep `costsVerified: false`.
+- **Courtage classes (2026-09-26):**
+  - The owner sent Avanza's class table: Start 0 % / 0 kr (only with capital under 50,000 kr), Mini 0.25 % / min 1 kr, Small 0.15 % / min 39 kr, Medium 0.069 % / min 69 kr, and Fast Pris a flat 99 kr. All are Nasdaq Stockholm main market.
+  - Each class is a `config/costs.<class>.json`. `config/backtest-defaults.json` picks Start with 45,000 SEK, a placeholder until the owner gives the real starting capital.
+  - `qa costs` compares the classes for given trade sizes.
+  - Backtests refuse cash at or above a class's capital limit, and note a run whose equity grows past it.
+  - Open: the FX fee per class is not on that table, so 0.25 % is kept for all of them.
 - **OMXS30 membership:** there is no membership file yet, so real universes are "current names only (survivorship-biased)".

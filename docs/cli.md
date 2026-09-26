@@ -158,6 +158,7 @@ Plan, fill model and formulas: `docs/plans/05-phase5-backtesting.md`. Every run 
 | `qa backtest run --strategy ma-cross --param fast=20 --param slow=100 --synthetic 300x2520 [--seed N] [--drift 0.05]` | One run on seeded synthetic data (GBM, weekdays from 2015-01-05). Prints the data labels, cost status, metrics, Deflated Sharpe and the ledger id. |
 | `qa backtest run --strategy buy-and-hold --tickers "ERIC B,VOLV B" [--from] [--to]` | The same on imported Avanza history (`qa history import` first). Only continuously traded instruments are accepted. The output is labelled **NOT survivorship-free, NOT point-in-time, current names only**. |
 | `qa backtest sweep --strategy ma-cross --grid fast=10,20,50 --grid slow=100,200 --synthetic 50x2520` | Every combination is run and logged. Prints the top rows, the PBO (CSCV) across the combinations, and the Deflated Sharpe Ratio of the best against every completed trial in the study. |
+| `qa costs [--amount 5000,20000,100000] [--capital 40000]` | Avanza's courtage classes (Start, Mini, Small, Medium, Fast Pris) with what one order of each amount costs in each class, and the cheapest class you can use. `--capital` drops classes you can't choose (Start: capital under 50,000 SEK). An order can't be larger than your capital, so Start is never offered for orders of 50,000 SEK or more. |
 | `qa trials list [--study <key>] [--last 20] [--json]` | The ledger, newest last. |
 | `qa trials verify` | Checks the hash chain. Any edited, deleted or reordered line is reported, with exit code 1. |
 
@@ -170,8 +171,13 @@ Plan, fill model and formulas: `docs/plans/05-phase5-backtesting.md`. Every run 
 - `--order limit|moo|moc` (default `limit`).
 - Limits sit `--limit-offset-bps 50` from the decision close and are rounded passively to the instrument's tick.
 - Trades inside a 10 % no-trade band are skipped; entries and exits always trade.
-- Costs come from `config/costs.<name>.json` (`--costs avanza-small`). They print as **UNVERIFIED** until you check them against Avanza's price list and set `verified_on`.
-- Starting cash is set with `--cash` (default 1,000,000 SEK).
+- **Courtage class:** one file per Avanza class, `config/costs.<class>.json`: `avanza-start`, `avanza-mini`, `avanza-small`, `avanza-medium`, `avanza-fastpris`.
+  - The values are for the Nasdaq Stockholm main market, from your screenshot of Avanza's price list (2026-09-26).
+  - Pick a class per run with `--costs avanza-medium`, or change the default in `config/backtest-defaults.json`.
+  - A class prints as **UNVERIFIED** until its `verified_on` is set.
+- **Starting cash:** `--cash`, default from `config/backtest-defaults.json` (45,000 SEK with the Start class).
+  - Start can only be chosen with less than 50,000 SEK, so more cash on Start is refused.
+  - A run whose equity grows past 50,000 SEK is noted on the trial, because its later fees are likely understated.
 
 **Guards:**
 - **Holdout:** `config/holdout.json` locks bars from 2025-10-01. Without `--to`, data is clipped before that date (store data is not even read past it). An explicit `--to` inside the holdout is refused and logged as `rejected-holdout`. A missing policy file stops every run. Only you unlock it.

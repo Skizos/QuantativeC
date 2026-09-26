@@ -67,8 +67,34 @@ public sealed record CostModel(
     string SourceUrl,
     DateOnly? VerifiedOn)
 {
+    /// <summary>Gets Avanza's name for the courtage class (e.g. "Start"); defaults to <see cref="Name"/>.</summary>
+    public string? DisplayName { get; init; }
+
+    /// <summary>Gets the trade sizes Avanza says the class suits (SEK; either end may be open), for display only.</summary>
+    public (decimal? From, decimal? To) SuitsTrades { get; init; }
+
+    /// <summary>Gets the capital limit below which the class can be chosen (Avanza Start: under 50,000 SEK), or null.</summary>
+    public decimal? EligibleBelowCapital { get; init; }
+
     /// <summary>Gets a value indicating whether the owner checked the courtage and FX fee against Avanza's price list.</summary>
     public bool Verified => VerifiedOn is not null;
+
+    /// <summary>Courtage for one order of <paramref name="notional"/> SEK: max(min, rate × notional).</summary>
+    public decimal Courtage(decimal notional) => Math.Max(CourtageMin, CourtageRate * notional);
+
+    /// <summary>Every cost model in a folder (costs.*.json), cheapest minimum first.</summary>
+    public static IReadOnlyList<CostModel> LoadAll(string directory)
+    {
+        if (!Directory.Exists(directory))
+        {
+            throw new BacktestConfigException($"Config folder {directory} not found.");
+        }
+
+        CostModel[] all = [.. Directory.EnumerateFiles(directory, "costs.*.json").Select(Load)];
+        return all.Length == 0
+            ? throw new BacktestConfigException($"No costs.<class>.json files in {directory}.")
+            : [.. all.OrderBy(c => c.CourtageMin).ThenBy(c => c.CourtageRate).ThenBy(c => c.Name, StringComparer.Ordinal)];
+    }
 
     /// <summary>One-line label for reports.</summary>
     public string Label => Verified
@@ -124,11 +150,29 @@ public sealed record CostModel(
                 root.GetProperty("source_url").GetString()!,
                 verified.ValueKind == JsonValueKind.Null
                     ? null
-                    : DateOnly.ParseExact(verified.GetString()!, "yyyy-MM-dd", CultureInfo.InvariantCulture));
+                    : DateOnly.ParseExact(verified.GetString()!, "yyyy-MM-dd", CultureInfo.InvariantCulture))
+            {
+                DisplayName = OptionalString(root, "display_name"),
+                SuitsTrades = root.TryGetProperty("suits_trades_sek", out JsonElement suits)
+                    ? (OptionalDecimal(suits, "from"), OptionalDecimal(suits, "to"))
+                    : (null, null),
+                EligibleBelowCapital = OptionalDecimal(root, "eligible_below_capital_sek"),
+            };
             if (model.CourtageMin < 0 || model.CourtageRate < 0 || model.FxFeeRate < 0 || model.SlippageBps < 0 || model.HalfSpreadBps < 0
                 || model.ParticipationCap <= 0 || model.ParticipationCap > 1)
             {
                 throw new BacktestConfigException($"{path}: costs must be >= 0 and participation_cap in (0, 1].");
+            }
+
+            if (model.SuitsTrades is ({ } from, { } to) && from > to || model.EligibleBelowCapital <= 0)
+            {
+                throw new BacktestConfigException($"{path}: suits_trades_sek needs from <= to, and eligible_below_capital_sek must be > 0.");
+            }
+
+            string file = Path.GetFileName(path);
+            if (file.StartsWith("costs.", StringComparison.Ordinal) && file != $"costs.{model.Name}.json")
+            {
+                throw new BacktestConfigException($"{path}: the content says name \"{model.Name}\"; the file must be named costs.{model.Name}.json.");
             }
 
             return model;
@@ -136,6 +180,51 @@ public sealed record CostModel(
         catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
         {
             throw new BacktestConfigException($"{path} is not a valid cost model: {ex.Message}", ex);
+        }
+    }
+
+    private static string? OptionalString(JsonElement e, string name) =>
+        e.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    private static decimal? OptionalDecimal(JsonElement e, string name) =>
+        e.TryGetProperty(name, out JsonElement v) && v.ValueKind != JsonValueKind.Null ? v.GetDecimal() : null;
+}
+
+/// <summary>
+/// What <c>qa backtest</c> uses when --costs or --cash is not given (config/backtest-defaults.json). Without the file:
+/// avanza-small and 1,000,000 SEK.
+/// </summary>
+public sealed record BacktestDefaults(string Costs, decimal Cash)
+{
+    public const string FileName = "backtest-defaults.json";
+
+    public static readonly BacktestDefaults BuiltIn = new("avanza-small", 1_000_000m);
+
+    public static BacktestDefaults Load(string directory)
+    {
+        string path = Path.Combine(directory, FileName);
+        if (!File.Exists(path))
+        {
+            return BuiltIn;
+        }
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+            JsonElement root = doc.RootElement;
+            if (root.GetProperty("format").GetString() != "qa-backtest-defaults/1")
+            {
+                throw new BacktestConfigException($"{path}: format must be qa-backtest-defaults/1.");
+            }
+
+            var defaults = new BacktestDefaults(root.GetProperty("costs").GetString()!, root.GetProperty("cash").GetDecimal());
+            return defaults.Cash > 0 && defaults.Costs.Length > 0
+                ? defaults
+                : throw new BacktestConfigException($"{path}: costs must name a cost model and cash must be > 0.");
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            throw new BacktestConfigException($"{path} is not valid: {ex.Message}", ex);
         }
     }
 }

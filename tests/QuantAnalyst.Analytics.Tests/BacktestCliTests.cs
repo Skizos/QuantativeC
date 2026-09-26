@@ -70,6 +70,95 @@ public sealed class BacktestCliTests : IDisposable
     }
 
     [Fact]
+    public void RepositoryCourtageClasses_Load_AndTheDefaultNamesOneOfThem()
+    {
+        IReadOnlyList<CostModel> classes = CostModel.LoadAll(RepoConfig); // also checks name == file name
+        Assert.True(classes.Count >= 1);
+        BacktestDefaults defaults = BacktestDefaults.Load(RepoConfig);
+        CostModel chosen = Assert.Single(classes, c => c.Name == defaults.Costs);
+        if (chosen.EligibleBelowCapital is { } limit)
+        {
+            Assert.True(defaults.Cash < limit, $"default cash {defaults.Cash} must be under {chosen.Name}'s limit {limit}");
+        }
+    }
+
+    [Fact]
+    public void Costs_PricesEachClass_AndPicksTheCheapestUsable()
+    {
+        WriteClasses();
+        (int code, string output, string error) = Qa("costs", "--amount", "5000,20000,100000,200000", "--capital", "40000");
+        Assert.True(code == 0, error);
+        Assert.Contains("Cheapest for one 5,000 SEK order: Start (0 SEK).", output, StringComparison.Ordinal);
+        Assert.Contains("Cheapest for one 100,000 SEK order: Medium (69 SEK).", output, StringComparison.Ordinal); // Start cannot carry a 100k order
+        Assert.Contains("Cheapest for one 200,000 SEK order: Fast Pris (99 SEK).", output, StringComparison.Ordinal);
+        Assert.Contains("not available", output, StringComparison.Ordinal);
+        Assert.Contains("12.5 (0.25%)", output, StringComparison.Ordinal); // Mini at 5,000
+        Assert.Contains("Start (default)", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa("costs", "--amount", "20000", "--capital", "60000");
+        Assert.Equal(0, code);
+        Assert.Contains("Cheapest for one 20,000 SEK order: Small (39 SEK).", output, StringComparison.Ordinal); // Start not choosable, Mini 50
+        Assert.Contains("capital under 50,000 SEK - not you", output, StringComparison.Ordinal);
+
+        Assert.Contains("not a positive number", Qa("costs", "--amount", "20k").Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Defaults_ChooseClassAndCash_AndACapitalLimitIsEnforced()
+    {
+        WriteClasses();
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60");
+        Assert.True(code == 0, error);
+        Assert.Contains("Costs: avanza-start (verified 2026-09-26)", output, StringComparison.Ordinal);
+        Assert.Contains("cash 45,000 SEK", output, StringComparison.Ordinal);
+
+        (code, _, error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60", "--cash", "50000");
+        Assert.Equal(1, code);
+        Assert.Contains("Start can only be chosen with less than 50,000 SEK, but --cash is 50,000", error, StringComparison.Ordinal);
+
+        (code, output, error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60", "--costs", "avanza-medium", "--cash", "200000");
+        Assert.True(code == 0, error);
+        Assert.Contains("Costs: avanza-medium", output, StringComparison.Ordinal);
+        Assert.Equal(1, new TrialLedger(Ledger).ReadAll().Count(r => r.CostModel == "avanza-medium"));
+    }
+
+    [Fact]
+    public void GrowingPastAClassLimit_IsNotedOnTheTrial()
+    {
+        WriteClasses();
+        // Strong drift from 45,000: equity passes Start's 50,000 limit, after which Avanza would not keep the class.
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "3x1500", "--drift", "0.4");
+        Assert.True(code == 0, error);
+        Assert.Contains("equity reached 50,000 SEK on", output, StringComparison.Ordinal);
+        Assert.Contains("fees after that date are likely understated", Assert.Single(new TrialLedger(Ledger).ReadAll()).Note, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CostFileNameMustMatchItsName()
+    {
+        File.WriteAllText(Path.Combine(_config, "costs.other.json"), FixtureCosts());
+        BacktestConfigException e = Assert.Throws<BacktestConfigException>(() => CostModel.Load(Path.Combine(_config, "costs.other.json")));
+        Assert.Contains("must be named costs.avanza-small.json", e.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>The five classes of the owner's 2026-09-26 screenshot, plus a Start default with 45,000 SEK.</summary>
+    private void WriteClasses()
+    {
+        static string Class(string name, string display, string min, string rate, string suits, string extra = "") =>
+            "{\"format\":\"qa-costs/1\",\"name\":\"" + name + "\",\"display_name\":\"" + display + "\",\"currency\":\"SEK\","
+            + "\"courtage\":{\"min\":" + min + ",\"rate\":" + rate + "},\"fx_fee_rate\":0.0025,\"slippage_bps\":5.0,\"half_spread_bps\":5.0,"
+            + "\"participation_cap\":0.10,\"suits_trades_sek\":" + suits + "," + extra
+            + "\"source_url\":\"https://www.avanza.se/priser-och-avgifter.html\",\"verified_on\":\"2026-09-26\"}";
+
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-start.json"), Class("avanza-start", "Start", "0", "0", "{\"from\":null,\"to\":null}", "\"eligible_below_capital_sek\":50000,"));
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-mini.json"), Class("avanza-mini", "Mini", "1", "0.0025", "{\"from\":null,\"to\":15600}"));
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-small.json"), Class("avanza-small", "Small", "39", "0.0015", "{\"from\":15600,\"to\":46000}"));
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-medium.json"), Class("avanza-medium", "Medium", "69", "0.00069", "{\"from\":46000,\"to\":143500}"));
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-fastpris.json"), Class("avanza-fastpris", "Fast Pris", "99", "0", "{\"from\":143500,\"to\":null}"));
+        File.WriteAllText(Path.Combine(_config, BacktestDefaults.FileName), "{\"format\":\"qa-backtest-defaults/1\",\"costs\":\"avanza-start\",\"cash\":45000}");
+    }
+
+    [Fact]
     public void VerifiedCosts_AreLabelledVerified_InOutputAndLedger()
     {
         File.WriteAllText(Path.Combine(_config, "costs.avanza-small.json"), FixtureCosts(verifiedOn: "\"2026-09-26\""));
@@ -271,7 +360,7 @@ public sealed class BacktestCliTests : IDisposable
             all.AddRange(["--ledger", Ledger]);
         }
 
-        if (args[0] == "backtest" && !args.Contains("--config-dir"))
+        if (args[0] is "backtest" or "costs" && !args.Contains("--config-dir"))
         {
             all.AddRange(["--config-dir", _config]);
         }

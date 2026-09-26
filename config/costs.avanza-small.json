@@ -1,13 +1,15 @@
 {
   "format": "qa-costs/1",
   "name": "avanza-small",
+  "display_name": "Small",
   "currency": "SEK",
   "courtage": { "min": 39.0, "rate": 0.0015 },
   "fx_fee_rate": 0.0025,
   "slippage_bps": 5.0,
   "half_spread_bps": 5.0,
   "participation_cap": 0.10,
+  "suits_trades_sek": { "from": 15600, "to": 46000 },
   "source_url": "https://www.avanza.se/priser-och-avgifter.html",
   "verified_on": "2026-09-26",
-  "draft_basis": "Drafted 2026-09-25 from search extracts (courtage class Small: 39 SEK up to 26,000 SEK, then 0.15 %; FX fee 0.25 %). The owner checked courtage and FX fee against source_url on 2026-09-26; the values were unchanged. Slippage, half-spread and participation cap are modelling choices (docs/plans/05-phase5-backtesting.md), not Avanza prices."
+  "basis": "Nasdaq Stockholm (main market) courtage from the owner's screenshot of Avanza's price list, 2026-09-26: 'Small. För dig som gör medelsmå affärer på 15 600 - 46 000 kr' - rörligt courtage 0,15 %, lägsta courtage 39 kr (the same values as the 2026-09-25 draft). Other marketplaces cost more (Spotlight Stock Market from 59 kr, NGM and Nordic MTF from 39 kr); backtests only accept main-market instruments. The FX fee is not on this table (0.25 % as checked earlier). Slippage, half-spread and participation cap are modelling choices."
 }

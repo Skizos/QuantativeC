@@ -130,8 +130,20 @@ public static class BacktestRunner
         }
 
         TrialMetrics metrics = ComputeMetrics(request, sim);
-        string? warning = request.Costs.Verified ? null : $"costs UNVERIFIED: {request.Costs.Name} has no verified_on";
-        return Finish(request, TrialStatus.Ok, warning, metrics, touchesHoldout, sim.ToOutcome());
+        var notes = new List<string>();
+        if (!request.Costs.Verified)
+        {
+            notes.Add($"costs UNVERIFIED: {request.Costs.Name} has no verified_on");
+        }
+
+        if (request.Costs.EligibleBelowCapital is { } limit && Array.FindIndex(sim.Equity, e => e >= (double)limit) is var t and >= 0)
+        {
+            notes.Add(string.Create(
+                CultureInfo.InvariantCulture,
+                $"equity reached {limit:N0} SEK on {data.Dates[t]:yyyy-MM-dd}; {request.Costs.DisplayName ?? request.Costs.Name} can only be chosen below that, so fees after that date are likely understated"));
+        }
+
+        return Finish(request, TrialStatus.Ok, notes.Count == 0 ? null : string.Join("; ", notes), metrics, touchesHoldout, sim.ToOutcome());
     }
 
     /// <summary>Study key: trials with the same key form one family for the Deflated Sharpe Ratio.</summary>

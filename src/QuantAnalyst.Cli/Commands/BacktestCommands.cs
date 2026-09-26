@@ -17,10 +17,10 @@ namespace QuantAnalyst.Cli.Commands;
 /// </summary>
 internal static class BacktestCommands
 {
-    public const string DefaultCosts = "avanza-small";
-
     public static IEnumerable<Command> Create()
     {
+        yield return CostsCommand();
+
         var backtest = new Command("backtest", "Backtest a strategy on synthetic data or the local history store (docs/plans/05-phase5-backtesting.md). Offline; model output, not advice.");
         backtest.Subcommands.Add(Run());
         backtest.Subcommands.Add(Sweep());
@@ -52,13 +52,13 @@ internal static class BacktestCommands
 
         public Option<double> Drift { get; } = new("--drift") { Description = "Synthetic annual drift (default 0: a random walk)" };
 
-        public Option<string> Costs { get; } = new("--costs") { Description = "Cost model name (config/costs.<name>.json) or a path", DefaultValueFactory = _ => DefaultCosts };
+        public Option<string?> Costs { get; } = new("--costs") { Description = "Courtage class / cost model: avanza-start, avanza-mini, avanza-small, avanza-medium, avanza-fastpris (config/costs.<name>.json) or a path. Default: config/backtest-defaults.json" };
 
         public Option<string> Order { get; } = new("--order") { Description = "Order type: limit, moo (market on open) or moc (market on close)", DefaultValueFactory = _ => "limit" };
 
         public Option<double> LimitOffset { get; } = new("--limit-offset-bps") { Description = "Limit distance from the decision close toward the market", DefaultValueFactory = _ => 50 };
 
-        public Option<decimal> Cash { get; } = new("--cash") { Description = "Initial cash (SEK)", DefaultValueFactory = _ => 1_000_000m };
+        public Option<decimal?> Cash { get; } = new("--cash") { Description = "Initial cash (SEK). Default: config/backtest-defaults.json" };
 
         public Option<string?> ConfigDir { get; } = new("--config-dir") { Description = "Folder with holdout.json and costs.*.json (default: ./config, then next to qa)" };
 
@@ -87,10 +87,20 @@ internal static class BacktestCommands
     {
         string configDir = ResolveConfigDir(parse.GetValue(o.ConfigDir));
         HoldoutPolicy holdout = HoldoutPolicy.Load(Path.Combine(configDir, HoldoutPolicy.FileName));
-        string costsArg = parse.GetValue(o.Costs)!;
-        CostModel costs = CostModel.Load(costsArg.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || costsArg.Contains(Path.DirectorySeparatorChar) || costsArg.Contains('/')
-            ? costsArg
-            : Path.Combine(configDir, $"costs.{costsArg}.json"));
+        BacktestDefaults defaults = BacktestDefaults.Load(configDir);
+        CostModel costs = LoadCosts(configDir, parse.GetValue(o.Costs) ?? defaults.Costs);
+        decimal cash = parse.GetValue(o.Cash) ?? defaults.Cash;
+        if (cash <= 0)
+        {
+            throw new ArgumentException("--cash must be > 0.");
+        }
+
+        if (costs.EligibleBelowCapital is { } limit && cash >= limit)
+        {
+            throw new ArgumentException(
+                $"{costs.DisplayName ?? costs.Name} can only be chosen with less than {limit.ToString("N0", CultureInfo.InvariantCulture)} SEK, "
+                + $"but --cash is {cash.ToString("N0", CultureInfo.InvariantCulture)}. Use less cash or another class (see 'qa costs').");
+        }
 
         var notes = new List<string>();
         DateOnly? from = DataCommands.ParseDate(parse.GetValue(o.From), "--from");
@@ -154,7 +164,7 @@ internal static class BacktestCommands
             Strategy = strategy,
             Costs = costs,
             Holdout = holdout,
-            InitialCash = parse.GetValue(o.Cash),
+            InitialCash = cash,
             Execution = execution,
             Seed = seed,
             Ledger = new TrialLedger(ResolveLedger(parse.GetValue(o.Ledger))),
@@ -328,6 +338,102 @@ internal static class BacktestCommands
         }));
         return command;
     }
+
+    // ---- qa costs ---------------------------------------------------------------------------------------
+
+    private static Command CostsCommand()
+    {
+        var amount = new Option<string?>("--amount") { Description = "Trade size(s) in SEK to price, comma-separated, e.g. 5000,20000,100000" };
+        var capital = new Option<decimal?>("--capital") { Description = "Your capital at Avanza (SEK); classes you cannot choose with it are left out of 'cheapest'" };
+        var configDir = new Option<string?>("--config-dir") { Description = "Folder with costs.*.json (default: ./config, then next to qa)" };
+        var command = new Command("costs", "Avanza courtage classes (config/costs.*.json) and what one order costs in each, to choose a class for your trade size. Offline.");
+        command.Options.Add(amount);
+        command.Options.Add(capital);
+        command.Options.Add(configDir);
+        command.SetAction(parse => Execute(parse, w =>
+        {
+            string dir = ResolveConfigDir(parse.GetValue(configDir));
+            IReadOnlyList<CostModel> classes = CostModel.LoadAll(dir);
+            BacktestDefaults defaults = BacktestDefaults.Load(dir);
+            decimal? cap = parse.GetValue(capital);
+            decimal[] amounts = [.. QaCli.SplitList(parse.GetValue(amount)).Select(s =>
+                decimal.TryParse(s, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal v) && v > 0
+                    ? v
+                    : throw new ArgumentException($"--amount: '{s}' is not a positive number of SEK (use '.' as decimal separator)."))];
+
+            bool Eligible(CostModel c) => c.EligibleBelowCapital is not { } limit || cap is null || cap < limit;
+
+            // An order cannot be larger than the capital (ISK, no credit), so a class limited to capital under X
+            // cannot carry an order of X or more.
+            bool Usable(CostModel c, decimal a) => Eligible(c) && (c.EligibleBelowCapital is not { } limit || a < limit);
+            var columns = new List<(string, bool)> { ("class", false), ("file (--costs)", false), ("courtage per order", false), ("Avanza: suits trades", false), ("who can choose it", false) };
+            columns.AddRange(amounts.Select(a => ($"fee at {Sek(a)}", true)));
+            columns.Add(("verified", false));
+            var table = new TextTable([.. columns]);
+            foreach (CostModel c in classes)
+            {
+                var row = new List<string>
+                {
+                    (c.DisplayName ?? c.Name) + (c.Name == defaults.Costs ? " (default)" : string.Empty),
+                    c.Name,
+                    Rule(c),
+                    Suits(c.SuitsTrades),
+                    c.EligibleBelowCapital is { } limit ? $"capital under {Sek(limit)}{(Eligible(c) ? string.Empty : " - not you")}" : "anyone",
+                };
+                foreach (decimal a in amounts)
+                {
+                    decimal fee = c.Courtage(a);
+                    row.Add(!Usable(c, a)
+                        ? "not available"
+                        : $"{fee.ToString("0.##", CultureInfo.InvariantCulture)} ({(fee / a).ToString("0.###%", CultureInfo.InvariantCulture)})");
+                }
+
+                row.Add(c.VerifiedOn is { } v ? v.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : "NOT VERIFIED");
+                table.Add([.. row]);
+            }
+
+            table.Write(w);
+            foreach (decimal a in amounts)
+            {
+                CostModel? best = classes.Where(c => Usable(c, a)).MinBy(c => c.Courtage(a));
+                if (best is not null)
+                {
+                    string ties = string.Join(", ", classes.Where(c => Usable(c, a) && c != best && c.Courtage(a) == best.Courtage(a)).Select(c => c.DisplayName ?? c.Name));
+                    w.WriteLine($"Cheapest for one {Sek(a)} order: {best.DisplayName ?? best.Name} ({best.Courtage(a).ToString("0.##", CultureInfo.InvariantCulture)} SEK){(ties.Length == 0 ? string.Empty : $", tied with {ties}")}.");
+                }
+            }
+
+            if (cap is null && classes.Any(c => c.EligibleBelowCapital is not null))
+            {
+                w.WriteLine("Some classes depend on your capital at Avanza; pass --capital to leave out the ones you cannot choose.");
+            }
+
+            w.WriteLine($"Fees are per order (a buy and a later sell pay twice), Nasdaq Stockholm main market; other marketplaces cost more. Backtests use {defaults.Costs} and {Sek(defaults.Cash)} unless you pass --costs / --cash (config/{BacktestDefaults.FileName}).");
+            return 0;
+        }));
+        return command;
+
+        static string Rule(CostModel c) =>
+            c.CourtageRate == 0
+                ? c.CourtageMin == 0 ? "free (0 %, no minimum)" : $"{c.CourtageMin.ToString("0.##", CultureInfo.InvariantCulture)} SEK flat"
+                : $"{(c.CourtageRate * 100).ToString("0.###", CultureInfo.InvariantCulture)} %, min {c.CourtageMin.ToString("0.##", CultureInfo.InvariantCulture)} SEK";
+
+        static string Suits((decimal? From, decimal? To) s) => s switch
+        {
+            (null, null) => "-",
+            (null, { } to) => $"under {Sek(to)}",
+            ({ } from, null) => $"over {Sek(from)}",
+            ({ } from, { } to) => $"{Sek(from)} - {Sek(to)}",
+        };
+    }
+
+    private static string Sek(decimal amount) => amount.ToString("N0", CultureInfo.InvariantCulture) + " SEK";
+
+    /// <summary>A cost model by class name (config/costs.&lt;name&gt;.json) or by path.</summary>
+    private static CostModel LoadCosts(string configDir, string nameOrPath) =>
+        CostModel.Load(nameOrPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || nameOrPath.Contains(Path.DirectorySeparatorChar) || nameOrPath.Contains('/')
+            ? nameOrPath
+            : Path.Combine(configDir, $"costs.{nameOrPath}.json"));
 
     // ---- data from the history store --------------------------------------------------------------------
 
