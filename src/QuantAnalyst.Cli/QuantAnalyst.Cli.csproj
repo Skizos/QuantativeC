@@ -26,6 +26,8 @@
   <ItemGroup>
     <!-- Calendar files next to qa for runs outside the repo root; a ./config folder takes precedence. -->
     <None Include="..\..\config\market-calendar.*.json" LinkBase="config" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Holdout policy and cost models, same rule. A missing holdout policy stops every backtest (fail closed). -->
+    <None Include="..\..\config\holdout.json;..\..\config\costs.*.json" LinkBase="config" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

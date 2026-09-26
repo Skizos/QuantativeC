@@ -130,7 +130,7 @@ public static class BacktestRunner
         }
 
         TrialMetrics metrics = ComputeMetrics(request, sim);
-        string? warning = request.Costs.Verified ? null : $"costs UNVERIFIED ({request.Costs.Label})";
+        string? warning = request.Costs.Verified ? null : $"costs UNVERIFIED: {request.Costs.Name} has no verified_on";
         return Finish(request, TrialStatus.Ok, warning, metrics, touchesHoldout, sim.ToOutcome());
     }
 

@@ -45,3 +45,28 @@ File: `phase2-cloud-linux-x64-native.json` (3 repetitions, means shown).
 | 1e6 BS prices (for comparison with Phase 1) | 76 ms scalar / 81 ms ABI | unchanged |
 
 **Lesson recorded:** with GCC and Google Benchmark 1.8.3, `benchmark::DoNotOptimize` on a single `double` lvalue clobbered the value read after the loop, so the SE counter showed 0. The fix is `DoNotOptimize` on the whole result struct, which uses a memory constraint (`bench/native/phase2_bench.cpp`). Timings were not affected.
+
+## Phase 5 (2026-09-26, same cloud container, GCC 13.3 Release native, .NET 10.0.12, ShortRun job)
+
+Files: `phase5-cloud-linux-x64-managed.json` / `.md`. Configuration: 10 years × 300 instruments of synthetic bars
+(2520 × 300, seed 20260925), MA-cross(20, 100), limit orders, `avanza-small` costs.
+
+| Benchmark | Mean | Allocated | Notes |
+|---|---|---|---|
+| **Full run** (`BacktestRunner.Run`) | 169 ms | 2.4 MB | 2520 native steps, 2519 decisions, order planning, 8 truncation replays, metrics |
+| Same run without the leakage check | 77 ms | 0.37 MB | the replays cost about as much as the run itself |
+| CLI end to end (`qa backtest run … --synthetic 300x2520`) | 0.83 s wall | | one run: process start, data generation, run, ledger append; logged as T000001 |
+
+**Reading these numbers:**
+- About 30 µs per bar for 300 instruments, including the strategy and order planning in .NET and one batched call
+  into the engine per bar.
+- BenchmarkDotNet repeats the run, so its iterations are timing-only and are not in the TrialLedger. The one CLI
+  run of the same configuration is.
+- That run lost 96 %: 25,412 fills × the 39 SEK minimum courtage on 3,333 SEK slices (1 MSEK over 300 names).
+  This is a property of the cost model, not a bug: small positions are expensive at Avanza's minimum fee.
+
+**How to reproduce:**
+```
+cmake --preset release && cmake --build --preset release
+dotnet run -c Release --project bench/QuantAnalyst.Bench -- --filter "*BacktestBenchmarks*" --job short --exporters json markdown
+```
