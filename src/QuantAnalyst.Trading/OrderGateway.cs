@@ -450,7 +450,8 @@ public sealed class OrderGateway : IDisposable
         _serial.Dispose();
     }
 
-    internal static DateOnly StockholmDate(DateTimeOffset utc) => DateOnly.FromDateTime(MarketTime.ToStockholm(utc).DateTime);
+    /// <summary>The Stockholm calendar date of a UTC instant (day orders, daily counters, audit files).</summary>
+    public static DateOnly StockholmDate(DateTimeOffset utc) => DateOnly.FromDateTime(MarketTime.ToStockholm(utc).DateTime);
 
     public override string ToString() => string.Create(CultureInfo.InvariantCulture, $"OrderGateway({_env.Mode}, {_channel.Name})");
 }

@@ -257,3 +257,48 @@ public static class StrategyCatalog
         return new StrategyDefinition(new StrategySpec(name, canonical), factory);
     }
 }
+
+/// <summary>
+/// Paper and live use of a strategy (Phase 6): the decision at the close of the panel's last bar, after replaying every
+/// earlier bar in order (stateful strategies such as <see cref="MovingAverageCross"/> need the whole history). The
+/// window is the same look-ahead-safe <see cref="BarWindow"/> the backtest uses.
+/// </summary>
+public static class StrategyReplay
+{
+    public static double[] DecideAtLastBar(MarketPanel data, IStrategy strategy)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(strategy);
+        if (data.Periods == 0)
+        {
+            throw new ArgumentException("The panel has no bars.", nameof(data));
+        }
+
+        var window = new BarWindow(data);
+        var targets = new double[data.InstrumentCount];
+        for (int t = 0; t < data.Periods; t++)
+        {
+            window.MoveTo(t);
+            Array.Fill(targets, double.NaN);
+            strategy.Decide(window, targets);
+        }
+
+        double sum = 0;
+        foreach (double w in targets)
+        {
+            if (double.IsNaN(w))
+            {
+                continue;
+            }
+
+            if (!double.IsFinite(w) || w < 0)
+            {
+                throw new StrategyException($"Target weights must be finite and >= 0 (long-only); got {w} at {data.Dates[^1]:yyyy-MM-dd}.");
+            }
+
+            sum += w;
+        }
+
+        return sum <= 1 + 1e-9 ? targets : throw new StrategyException($"Target weights sum to {sum:0.######} > 1 at {data.Dates[^1]:yyyy-MM-dd} (no leverage).");
+    }
+}

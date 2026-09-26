@@ -25,6 +25,9 @@ internal sealed record AvanzaCliServices(
     Func<AvanzaOptions, ISecretStore, IBankIdPrompt, ILogger, Redactor, AvanzaConnection> ConnectionFactory,
     Func<string, ISecretStore> SecretStoreFactory)
 {
+    /// <summary>Gets the clock for long-running verbs (<c>qa paper run</c>); tests pass a fake one.</summary>
+    public TimeProvider Time { get; init; } = TimeProvider.System;
+
     public static AvanzaCliServices Default { get; } = new(
         (options, secrets, prompt, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor, prompt),
         CreateSecretStore);
@@ -99,6 +102,7 @@ internal static partial class AvanzaCommands
         yield return Orders(services);
         yield return Quote(services);
         yield return Stream(services);
+        yield return Paper(services);
         yield return History(services);
         yield return Probe(services);
         yield return Recordings(services);
