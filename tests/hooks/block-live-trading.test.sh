@@ -39,6 +39,12 @@ check 2 'curl -X POST https://www.avanza.se/_api/transfer/internal -d {}'
 check 2 'curl https://www.avanza.se/_api/payment/withdrawal/new'
 check 2 'curl https://www.avanza.se/_api/account-overview/Deposit'
 check 2 'curl https://www.avanza.se/_api/konto/uttag'
+check 2 "sed -i 's/true/false/' config/holdout.json"
+check 2 'echo "{}" > config/holdout.json'
+check 2 'python3 -c "import json" config/holdout.json'
+check 2 'git checkout -- config/holdout.json'
+check 2 'rm config/holdout.json'
+check 2 'Set-Content config/holdout.json x'
 
 # Must be allowed
 check 0 'dotnet build QuantAnalyst.sln'
@@ -52,5 +58,8 @@ check 0 'git status'
 check 0 'grep -rn "OrderGateway" src/'
 check 0 'grep -rn "_api/transactions/list" docs/'
 check 0 'git log --oneline -- docs/adr/0004-authorization-to-automate.md'
+check 0 'cat config/holdout.json'
+check 0 'git diff -- config/holdout.json'
+check 0 'grep -n locked config/holdout.json'
 
 exit "$fail"

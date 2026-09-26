@@ -1,0 +1,13 @@
+{
+  "format": "qa-costs/1",
+  "name": "avanza-small",
+  "currency": "SEK",
+  "courtage": { "min": 39.0, "rate": 0.0015 },
+  "fx_fee_rate": 0.0025,
+  "slippage_bps": 5.0,
+  "half_spread_bps": 5.0,
+  "participation_cap": 0.10,
+  "source_url": "https://www.avanza.se/priser-och-avgifter.html",
+  "verified_on": null,
+  "draft_basis": "UNVERIFIED (2026-09-25): courtage class Small as recorded in docs/plans/00-master-plan.md (search extract: 39 SEK up to 26,000 SEK, then 0.15 %), FX fee 0.25 % (search extract); slippage, half-spread and participation cap are modelling choices (docs/plans/05-phase5-backtesting.md). Check the courtage and FX fee against Avanza's price list, then set verified_on."
+}

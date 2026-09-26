@@ -1,0 +1,9 @@
+{
+  "format": "qa-holdout/1",
+  "locked": true,
+  "start": "2025-10-01",
+  "note": "Final holdout (CLAUDE.md): backtests may not use bars dated on or after 'start' while 'locked' is true. Only the owner changes this file; Claude is blocked from editing it. To unlock, set locked=false and fill unlocked_by, unlocked_on and reason. Every run that touches the holdout is marked in the TrialLedger.",
+  "unlocked_by": null,
+  "unlocked_on": null,
+  "reason": null
+}

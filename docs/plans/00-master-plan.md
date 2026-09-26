@@ -173,7 +173,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - Known-at query test: a restatement is not visible before its `known_at`.
 - The calendar test classifies every weekday.
 
-### Phase 5 — Honest backtesting
+### Phase 5 — Honest backtesting (in progress; plan in `docs/plans/05-phase5-backtesting.md`)
 - **C++ event engine:**
   - limit-order fill model: fill at t+1 or later, only when the market trades through the limit
   - tick rounding from the RTS 11 table, transcribed from EUR-Lex or supplied by you

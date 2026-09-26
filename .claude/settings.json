@@ -39,7 +39,9 @@
       "Read(./secrets/**)",
       "Read(./recordings/live/**)",
       "Edit(./secrets/**)",
-      "Write(./secrets/**)"
+      "Write(./secrets/**)",
+      "Edit(./config/holdout.json)",
+      "Write(./config/holdout.json)"
     ]
   },
   "hooks": {

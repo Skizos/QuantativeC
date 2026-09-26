@@ -39,4 +39,11 @@ if printf '%s' "$input" | grep -Eiq -- "_api/[A-Za-z0-9/_.-]*(transfer|withdraw|
   deny "command references an Avanza money-transfer endpoint (ADR 0004: the program never moves money)."
 fi
 
+# 5) The final backtest holdout (CLAUDE.md "Final holdout window locked unless I unlock it"): Claude may read
+#    config/holdout.json but never change, move, delete or restore it. Only the owner edits it.
+if printf '%s' "$input" | grep -Eiq -- "holdout\.json" \
+   && printf '%s' "$input" | grep -Eiq -- "(>|sed[^|;&]*-i|(^|[^a-z])(tee|mv|cp|rm|truncate|dd|install|chmod|ln)[[:space:]]|python|perl|ruby|node|pwsh|powershell|git[[:space:]]+(checkout|restore|rm|mv|reset|stash|apply)|Set-Content|Out-File|Remove-Item|Move-Item|Copy-Item)"; then
+  deny "command would change config/holdout.json (the final backtest holdout is the owner's to unlock)."
+fi
+
 exit 0
