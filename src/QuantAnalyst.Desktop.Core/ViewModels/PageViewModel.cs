@@ -30,7 +30,11 @@ public abstract class PageViewModel : ObservableObject
         Subtitle = subtitle;
         Engine = engine ?? throw new ArgumentNullException(nameof(engine));
         Engine.PropertyChanged += OnEnginePropertyChanged;
+        RefreshCommand = new AsyncCommand(RefreshAsync, onError: ex => Say(ex.Message, isError: true));
     }
+
+    /// <summary>Gets the page's Refresh button.</summary>
+    public AsyncCommand RefreshCommand { get; }
 
     public PageKind Kind { get; }
 
