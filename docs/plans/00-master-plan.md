@@ -52,7 +52,7 @@ Every phase session starts with: *"Read CLAUDE.md and docs/plans/00-master-plan.
 5. **Login retry trap:** Qluxzz retries a 401 login with the next OTP **by default**. We explicitly do **not** (one attempt per trigger).
 6. **Public endpoints** (search, quotes, order depth, price charts) work **without logging in**, per the Go SDK. Research and chart import can run without credentials.
 7. **Drift rate:** about 11 breaking changes in 27 months, three of them in order entry. This backs ADR 0002's fail-safe design.
-8. **Strict deserialization refinement (please confirm):**
+8. **Strict deserialization refinement (approved 2026-09-25, ADR 0002 accepted):**
    - CLAUDE.md: unknown or missing fields ⇒ `SchemaDriftException` ⇒ halt.
    - ADR 0002 applies **unknown-field rejection** only to **trading-critical DTOs** (orders, deals, positions, accounts, order responses, orderbook, marketdata, SSE `ORDER`/`ORDER_DEPTH`).
    - Informational DTOs (stock details, news) still reject **missing required** fields, but only *log* unknown extras.
@@ -60,7 +60,7 @@ Every phase session starts with: *"Read CLAUDE.md and docs/plans/00-master-plan.
 9. **Egress-blocked sources:** this cloud container can't reach avanza.se, nasdaq.com, eur-lex, fi.se or learn.microsoft.com.
    - Courtage, calendar and the RTS 11 tick table are therefore **UNVERIFIED** and carry `verified_on` fields.
    - Confirm/Auto refuse to start while any is empty (ADR 0003).
-10. **Terms of use:** the website terms (search extract) forbid automated tools **without written consent**. Phase 3's first live call is gated on your decision (ADR 0004, to be written by you, or by me from your answer).
+10. **Terms of use:** the website terms (search extract) forbid automated tools **without written consent**. Phase 3's first live call is gated on your decision. **Recorded 2026-09-25 in ADR 0004** (accepted; no written consent on record).
 
 Nothing in the research contradicts CLAUDE.md's rules. Item 8 is a *refinement* of one rule, and I need your yes/no on it.
 
@@ -140,7 +140,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 
 *Note:* CLAUDE.md names `QuantAnalyst.sln`. The .NET 10 SDK also supports `.slnx`, the newer XML solution format; Phase 1 will check which one `dotnet new sln` produces. I'll use `QuantAnalyst.sln` unless you prefer `.slnx`, and update CLAUDE.md if you do.
 
-### Phase 2 — Pricing, risk, portfolio (C++)
+### Phase 2 — Pricing, risk, portfolio (C++) ✅ (2026-09-25; results in `docs/plans/02-phase2-numerics.md`)
 - **Pricing (`qe::pricing`):** BSM + Greeks, implied vol (Brent), CRR American, MC (antithetic + control variate, SE, Sobol option).
 - **Risk (`qe::risk`):** historical/parametric/MC VaR & ES; covariance (sample, EWMA, Ledoit-Wolf); stress (OMXS30 −10 %, SEK ±5 %).
 - **Portfolio (`qe::portfolio`):** MV with bounds, min-var, risk parity, HRP, integer-lot rebalance solver (lot = `volumeFactor`/`tradingUnit` from Avanza orderbook).
@@ -148,7 +148,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 
 *Gate:* every numerical item in `<verification_requirements>` passes, with seeds recorded.
 
-### Phase 3 — Avanza read-only gateway
+### Phase 3 — Avanza read-only gateway ✅ (2026-09-25; results in `docs/plans/03-phase3-avanza-read.md`)
 - First, refresh `avanza-endpoints.md` if it is older than 7 days.
 - Implement RFC 6238 TOTP (Appendix B vectors), `AvanzaAuthenticator` (single attempt, lock persistence), `AvanzaHttpClient` (handler pipeline, ADR 0002), `AvanzaRoutes` (versioned), strict DTOs + mappers, and `AvanzaGateway` reads: accounts, trading accounts, positions, orders, deals, transactions, search, orderbook (tick table), marketdata, chart, session info.
 - Recording + sanitizing tool (`qa recordings sanitize`), a secret-scanning log test, and the drift test.
@@ -162,10 +162,10 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - The log scan finds no secrets.
 - **ADR 0004 (authorization to automate) is recorded before your first live run.**
 
-### Phase 4 — Streaming + data store
+### Phase 4 — Streaming + data store (implemented 2026-09-25; waiting for your live run; plan and results in `docs/plans/04-phase4-streaming-store.md`)
 - **Streaming:** `AvanzaStreamClient` (SSE, `Last-Event-ID`, server `retry`, backoff, 1 MB events) plus `QuoteComposer` (ORDER_DEPTH + polled marketdata ⇒ `Quote` with `asOf` and a stale flag). Fan-out over `Channel<T>`.
 - **Store:** DuckDB with **known-at** timestamps (`valid_from`, `known_at`, `source`, `source_version`), the instrument master, `AvanzaChartImporter`, and `IHistoricalDataProvider` (vendor slot).
-- **Calendar:** `config/market-calendar.XNSA.{2026,2027}.json`, filled and verified by you from Nasdaq's official calendar.
+- **Calendar:** `config/market-calendar.XSTO.{2026,2027}.json` (XSTO is the MIC Avanza reports; an earlier draft said "XNSA" by mistake), filled and verified by you from Nasdaq's official calendar.
 
 *Gate:*
 - Replay tests on recorded SSE fixtures pass.
@@ -173,7 +173,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - Known-at query test: a restatement is not visible before its `known_at`.
 - The calendar test classifies every weekday.
 
-### Phase 5 — Honest backtesting
+### Phase 5 — Honest backtesting (implemented 2026-09-26 and gated on synthetic data; real-data runs wait for your history import; plan and results in `docs/plans/05-phase5-backtesting.md`)
 - **C++ event engine:**
   - limit-order fill model: fill at t+1 or later, only when the market trades through the limit
   - tick rounding from the RTS 11 table, transcribed from EUR-Lex or supplied by you
@@ -189,7 +189,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - Untouched limits do not fill.
 - The 10y × 300 synthetic benchmark is saved.
 
-### Phase 6 — Trading core + Paper mode
+### Phase 6 — Trading core + Paper mode (implemented and gated 2026-09-26, EOD report and promotion included; your 10 Paper days next; plan and results in `docs/plans/06-phase6-trading-core.md`)
 - **Gateways:** `IBrokerGateway` / `IBrokerOrderChannel` with Avanza, Paper and Backtest implementations. The Avanza order channel is **implemented but fixture-tested only**.
 - **Pipeline:** `OrderGateway`, `PreTradeRiskEngine` (ADR 0003), OMS + Reconciler, `HaltController`, `KillSwitch` (CLI / API / `./KILL` file / automatic), `Scheduler`, hash-chained audit log.
 - **Tests:** architecture tests plus a Paper spy (zero order-route requests at the HTTP handler level).
@@ -203,7 +203,7 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - sane paper fills
 - `qa promote --to Confirm` writes the signed promotion record (ADR 0003 §3)
 
-### Phase 7 — Confirm mode
+### Phase 7 — Confirm mode (planned 2026-09-26: steps, decisions and the exact remaining-work list in `docs/plans/07-phase7-confirm.md`; how you will use it in `docs/guide.md`)
 - **Pre-card calls:** before the card, `validate` + `preliminaryfee` run as read-only POSTs. They are pre-trade helpers, never order endpoints.
 - **Order card:** instrument, side, volume, limit, SEK value, **Avanza fee vs model fee**, reason, and every risk-check result.
 - **Confirmation:** typed `<TICKER> JA`, 30 s expiry, one order per confirmation. `rebalance --execute` confirms one order at a time.
@@ -217,8 +217,11 @@ Research docs, CLAUDE.md, guardrail hooks plus their self-test, this plan, and A
 - zero unreconciled Unknown states
 - realized slippage within the backtest cost assumptions
 
+**Windows app (added 2026-09-26 at the owner's request):** a WPF window over the same command code, Paper only: status, instruments, strategy + backtest, the Paper session with BankID and KILL, and reports. Plan and results: `docs/plans/10-windows-app.md`; start it with `.\qa-app.ps1`.
+
 ### Phase 8 — Auto mode (hard-limited)
 Auto requires all of the following:
+- **TOTP login enabled:** BankID needs a human at every login, so it cannot run unattended.
 - a signed promotion record
 - every `<risk_limits>` value set
 - a KillSwitch self-test that day (a dummy **paper** order is cancelled)
@@ -260,7 +263,7 @@ Also in this phase: the start-of-day checklist and auto-shutdown at a configured
    - §2 item 8 (tiered DTO strictness)
    - the two-interface split (§3)
    - no order endpoints in the local API (ADR 0003)
-2. **Terms decision:** read `docs/research/avanza-terms.md`, consider writing to Avanza, and tell me the outcome. It goes into ADR 0004 before Phase 3's first live call.
+2. **Terms decision:** recorded in ADR 0004 (2026-09-25). Writing to Avanza is still recommended; add the answer to the ADR's log.
 3. **Network (optional):** if you want me to verify the courtage, calendar and RTS 11 figures myself in cloud sessions, add these to the environment's allowed domains:
    - `www.avanza.se` (public pages only)
    - `www.nasdaq.com`

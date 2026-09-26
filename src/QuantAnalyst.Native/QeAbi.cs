@@ -8,8 +8,8 @@ public static class QeAbi
     /// <summary>The <c>QE_ABI_MAJOR</c> this assembly was written against.</summary>
     public const int ExpectedMajor = 1;
 
-    /// <summary>The minimum <c>QE_ABI_MINOR</c> this assembly requires.</summary>
-    public const int ExpectedMinor = 0;
+    /// <summary>The minimum <c>QE_ABI_MINOR</c> this assembly requires (1.2: backtest engine).</summary>
+    public const int ExpectedMinor = 2;
 
     private static readonly Lazy<Version> NativeVersionLazy = new(ReadNativeVersion);
 
@@ -28,7 +28,8 @@ public static class QeAbi
         {
             throw new NativeAbiMismatchException(
                 $"qe native library implements ABI {native.Major}.{native.Minor}, but QuantAnalyst.Native " +
-                $"requires {ExpectedMajor}.{ExpectedMinor}+ with the same major version. Rebuild the native library.");
+                $"requires {ExpectedMajor}.{ExpectedMinor}+ with the same major version. Rebuild the native library: .\\build.ps1 on Windows " +
+                "(cmake --build --preset dev elsewhere), or run qa through the .\\qa launcher, which rebuilds it when its sources changed.");
         }
     }
 

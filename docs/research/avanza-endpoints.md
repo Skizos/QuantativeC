@@ -9,11 +9,20 @@
 | Client | Language | Commit read | Date | Notes |
 |---|---|---|---|---|
 | [Qluxzz/avanza](https://github.com/Qluxzz/avanza/tree/a6a18a948f88cb7e340051e480b203b2ee917eed) | Python | `a6a18a948f88cb7e340051e480b203b2ee917eed` | 2026-09-21 | Main reference. Username + password + TOTP login. Routes live in [`avanza/constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py). Its live test suite covers **read** endpoints only. |
-| [vmorsell/avanza-sdk-go](https://github.com/vmorsell/avanza-sdk-go/tree/43f39025751c05ff73a85e708dadee4bfa9da2ca) | Go | `43f39025751c05ff73a85e708dadee4bfa9da2ca` | 2026-07-05 | Only client that documents the **SSE** push streams. Also covers order validation, preliminary fees, tick-size tables, and a schema-drift test. **BankID-only login.** |
+| [vmorsell/avanza-sdk-go](https://github.com/vmorsell/avanza-sdk-go/tree/43f39025751c05ff73a85e708dadee4bfa9da2ca) | Go | `43f39025751c05ff73a85e708dadee4bfa9da2ca` | 2026-07-05 | Only client that documents the **SSE** push streams. Also covers order validation, preliminary fees, tick-size tables, and a schema-drift test. **BankID-only login** (our BankID flow follows it). |
 | [fhqvst/avanza](https://github.com/fhqvst/avanza/tree/858772175db425fe594c4110f98f8af991e7c9b3) | JS | `858772175db425fe594c4110f98f8af991e7c9b3` | 2023-08-26 | Stale. Its `_mobile/*` paths and CometD socket are obsolete. Historical reference only. |
 | [AnteWall/avanza-mcp](https://github.com/AnteWall/avanza-mcp) | – | not read | updated 2026-09-25 | MCP server. Found but not reviewed. |
 
 Base URL for everything: `https://www.avanza.se`.
+
+**Re-checked 2026-09-26 (Phase 7 step 1, pre-trade checks):** still no newer commits (Qluxzz `a6a18a9`, avanza-sdk-go `43f3902`). Qluxzz `constants.py` has **no** validate or preliminary-fee route. The two routes and their shapes were re-read from the Go SDK: [`trading/service.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/service.go) (`ValidateOrder`, `GetPreliminaryFee`: POST, non-200 is an error) and [`trading/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/types.go):
+- **Validate request** (`ValidateOrderRequest`): `isDividendReinvestment`, `requestId` (nullable), `orderRequestParameters`, `price` (number), `volume` (number), `openVolume`, `accountId`, `side` (`BUY`/`SELL`), `orderbookId`, `validUntil`, `metadata`, `condition` (`NORMAL`/`FILL_OR_KILL`), `isin`, `currency`, `marketPlace`.
+- **Validate response** (`ValidateOrderResponse`): `commissionWarning`, `employeeValidation`, `largeInScaleWarning`, `orderValueLimitWarning`, `priceRampingWarning`, `canadaOddLotWarning`, each `{valid: bool}`.
+- **Fee request** (`PreliminaryFeeRequest`): `accountId`, `orderbookId`, `price`, `volume` (all strings), `side`.
+- **Fee response** (`PreliminaryFeeResponse`): `commission`, `marketFees`, `totalFees`, `totalSum`, `totalSumWithoutFees`, `orderbookCurrency` (strings in the orderbook currency), `transactionTax` and `campaign` (nullable strings), `currencyExchangeFee{rate, sum}`.
+- **No real answer exists in either client:** the SDK's tests echo its own structs. Our DTOs are therefore provisional. `qa probe --preflight` records the real answers for a hypothetical 1-share buy, without placing anything.
+
+**Re-checked 2026-09-26 (Phase 6):** the GitHub commit lists of both clients show no commits after the pins above (Qluxzz newest is still `a6a18a9`, 2026-09-21; avanza-sdk-go newest is still `43f3902`, 2026-07-05). §4 was re-read from those commits: `avanza/avanza.py` `place_order`/`edit_order`/`delete_order` and `constants.py`, and avanza-sdk-go `trading/types.go`.
 
 ## 1. Authentication (username + password + TOTP)
 
@@ -39,7 +48,17 @@ Session lifetime: `maxInactiveMinutes` is set by the client and validated to **3
   - The Go SDK takes it from the **`AZACSRF` cookie** and sends that cookie's value as `X-SecurityToken` (`client/client.go`, `extractCookies`).
   - The authenticator should support both, preferring the header and falling back to the cookie, and record which one it used. If both are missing, raise `SchemaDriftException`.
 - Session introspection: `GET /_api/authentication/session/info/session` returns `user.loggedIn`, `user.pushSubscriptionId`, `user.securityToken`, `user.id` (Go SDK `auth/auth.go`). This is a cheap read-only **session health check**, useful for the drift canary and for `SessionState`.
-- BankID uses `/_api/authentication/v2/sessions/bankid[/collect|/restart]` (Go SDK). It needs a human, so we only document it and do not automate it.
+- **BankID login** (implemented 2026-09-25 as the default login; source: [Go SDK `auth/auth.go` @ `43f39025`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/auth/auth.go), HEAD re-checked the same day). A human approves every login; we only draw the QR code.
+  1. `GET /` for the initial cookies (`AZAPERSISTENCE` …).
+  2. `POST /_api/authentication/v2/sessions/bankid` with `{"method":"QR_START","returnScheme":"NULL"}`. The response is 200/202 `{transactionId, expires, qrToken}`.
+  3. Every second:
+     - `POST …/bankid/collect` `{}`. The response is `{state: OUTSTANDING_TRANSACTION|COMPLETE|FAILED, hintCode, logins[], name, identificationNumber, …}`. `name` and `identificationNumber` are personal data: we never read them.
+     - While the state is pending, `POST …/bankid/restart` `{}` returns a fresh `qrToken` (animated QR).
+  4. On COMPLETE:
+     - `GET logins[0].loginPath`, e.g. `/_api/authentication/v2/sessions/bankid/{tx}/{customerId}`. We validate it and follow same-origin redirects manually.
+     - `GET /handla/order.html` for the remaining cookies.
+     - `GET session/info/session` to verify.
+  5. The security token is the `AZACSRF` cookie, sent as `X-SecurityToken`.
 - Open questions with no source that answers them:
   - How many failed password/TOTP attempts trigger the lockout.
   - Whether the inactivity timeout is extended by every request or only some. The Go SDK sends `aza-do-not-touch-session: true` on SSE requests, which suggests streams deliberately do **not** extend the session.
@@ -83,6 +102,33 @@ Rate limits: nothing is documented. The Go SDK default is **one request per 100 
 
 **No login needed:** the Go SDK README says search, stock/certificate/warrant info, quote, order depth, market place, price chart, off-hours price, news and forum work without a session. That lets the chart importer and much of Paper-mode data run **without** credentials. The ToS question in `avanza-terms.md` still applies.
 
+## 3a. Observed live (owner's first read-only probe, 2026-09-25, BankID login)
+
+This is the first contact with the real API. The list below has **field names only**; the sanitized recordings will pin down their types.
+
+| Route | Result | Differences from the reference clients |
+|---|---|---|
+| BankID login, session info | OK | none |
+| `account-overview/…/categorizedAccounts` | drift | new per-account fields: `interestRates`, `creditAccountClearingAccountNumber`, `autoDistribution` |
+| `trading-critical/rest/accounts` | drift | new field: `isDiscretionaryAccount` |
+| `position-data/positions`, `trading/rest/orders`, `transactions/list` | OK | none in Tier A. Transactions is Tier B, and its warnings weren't captured. |
+| `trading/rest/deals` | recorded | 27 bytes (no fills yet) |
+| `trading-critical/rest/orderbook/{id}` | drift | `orderbookStatus` is **absent** (it was required in the Go model) |
+| marketdata, price chart | not reached | the probe used to stop at an orderbook failure; it now continues with the search hit |
+
+**Second run and sanitized recording** (`recordings/fixtures/avanza/2026-09-25/`, parsed strictly on every build by `RecordedFixtureTests`):
+- **Account fields:** `autoDistribution` and `isDiscretionaryAccount` are booleans. `interestRates` is `{currency: {deposit, loan}}` of value objects. `creditAccountClearingAccountNumber` was null everywhere.
+- **Account names:** `name.defaultName` is the account number, and the sanitizer replaces it.
+- **Timestamps:** marketdata `quote.timeOfLast`/`updated` are ISO **without offset**, in **Europe/Stockholm local time**. Proof: `timeOfLast` "17:29:40" equals `orderDepth.receivedTime` and `trades[].dealTime` (epoch ms) of 15:29:40Z. Transaction `date` is `yyyy-MM-ddT00:00:00`.
+- **Search prices** are Swedish-formatted strings (`"94,96"`). The search response also echoes `searchFilter`.
+- **Deals:** `{"deals": [], "fundDeals": []}`. The element fields are still unknown until the first fill.
+- **ERIC B orderbook:** 17 tick bands (0.02 at 50–99.98 SEK).
+- **BankID:**
+  - `GET /` answers **302** plus `AZAPERSISTENCE`.
+  - Start returns 202 plus an `AZABANKIDTRANSID` cookie.
+  - Pending collect carries `hint` (not `hintCode`), `rfa` and `state`.
+  - **The login path sets `AZACSRF`** (plus `csid`, `cstoken`) and `X-SecurityToken`. The trading page sets no cookie, although the reference client visits it; we keep that visit.
+
 ## 4. Order endpoints (Phase 6 fixtures only; Claude never calls them)
 
 | Purpose | Method + path | Source / date | Body |
@@ -99,6 +145,29 @@ Rate limits: nothing is documented. The Go SDK default is **one request per 100 
 3. **`profit` field:** Qluxzz issue #156 (2026-05-28) reports Avanza "complains about the missing param `profit`" on **sell** orders. It is unresolved and the format is unknown. This must be captured from a real web-app sell before Phase 7.
 4. **Price type:** both clients send `price` as a JSON float. We will serialize a `decimal`, rounded to tick, with invariant culture, and never a binary float string.
 
+**Implemented 2026-09-26 (Phase 6 step 5, fixture-tested only).** Re-read before writing the code:
+- the commit pages of both clients: HEADs are still `a6a18a9` (Qluxzz, 2026-09-21) and `43f3902` (Go SDK, 2026-07-05)
+- the raw sources at those commits:
+  - [Qluxzz `avanza/constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py): `ORDER_PLACE_PATH`, `ORDER_DELETE_PATH`, `ORDER_EDIT_PATH`
+  - [Qluxzz `avanza/avanza.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/avanza.py): `place_order`, `delete_order`, `edit_order` bodies
+  - [Go `trading/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/types.go): the `Place/Delete/ModifyOrderResponse` shape
+
+Decisions:
+- **Routes:** the three routes live in the internal `AvanzaOrderRoutes`, in the same routes file (routes version `2026-09-26.1`).
+- **Request bodies:** we send **Qluxzz's** bodies, because they are the ones confirmed against the new place/delete path. We send no `requestId` (conflict 2).
+  - The Go SDK's extra fields stay out until a captured web-app order shows which of them the new path expects.
+- **Responses:** Tier A, strict. An unknown field or an unknown `orderRequestStatus` counts as drift: the result is Unknown and the gateway halts.
+- **Status codes:**
+
+  | Answer | Outcome |
+  |---|---|
+  | 404 | Unknown, and the endpoint is flagged as gone |
+  | 401 / 403 | Unknown, and the session is flagged as expired |
+  | Timeout, transport error, 408, 5xx, redirect | Unknown |
+  | Any other 4xx | Rejected |
+
+- **One attempt only:** every request is sent once, through a pipeline with no retry handler and no recorder.
+
 ## 5. Streaming (push)
 
 **The old CometD/Bayeux websocket (`wss://www.avanza.se/_push/cometd`) is discontinued.** Qluxzz removed it in [PR #151, commit `75c4f62`](https://github.com/Qluxzz/avanza/commit/75c4f6207d74b488a67df3c48ad1989dcd77496b) on 2025-11-26 ("Remove discontinued web socket support"). It had channels `quotes`, `orderdepths`, `trades`, `brokertradesummary`, `positions`, `orders`, `deals`, `accounts`.
@@ -109,7 +178,7 @@ Its replacement is **Server-Sent Events** (Go SDK, `internal/sse/subscription.go
 
 | Stream | Path | Event name | Payload |
 |---|---|---|---|
-| Order depth (per orderbook) | `/_push/order-depth-web-push/{orderbookId}` | `ORDER_DEPTH` | `{orderbookId, levels[{buySide,sellSide}{price,volume,priceString}], marketMakerLevelInBid/Ask}` |
+| Order depth (per orderbook) | `/_push/order-depth-web-push/{orderbookId}` (Referer `https://www.avanza.se/handla/order.html/kop/{orderbookId}`; needs cookies `csid`, `cstoken`, `AZACSRF`) | `ORDER_DEPTH` | `{orderbookId (string), levels[{buyPrice, buyVolume, sellPrice, sellVolume}], marketMakerLevelInAsk, marketMakerLevelInBid}`, a **full snapshot** per event ([`market/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/types.go), [`market/service.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/service.go)). Corrected 2026-09-25: the nested `{buySide, sellSide}` shape listed here before is the **marketdata** REST shape. |
 | Own orders | `/_push/trading/orders/` | `ORDER` | `{id, accountId, orderbook, currentVolume, originalVolume, price, type(side), state{…}, action(NEW/DELETED/…), sum, orderDateTime, eventTimeStamp, uniqueId, detailedCancelStatus}` |
 | Own stop-losses | `/_push/trading/stoploss/` | `STOPLOSS` | stop-loss state |
 
@@ -117,6 +186,9 @@ Its replacement is **Server-Sent Events** (Go SDK, `internal/sse/subscription.go
 - No known SSE channel exists for **last-trade quotes, public trades, own deals, or positions**.
 - **Quote stream:** combine the best bid/ask from `ORDER_DEPTH` with polling `marketdata/{id}` for `last`/`timeOfLast`/volume, at a conservative interval of about 5 s per instrument during market hours. The staleness rule measures age from the newest of `ORDER_DEPTH` and the poll's `updated`.
 - **Own deals and positions:** poll `deals` and `positions` (every 30–60 s and on every `ORDER` event that implies a fill) for reconciliation.
+
+- **Other events:** the Go SDK tests show `event: info` with plain-text data (`connected`, `heartbeat`) on the same stream ([`order_depth_test.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/order_depth_test.go)).
+- **Re-checked 2026-09-25 (Phase 4):** both client HEADs are unchanged (Qluxzz `a6a18a94`, Go SDK `43f39025`).
 
 Open issue: [Qluxzz #140 "Event-stream (SSE)"](https://github.com/Qluxzz/avanza/issues/140) (2025-09-23) has no maintainer answer. The SSE protocol is known from the Go SDK only, so we need our own recorded fixtures (Phase 4) before relying on it.
 

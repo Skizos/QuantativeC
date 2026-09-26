@@ -32,6 +32,7 @@ promotion/state.json
 state/
 logs/
 audit/
+reports/
 
 # Claude Code local overrides
 .claude/settings.local.json

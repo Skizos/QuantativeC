@@ -1,0 +1,168 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "marketdata",
+  "tier": "A",
+  "recordedAtUtc": "2026-09-25T21:02:27.9593167\u002B00:00",
+  "request": {
+    "method": "GET",
+    "path": "/_api/trading-critical/rest/marketdata/5240",
+    "query": "",
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "Cookie",
+      "User-Agent",
+      "X-SecurityToken"
+    ],
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "headerNames": [
+      "AVANZA_TRACE_ID",
+      "Cache-Control",
+      "Connection",
+      "Date",
+      "Keep-Alive",
+      "Pragma",
+      "Strict-Transport-Security",
+      "Transfer-Encoding",
+      "Vary",
+      "X-SecurityToken"
+    ],
+    "setCookieNames": [],
+    "body": {
+      "quote": {
+        "buy": 94.96,
+        "sell": 94.98,
+        "last": 94.96,
+        "highest": 95.82,
+        "lowest": 94.54,
+        "change": 0.62,
+        "changePercent": 0.66,
+        "timeOfLast": "2026-09-25T17:29:40",
+        "totalValueTraded": 579289373.76000000,
+        "totalVolumeTraded": 6090838.00000000,
+        "updated": "2026-09-25T18:00:00.213",
+        "volumeWeightedAveragePrice": 95.10
+      },
+      "orderDepth": {
+        "receivedTime": 1790350180969,
+        "levels": [
+          {
+            "buySide": {
+              "price": 94.96,
+              "volume": 600,
+              "priceString": "94.96"
+            },
+            "sellSide": {
+              "price": 94.98,
+              "volume": 185,
+              "priceString": "94.98"
+            }
+          }
+        ],
+        "marketMakerExpected": false
+      },
+      "trades": [
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 98.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        },
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 8875.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        },
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 600.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        },
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 28900.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        },
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 8343.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        },
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 5455.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        },
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 1300.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        },
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 1140.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        },
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 1522.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        },
+        {
+          "buyer": "",
+          "seller": "",
+          "dealTime": 1790350180782,
+          "price": 94.96,
+          "volume": 795.00000000,
+          "matchedOnMarket": true,
+          "cancelled": false
+        }
+      ]
+    }
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": false,
+    "recordIdsReplaced": true
+  }
+}

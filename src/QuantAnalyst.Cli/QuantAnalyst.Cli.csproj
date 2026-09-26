@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>qa</AssemblyName>
+    <RootNamespace>QuantAnalyst.Cli</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="QuantAnalyst.Analytics.Tests" />
+    <InternalsVisibleTo Include="QuantAnalyst.Avanza.Tests" />
+    <!-- The Windows app runs the same command code in-process (docs/plans/10-windows-app.md). -->
+    <InternalsVisibleTo Include="QuantAnalyst.Desktop.Core" />
+    <InternalsVisibleTo Include="QuantAnalyst.Desktop.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" />
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QuantAnalyst.Analytics\QuantAnalyst.Analytics.csproj" />
+    <ProjectReference Include="..\QuantAnalyst.Avanza\QuantAnalyst.Avanza.csproj" />
+    <ProjectReference Include="..\QuantAnalyst.Data\QuantAnalyst.Data.csproj" />
+    <ProjectReference Include="..\QuantAnalyst.Native\QuantAnalyst.Native.csproj" />
+    <ProjectReference Include="..\QuantAnalyst.Trading\QuantAnalyst.Trading.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Calendar files next to qa for runs outside the repo root; a ./config folder takes precedence. -->
+    <None Include="..\..\config\market-calendar.*.json" LinkBase="config" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Holdout policy and cost models, same rule. A missing holdout policy stops every backtest (fail closed). -->
+    <None Include="..\..\config\holdout.json;..\..\config\costs.*.json;..\..\config\backtest-defaults.json" LinkBase="config" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Trading (Phase 6): risk limits and the paper account. universe.json is the owner's and is read from ./config. -->
+    <None Include="..\..\config\risk-limits.json;..\..\config\paper.json" LinkBase="config" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

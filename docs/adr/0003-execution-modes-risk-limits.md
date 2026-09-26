@@ -1,6 +1,6 @@
 # ADR 0003 — Execution modes, promotion gates and pre-trade risk limits
 
-- **Status:** Proposed (2026-09-25), awaiting approval
+- **Status:** Accepted by the owner (2026-09-26); proposed 2026-09-25. Phase 6 implements it for Backtest and Paper. Where the implementation made a choice the text leaves open, `docs/plans/06-phase6-trading-core.md` records it; for example, Paper fills pay the configured courtage class (Start) rather than Small.
 - **Related:** `docs/prompts/master-prompt.md` `<risk_limits>` and Part D; ADR 0002; `docs/research/market-rules.md`
 
 ## Context

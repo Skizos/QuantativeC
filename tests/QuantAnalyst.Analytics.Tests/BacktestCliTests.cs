@@ -1,0 +1,404 @@
+using System.Text.Json;
+using QuantAnalyst.Analytics.Backtesting;
+using QuantAnalyst.Cli;
+using QuantAnalyst.Core;
+using QuantAnalyst.Core.Instruments;
+using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.History;
+using QuantAnalyst.Data.Store;
+
+namespace QuantAnalyst.Analytics.Tests;
+
+/// <summary>
+/// qa backtest / qa trials end to end (temp ledgers; synthetic data or a temp DuckDB store). The runs use a fixture
+/// config folder (locked holdout from 2025-10-01, unverified costs), so they do not change when the owner verifies
+/// the cost model or unlocks the holdout in the repository's config/.
+/// </summary>
+public sealed class BacktestCliTests : IDisposable
+{
+    private const string FixtureHoldout =
+        "{\"format\":\"qa-holdout/1\",\"locked\":true,\"start\":\"2025-10-01\",\"unlocked_by\":null,\"unlocked_on\":null,\"reason\":null}";
+
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "qa-backtest-cli", Guid.NewGuid().ToString("N"));
+
+    public BacktestCliTests()
+    {
+        Directory.CreateDirectory(_config);
+        File.WriteAllText(Path.Combine(_config, HoldoutPolicy.FileName), FixtureHoldout);
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-small.json"), FixtureCosts());
+    }
+
+    private string _config => Path.Combine(_dir, "config");
+
+    private string Ledger => Path.Combine(_dir, "ledger.jsonl");
+
+    private static string RepoConfig => Path.Combine(RepoRoot(), "config");
+
+    private static string FixtureCosts(string verifiedOn = "null", string participationCap = "0.10") =>
+        "{\"format\":\"qa-costs/1\",\"name\":\"avanza-small\",\"currency\":\"SEK\",\"courtage\":{\"min\":39.0,\"rate\":0.0015},"
+        + $"\"fx_fee_rate\":0.0025,\"slippage_bps\":5.0,\"half_spread_bps\":5.0,\"participation_cap\":{participationCap},"
+        + $"\"source_url\":\"https://www.avanza.se/priser-och-avgifter.html\",\"verified_on\":{verifiedOn}}}";
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(_dir, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    [Fact]
+    public void RepositoryConfigFiles_Load_AndLabelTheirStatus()
+    {
+        // Whatever the owner has set (locked or not, verified or not), the committed files must load and say so.
+        HoldoutPolicy holdout = HoldoutPolicy.Load(Path.Combine(RepoConfig, HoldoutPolicy.FileName));
+        Assert.True(holdout.Start.Year >= 2000);
+
+        CostModel costs = CostModel.Load(Path.Combine(RepoConfig, "costs.avanza-small.json"));
+        Assert.True(costs.CourtageMin >= 0 && costs.CourtageRate >= 0);
+        if (costs.Verified)
+        {
+            Assert.Contains($"verified {costs.VerifiedOn:yyyy-MM-dd}", costs.Label, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Contains("UNVERIFIED", costs.Label, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void RepositoryCourtageClasses_Load_AndTheDefaultNamesOneOfThem()
+    {
+        IReadOnlyList<CostModel> classes = CostModel.LoadAll(RepoConfig); // also checks name == file name
+        Assert.True(classes.Count >= 1);
+        BacktestDefaults defaults = BacktestDefaults.Load(RepoConfig);
+        CostModel chosen = Assert.Single(classes, c => c.Name == defaults.Costs);
+        if (chosen.EligibleBelowCapital is { } limit)
+        {
+            Assert.True(defaults.Cash < limit, $"default cash {defaults.Cash} must be under {chosen.Name}'s limit {limit}");
+        }
+    }
+
+    [Fact]
+    public void Costs_PricesEachClass_AndPicksTheCheapestUsable()
+    {
+        WriteClasses();
+        (int code, string output, string error) = Qa("costs", "--amount", "5000,20000,100000,200000", "--capital", "40000");
+        Assert.True(code == 0, error);
+        Assert.Contains("Cheapest for one 5,000 SEK order: Start (0 SEK).", output, StringComparison.Ordinal);
+        Assert.Contains("Cheapest for one 100,000 SEK order: Medium (69 SEK).", output, StringComparison.Ordinal); // Start cannot carry a 100k order
+        Assert.Contains("Cheapest for one 200,000 SEK order: Fast Pris (99 SEK).", output, StringComparison.Ordinal);
+        Assert.Contains("not available", output, StringComparison.Ordinal);
+        Assert.Contains("12.5 (0.25%)", output, StringComparison.Ordinal); // Mini at 5,000
+        Assert.Contains("Start (default)", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa("costs", "--amount", "20000", "--capital", "60000");
+        Assert.Equal(0, code);
+        Assert.Contains("Cheapest for one 20,000 SEK order: Small (39 SEK).", output, StringComparison.Ordinal); // Start not choosable, Mini 50
+        Assert.Contains("capital under 50,000 SEK - not you", output, StringComparison.Ordinal);
+
+        Assert.Contains("not a positive number", Qa("costs", "--amount", "20k").Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Defaults_ChooseClassAndCash_AndACapitalLimitIsEnforced()
+    {
+        WriteClasses();
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60");
+        Assert.True(code == 0, error);
+        Assert.Contains("Costs: avanza-start (verified 2026-09-26)", output, StringComparison.Ordinal);
+        Assert.Contains("cash 45,000 SEK", output, StringComparison.Ordinal);
+
+        (code, _, error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60", "--cash", "50000");
+        Assert.Equal(1, code);
+        Assert.Contains("Start can only be chosen with less than 50,000 SEK, but --cash is 50,000", error, StringComparison.Ordinal);
+
+        (code, output, error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60", "--costs", "avanza-medium", "--cash", "200000");
+        Assert.True(code == 0, error);
+        Assert.Contains("Costs: avanza-medium", output, StringComparison.Ordinal);
+        Assert.Equal(1, new TrialLedger(Ledger).ReadAll().Count(r => r.CostModel == "avanza-medium"));
+    }
+
+    [Fact]
+    public void GrowingPastAClassLimit_IsNotedOnTheTrial()
+    {
+        WriteClasses();
+        // Strong drift from 45,000: equity passes Start's 50,000 limit, after which Avanza would not keep the class.
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "3x1500", "--drift", "0.4");
+        Assert.True(code == 0, error);
+        Assert.Contains("equity reached 50,000 SEK on", output, StringComparison.Ordinal);
+        Assert.Contains("fees after that date are likely understated", Assert.Single(new TrialLedger(Ledger).ReadAll()).Note, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CostFileNameMustMatchItsName()
+    {
+        File.WriteAllText(Path.Combine(_config, "costs.other.json"), FixtureCosts());
+        BacktestConfigException e = Assert.Throws<BacktestConfigException>(() => CostModel.Load(Path.Combine(_config, "costs.other.json")));
+        Assert.Contains("must be named costs.avanza-small.json", e.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>The five classes of the owner's 2026-09-26 screenshot, plus a Start default with 45,000 SEK.</summary>
+    private void WriteClasses()
+    {
+        static string Class(string name, string display, string min, string rate, string suits, string extra = "") =>
+            "{\"format\":\"qa-costs/1\",\"name\":\"" + name + "\",\"display_name\":\"" + display + "\",\"currency\":\"SEK\","
+            + "\"courtage\":{\"min\":" + min + ",\"rate\":" + rate + "},\"fx_fee_rate\":0.0025,\"slippage_bps\":5.0,\"half_spread_bps\":5.0,"
+            + "\"participation_cap\":0.10,\"suits_trades_sek\":" + suits + "," + extra
+            + "\"source_url\":\"https://www.avanza.se/priser-och-avgifter.html\",\"verified_on\":\"2026-09-26\"}";
+
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-start.json"), Class("avanza-start", "Start", "0", "0", "{\"from\":null,\"to\":null}", "\"eligible_below_capital_sek\":50000,"));
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-mini.json"), Class("avanza-mini", "Mini", "1", "0.0025", "{\"from\":null,\"to\":15600}"));
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-small.json"), Class("avanza-small", "Small", "39", "0.0015", "{\"from\":15600,\"to\":46000}"));
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-medium.json"), Class("avanza-medium", "Medium", "69", "0.00069", "{\"from\":46000,\"to\":143500}"));
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-fastpris.json"), Class("avanza-fastpris", "Fast Pris", "99", "0", "{\"from\":143500,\"to\":null}"));
+        File.WriteAllText(Path.Combine(_config, BacktestDefaults.FileName), "{\"format\":\"qa-backtest-defaults/1\",\"costs\":\"avanza-start\",\"cash\":45000}");
+    }
+
+    [Fact]
+    public void VerifiedCosts_AreLabelledVerified_InOutputAndLedger()
+    {
+        File.WriteAllText(Path.Combine(_config, "costs.avanza-small.json"), FixtureCosts(verifiedOn: "\"2026-09-26\""));
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60");
+
+        Assert.True(code == 0, error);
+        Assert.Contains("avanza-small (verified 2026-09-26)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("UNVERIFIED", output, StringComparison.Ordinal);
+        TrialRecord logged = Assert.Single(new TrialLedger(Ledger).ReadAll());
+        Assert.True(logged.CostsVerified);
+        Assert.Null(logged.Note);
+    }
+
+    [Fact]
+    public void BadPolicyFiles_AreErrors_NeverDefaults()
+    {
+        string dir = Path.Combine(_dir, "bad");
+        Directory.CreateDirectory(dir);
+        string policy = Path.Combine(dir, HoldoutPolicy.FileName);
+        Assert.Throws<BacktestConfigException>(() => HoldoutPolicy.Load(policy)); // missing
+        File.WriteAllText(policy, "{\"format\":\"qa-holdout/1\",\"locked\":false,\"start\":\"2025-10-01\"}");
+        Assert.Throws<BacktestConfigException>(() => HoldoutPolicy.Load(policy)); // unlocked without who/when/why
+        File.WriteAllText(policy, "{\"format\":\"qa-holdout/1\",\"locked\":true}");
+        Assert.Throws<BacktestConfigException>(() => HoldoutPolicy.Load(policy)); // no start
+        File.WriteAllText(policy, "not json");
+        Assert.Throws<BacktestConfigException>(() => HoldoutPolicy.Load(policy));
+
+        string costs = Path.Combine(dir, "costs.x.json");
+        File.WriteAllText(costs, FixtureCosts(participationCap: "1.5"));
+        Assert.Throws<BacktestConfigException>(() => CostModel.Load(costs));
+        foreach (string bad in new[] { "\"26/09/2026\"", "true", "20260926" })
+        {
+            File.WriteAllText(costs, FixtureCosts(verifiedOn: bad));
+            BacktestConfigException e = Assert.Throws<BacktestConfigException>(() => CostModel.Load(costs));
+            Assert.Contains($"verified_on must be null (not checked yet) or the date you checked the costs, in quotes, e.g. \"2026-09-26\"; it is {bad}.", e.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void Run_Synthetic_PrintsLabelsAndMetrics_AndLogs()
+    {
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "ma-cross", "--param", "fast=5", "--param", "slow=20",
+            "--synthetic", "5x300", "--seed", "11");
+
+        Assert.True(code == 0, error);
+        Assert.Contains("synthetic-gbm — survivorship-free, point-in-time", output, StringComparison.Ordinal);
+        Assert.Contains("seed 11", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("clipped", output, StringComparison.Ordinal); // synthetic data ends before the holdout
+        Assert.Contains("UNVERIFIED", output, StringComparison.Ordinal);
+        Assert.Contains("Trial T000001: ma-cross fast=5 slow=20 → ok", output, StringComparison.Ordinal);
+        Assert.Contains("Deflated Sharpe", output, StringComparison.Ordinal);
+        Assert.Contains("not financial advice", output, StringComparison.Ordinal);
+        TrialRecord logged = Assert.Single(new TrialLedger(Ledger).ReadAll());
+        Assert.Equal(11UL, logged.Seed);
+        Assert.Equal("5", logged.Parameters["fast"]);
+    }
+
+    [Fact]
+    public void Run_Json_IsTheLedgerRecord()
+    {
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "3x100", "--order", "moo", "--json");
+
+        Assert.True(code == 0, error);
+        using JsonDocument doc = JsonDocument.Parse(output);
+        JsonElement record = doc.RootElement.GetProperty("record");
+        Assert.Equal("T000001", record.GetProperty("id").GetString());
+        Assert.Equal("Ok", record.GetProperty("status").GetString());
+        Assert.Equal(99, record.GetProperty("metrics").GetProperty("observations").GetInt32());
+    }
+
+    [Fact]
+    public void Sweep_LogsEveryCombination_AndReportsPboAndDsr()
+    {
+        (int code, string output, string error) = Qa("backtest", "sweep", "--strategy", "ma-cross", "--grid", "fast=5,10", "--grid", "slow=20,40",
+            "--synthetic", "4x400");
+
+        Assert.True(code == 0, error);
+        Assert.Contains("4 configurations run and logged (4 ok)", output, StringComparison.Ordinal);
+        Assert.Contains("PBO (CSCV", output, StringComparison.Ordinal);
+        Assert.Contains("Deflated Sharpe Ratio of the best", output, StringComparison.Ordinal);
+        Assert.Equal(4, new TrialLedger(Ledger).ReadAll().Count);
+    }
+
+    [Fact]
+    public void Trials_ListAndVerify_AndDetectTampering()
+    {
+        Assert.Equal(0, Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60").Code);
+        Assert.Equal(0, Qa("backtest", "run", "--strategy", "random-targets", "--param", "seed=4", "--synthetic", "2x60").Code);
+
+        (int code, string output, _) = Qa("trials", "list");
+        Assert.Equal(0, code);
+        Assert.Contains("T000001", output, StringComparison.Ordinal);
+        Assert.Contains("random-targets", output, StringComparison.Ordinal);
+        Assert.Contains("2 of 2 trial(s)", output, StringComparison.Ordinal);
+
+        Assert.Contains("OK: 2 trial(s)", Qa("trials", "verify").Output, StringComparison.Ordinal);
+        string[] lines = File.ReadAllLines(Ledger);
+        File.WriteAllLines(Ledger, [lines[1]]);
+        (int bad, _, string error) = Qa("trials", "verify");
+        Assert.Equal(1, bad);
+        Assert.Contains("NOT intact", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LockedHoldout_ClipsByDefault_AndRefusesAnExplicitRangeIntoIt()
+    {
+        string config = Path.Combine(_dir, "early-holdout");
+        Directory.CreateDirectory(config);
+        File.WriteAllText(Path.Combine(config, HoldoutPolicy.FileName), FixtureHoldout.Replace("2025-10-01", "2015-06-01", StringComparison.Ordinal));
+        File.WriteAllText(Path.Combine(config, "costs.avanza-small.json"), FixtureCosts());
+
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x300", "--config-dir", config);
+        Assert.True(code == 0, error);
+        Assert.Contains("Data clipped to end 2015-05-31: the final holdout from 2015-06-01 is locked.", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x300", "--config-dir", config, "--to", "2015-12-31");
+        Assert.Equal(2, code);
+        Assert.Contains("REJECTED (holdout)", output, StringComparison.Ordinal);
+        Assert.Equal([TrialStatus.Ok, TrialStatus.RejectedHoldout], new TrialLedger(Ledger).ReadAll().Select(r => r.Status));
+    }
+
+    [Fact]
+    public void MissingHoldoutPolicy_StopsTheRun()
+    {
+        string empty = Path.Combine(_dir, "empty");
+        Directory.CreateDirectory(empty);
+        (int code, _, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60", "--config-dir", empty);
+        Assert.Equal(1, code);
+        Assert.Contains("do not run without it", error, StringComparison.Ordinal);
+        Assert.False(File.Exists(Ledger));
+    }
+
+    [Fact]
+    public void BadArguments_AreReadableErrors()
+    {
+        Assert.Contains("allowlist, which is empty", Qa("backtest", "run", "--strategy", "buy-and-hold").Error, StringComparison.Ordinal);
+        Assert.Contains("Give one data source", Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60", "--tickers", "ERIC-B").Error, StringComparison.Ordinal);
+        Assert.Contains("<instruments>x<bars>", Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "5by10").Error, StringComparison.Ordinal);
+        Assert.Contains("unknown parameter", Qa("backtest", "run", "--strategy", "ma-cross", "--param", "fast=5", "--param", "slow=9", "--param", "x=1", "--synthetic", "2x60").Error, StringComparison.Ordinal);
+        Assert.Contains("not key=value", Qa("backtest", "run", "--strategy", "ma-cross", "--param", "fast", "--synthetic", "2x60").Error, StringComparison.Ordinal);
+        Assert.Contains("--order", Qa("backtest", "run", "--strategy", "buy-and-hold", "--synthetic", "2x60", "--order", "stop").Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_OnTheHistoryStore_LabelsTheBias_AndRefusesNonContinuousInstruments()
+    {
+        string storePath = Path.Combine(_dir, "quant.duckdb");
+        var knownAt = new DateTimeOffset(2026, 9, 25, 16, 0, 0, TimeSpan.Zero);
+        using (HistoryStore store = HistoryStore.Open(storePath))
+        {
+            store.RegisterSource(AvanzaChartImporter.AvanzaPriceChart);
+            AddInstrument(store, "5240", "ERIC B", TradingModel.Continuous, knownAt, 60m);
+            AddInstrument(store, "9999", "FNAUCT", TradingModel.Unknown, knownAt, 10m);
+        }
+
+        // Stored as Avanza's "ERIC B"; typed the way the docs spell it.
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--tickers", "ERIC-B", "--store", storePath);
+        Assert.True(code == 0, error);
+        Assert.Contains("avanza-price-chart — NOT survivorship-free, NOT point-in-time", output, StringComparison.Ordinal);
+        Assert.Contains("current names only", output, StringComparison.Ordinal);
+        TrialRecord logged = Assert.Single(new TrialLedger(Ledger).ReadAll());
+        Assert.False(logged.SurvivorshipFree);
+        Assert.Equal(["ERIC B"], logged.Universe);
+        Assert.True(logged.To < new DateOnly(2025, 10, 1), "the locked holdout clips real data");
+
+        (code, _, error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--tickers", "FNAUCT", "--store", storePath);
+        Assert.Equal(1, code);
+        Assert.Contains("continuous trading", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Run_WithoutTickers_UsesTheAllowlist()
+    {
+        string storePath = Path.Combine(_dir, "quant.duckdb");
+        using (HistoryStore store = HistoryStore.Open(storePath))
+        {
+            store.RegisterSource(AvanzaChartImporter.AvanzaPriceChart);
+            AddInstrument(store, "5240", "ERIC B", TradingModel.Continuous, new DateTimeOffset(2026, 9, 25, 16, 0, 0, TimeSpan.Zero), 60m);
+        }
+
+        File.WriteAllText(Path.Combine(_config, "universe.json"), """{ "format": "qa-universe/1", "instruments": [ { "orderbook_id": "5240", "ticker": "ERIC B", "name": "Ericsson B" } ] }""");
+        (int code, string output, string error) = Qa("backtest", "run", "--strategy", "buy-and-hold", "--store", storePath);
+        Assert.True(code == 0, error);
+        Assert.Contains("Tickers: the allowlist", output, StringComparison.Ordinal);
+        Assert.Equal(["ERIC B"], Assert.Single(new TrialLedger(Ledger).ReadAll()).Universe);
+    }
+
+    private static void AddInstrument(HistoryStore store, string id, string ticker, TradingModel model, DateTimeOffset knownAt, decimal price)
+    {
+        var ticks = new TickSizeTable([new TickSizeBand(0m, 99.99m, 0.01m), new TickSizeBand(100m, 999.9m, 0.1m)]);
+        store.UpsertInstrument(
+            new InstrumentRecord(new OrderbookId(id), "SE0000000000", ticker, ticker, "SEK", model == TradingModel.Continuous ? "XSTO" : "SSME", "STOCK", model, 1m,
+                InstrumentRecord.CanonicalTickTable(ticks), new DateOnly(2026, 9, 25)),
+            AvanzaChartImporter.AvanzaPriceChart.Name, "test", knownAt);
+        var bars = new List<DailyBar>();
+        var rng = new SeededRandom(ulong.Parse(id, System.Globalization.CultureInfo.InvariantCulture));
+        for (DateOnly d = new(2025, 6, 2); d <= new DateOnly(2025, 12, 31); d = d.AddDays(1))
+        {
+            if (d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday)
+            {
+                continue;
+            }
+
+            decimal next = Math.Round(price * (decimal)Math.Exp(0.01 * rng.NextGaussian()), 2);
+            bars.Add(new DailyBar(d, price, Math.Max(price, next) + 0.5m, Math.Min(price, next) - 0.5m, next, 2_000_000));
+            price = next;
+        }
+
+        store.UpsertDailyBars(new OrderbookId(id), bars, AvanzaChartImporter.AvanzaPriceChart, "test", knownAt);
+    }
+
+    private (int Code, string Output, string Error) Qa(params string[] args)
+    {
+        var all = new List<string>(args);
+        if (args[0] is "backtest" or "trials")
+        {
+            all.AddRange(["--ledger", Ledger]);
+        }
+
+        if (args[0] is "backtest" or "costs" && !args.Contains("--config-dir"))
+        {
+            all.AddRange(["--config-dir", _config]);
+        }
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        int code = QaCli.Run([.. all], output, error);
+        return (code, output.ToString(), error.ToString());
+    }
+
+    private static string RepoRoot()
+    {
+        for (DirectoryInfo? d = new(AppContext.BaseDirectory); d is not null; d = d.Parent)
+        {
+            if (File.Exists(Path.Combine(d.FullName, "QuantAnalyst.sln")))
+            {
+                return d.FullName;
+            }
+        }
+
+        throw new InvalidOperationException("Repository root not found.");
+    }
+}

@@ -1,0 +1,15 @@
+{
+  "invalidSessionId": null,
+  "user": {
+    "loggedIn": true,
+    "greetingName": "<redacted>",
+    "pushSubscriptionId": "<redacted>",
+    "pushBaseUrl": "<redacted>",
+    "securityToken": "<redacted>",
+    "company": false,
+    "minor": false,
+    "start": false,
+    "customerGroup": "<redacted>",
+    "id": "<redacted>"
+  }
+}

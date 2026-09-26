@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The trading core (Phase 6, ADR 0003): order intents, pre-trade risk engine, mode gate, OrderGateway (the only
+    caller of IBrokerOrderChannel), OMS, reconciler, halt controller, kill switch, scheduler and audit log.
+    It never references QuantAnalyst.Avanza; the CLI composes the broker implementations.
+  -->
+  <PropertyGroup>
+    <RootNamespace>QuantAnalyst.Trading</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="QuantAnalyst.Trading.Tests" />
+    <InternalsVisibleTo Include="QuantAnalyst.Avanza.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QuantAnalyst.Core\QuantAnalyst.Core.csproj" />
+    <ProjectReference Include="..\QuantAnalyst.Data\QuantAnalyst.Data.csproj" />
+    <ProjectReference Include="..\QuantAnalyst.Analytics\QuantAnalyst.Analytics.csproj" />
+  </ItemGroup>
+
+</Project>

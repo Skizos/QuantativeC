@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>QuantAnalyst.Avanza.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\QuantAnalyst.Avanza\QuantAnalyst.Avanza.csproj" />
+    <ProjectReference Include="..\..\src\QuantAnalyst.Cli\QuantAnalyst.Cli.csproj" />
+    <!-- The architecture tests scan the Windows app's core assembly too. -->
+    <ProjectReference Include="..\..\src\QuantAnalyst.Desktop.Core\QuantAnalyst.Desktop.Core.csproj" />
+    <ProjectReference Include="..\..\src\QuantAnalyst.Data\QuantAnalyst.Data.csproj" />
+    <!-- Phase 6: the order architecture tests scan Trading's IL, and the gateway must refuse the Avanza channel. -->
+    <ProjectReference Include="..\..\src\QuantAnalyst.Trading\QuantAnalyst.Trading.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <!-- Sanitized/provisional fixtures only (CLAUDE.md: no network in tests). -->
+    <None Include="..\..\recordings\fixtures\avanza\**\*.json" LinkBase="fixtures\avanza" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

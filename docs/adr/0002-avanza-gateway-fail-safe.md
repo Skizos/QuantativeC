@@ -1,6 +1,6 @@
 # ADR 0002 — Avanza gateway and fail-safe design
 
-- **Status:** Proposed (2026-09-25), awaiting approval
+- **Status:** Accepted (2026-09-25). The owner approved the two-port split and the tiered strictness ("split the broker", "Apply the strict"); see `docs/plans/03-phase3-avanza-read.md` for how that answer was read.
 - **Related:** CLAUDE.md "Avanza gateway rules" / "Absolute safety rules", `docs/research/avanza-endpoints.md`, ADR 0003
 
 ## Context
@@ -56,7 +56,9 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
   - `public const string RoutesVersion = "2026-09-25";`
   - each route has an XML-doc `<see href>` to the client commit it came from
   - order routes are `internal`, visible only to `AvanzaOrderChannel`
-- **`AvanzaAuthenticator`:**
+- **`AvanzaAuthenticator`** (two methods since 2026-09-25):
+  - **BankID** is the owner's choice for now and the default. It runs one QR transaction per trigger that a human approves in the BankID app, and never starts a second transaction. Details: `docs/research/avanza-endpoints.md` §1. BankID failures don't count toward the lock below.
+  - **TOTP** stays fully implemented and is selected with `--login totp` / `QA_AVANZA_LOGIN=totp`. Unattended Auto mode (Phase 8) needs it. Everything below describes TOTP.
   - **States:** `NotAuthenticated → Authenticating → Valid → Expired | Failed | Locked`.
   - **Flow:** `usercredentials` → (if `twoFactorLogin.method == "TOTP"`) `totp`.
     - Any other 2FA method goes to `Failed` ("unsupported 2FA").
@@ -88,7 +90,7 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
     - covers search, stock details, chart, news, transactions
     - missing required fields → `SchemaDriftException`, which disables the feature but does **not** halt trading unless the DTO feeds a risk check (chart history does not; the tick table is Tier A)
     - unknown extras are logged once per day as `drift.warning`
-  - **Why tiers:** this is a refinement of CLAUDE.md's rule, which needs your approval. The master plan §2 item 8 explains the reasoning.
+  - **Why tiers:** this is a refinement of CLAUDE.md's rule, approved 2026-09-25; CLAUDE.md now states the tiers. The master plan §2 item 8 explains the reasoning.
 - **Mappers:** DTOs map to Core types in one place.
   - Prices are parsed as `decimal`.
   - Volumes that arrive as `"0.00"` are parsed as `decimal`, then validated to be integral.
@@ -137,11 +139,35 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
 - **Research refresh:** before touching any route, re-read the clients (Qluxzz, avanza-sdk-go) at their HEAD, diff against `AvanzaRoutes`, update `avanza-endpoints.md` with the new commit URLs, and bump `RoutesVersion`.
 
 ### 6. What we deliberately do not do
-- No BankID automation.
+- No BankID *approval* automation: a human approves every BankID login on the phone.
 - No automatic login retry, and no retry of any order POST.
 - No stop-loss orders in v1. The endpoint exists but the payload has a `orderBookId` casing quirk and is lightly tested; revisit after Phase 8.
 - No reliance on `requestId` for server-side idempotency, since that behaviour is unknown.
-- No scraping of HTML pages. The Go SDK visits `/handla/order.html` during BankID session setup; our username+TOTP flow does not need it.
+- No scraping of HTML pages. BankID login GETs `/` and `/handla/order.html` once each, exactly as the Go SDK does, **only to receive cookies**. Their content is never parsed, and the recording keeps only the byte count.
+
+## Implementation notes (Phase 3)
+
+- **Resilience and rate limiting are our own code,** not `Microsoft.Extensions.Http.Resilience` / `System.Threading.RateLimiting`:
+  - `ReadResilienceHandler`: retry, circuit breaker, attempt timeout
+  - `RateLimitHandler`: token bucket
+
+  Both are small, run on `TimeProvider` so their tests are deterministic, and avoid a Polly dependency in the trading path. The behaviour is the one specified above.
+- **Unknown fields are found by a scanner** that walks the JSON alongside the source-generated metadata. A Tier A drift report therefore lists **every** unknown path, not only the first.
+- **No automatic re-login in Phase 3.** The CLI is a one-shot trigger; the "one re-login attempt" on 401/403 belongs to the long-running `HaltController` (Phase 6).
+- **Deals:** no reference client models the current response, so the DTO waits for your recording (`EndpointNotModelledException` until then).
+
+## Implementation notes (Phase 4)
+
+- **Stream pipeline:** RateLimit → SecurityToken → Cookies → primary.
+  - It has no recording handler, because that handler buffers whole bodies. The stream client records events itself (`qa-stream-recording/1`).
+  - It has no retry handler: the stream loop is the retry.
+- **Timeouts:** the response headers must arrive within the normal attempt timeout (15 s). After that, an **idle watchdog** (60 s without a byte) replaces the HTTP timeout, so a half-open connection is dropped and reconnected. The quote is stale long before that.
+- **Terminal statuses:** besides 401/403, a **404 is `EndpointGone`**, and any other 4xx or a non-`text/event-stream` 200 is **schema drift**. None of them reconnects.
+- **Events:** `info` events are heartbeats and are never parsed. Any other event name except `ORDER_DEPTH` is drift, because the stream is Tier A.
+- **The `ORDER_DEPTH` DTO is provisional** until your recording (the Go SDK's flat `{buyPrice, buyVolume, sellPrice, sellVolume}` levels).
+- **Staleness is measured on our clock:** the receipt time of the last depth event and of the last *successful* poll. Avanza's `quote.updated` isn't used, because it is the last server-side change and stays old in a quiet market.
+- **Bid/ask:** the composer takes them from whichever source is newer, because the poll also carries a full depth. The stale check runs every 250 ms.
+- **Own-order stream (`/_push/trading/orders/`):** moved to Phase 6, where the OMS consumes it. Until an order exists there is nothing to record.
 
 ## Alternatives considered
 
@@ -161,7 +187,7 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
 
 ## Open items (resolved in the named phase)
 
-1. Can ~30 concurrent SSE depth streams run on one session, or is there a multiplexed variant? **Phase 4**, from recordings.
+1. Can ~30 concurrent SSE depth streams run on one session, or is there a multiplexed variant? **Phase 4**, from recordings. `qa stream` runs up to 5 streams on one session. Your two-instrument recording (plan 04, stop point) is the first data point; 30 streams stays unproven until a Paper-mode run in Phase 6.
 2. The current path for `modify`. **Phase 6/7**, from a captured web-app request.
 3. The `profit` field on sells (Qluxzz #156). **Phase 7**, from a captured web-app sell.
 4. How lockout is signalled (status and message). **Phase 3**, only if it happens; never provoked.

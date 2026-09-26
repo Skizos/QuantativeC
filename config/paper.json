@@ -1,0 +1,7 @@
+{
+  "format": "qa-paper/1",
+  "costs": "avanza-start",
+  "cash": 5000,
+  "decision_time": "09:10",
+  "note": "The Paper account (Phase 6). costs names config/costs.<name>.json; cash starts a NEW book only (state/paper/book.json keeps its own cash once it exists). decision_time is Stockholm time, after the open: daily strategies decide on bars through yesterday's close and place day limit orders. 5,000 SEK is the owner's starting capital (2026-09-26), on the Start class (under its 50,000 SEK limit). An optional strategy member {name, params} is what 'qa paper run' trades without arguments; set it with 'qa paper strategy <name> --param k=v'."
+}

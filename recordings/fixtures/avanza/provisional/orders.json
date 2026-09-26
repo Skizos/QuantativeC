@@ -1,0 +1,27 @@
+{
+  "orders": [
+    {
+      "account": { "accountId": "9990001", "name": { "value": "Algo ISK" }, "type": { "accountType": "INVESTERINGSSPARKONTO" }, "urlParameterId": "url-1" },
+      "orderId": "700000001",
+      "volume": 10,
+      "originalVolume": 10,
+      "price": 69.5,
+      "amount": 695.0,
+      "orderbookId": "5240",
+      "side": "BUY",
+      "validUntil": "2026-09-25",
+      "created": "2026-09-25T09:15:02.345+02:00",
+      "deletable": true,
+      "modifiable": true,
+      "message": "",
+      "state": "ACTIVE",
+      "stateText": "Aktiv",
+      "stateMessage": "",
+      "orderbook": { "id": "5240", "name": "Ericsson B", "countryCode": "SE", "currency": "SEK", "instrumentType": "STOCK", "volumeFactor": "1", "isin": "SE0000108656", "mic": "XSTO" },
+      "additionalParameters": {},
+      "condition": "NORMAL"
+    }
+  ],
+  "fundOrders": [],
+  "cancelledOrders": []
+}

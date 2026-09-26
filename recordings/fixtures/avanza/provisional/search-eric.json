@@ -1,0 +1,37 @@
+{
+  "totalNumberOfHits": 2,
+  "hits": [
+    {
+      "type": "STOCK",
+      "title": "Ericsson B",
+      "highlightedTitle": "<b>Ericsson</b> B",
+      "description": "Telefonaktiebolaget LM Ericsson",
+      "highlightedDescription": "",
+      "path": null,
+      "flagCode": "SE",
+      "orderBookId": "5240",
+      "urlSlugName": "ericsson-b",
+      "tradeable": true,
+      "sellable": true,
+      "buyable": true,
+      "price": { "last": "70.86", "currency": "SEK", "todayChangePercent": "0.60", "todayChangeValue": "0.42", "todayChangeDirection": 1, "threeMonthsAgoChangePercent": "null", "threeMonthsAgoChangeDirection": 0, "spread": "0.03" },
+      "stockSectors": [ { "id": 1, "level": 1, "name": "Teknik", "englishName": "Technology", "highlightedName": null } ],
+      "fundTags": [],
+      "marketPlaceName": "Stockholmsbörsen",
+      "subType": null,
+      "highlightedSubType": null
+    },
+    {
+      "type": "STOCK",
+      "title": "Ericsson A",
+      "description": "Telefonaktiebolaget LM Ericsson",
+      "orderBookId": "5239",
+      "tradeable": true,
+      "price": { "last": "null", "currency": "SEK" },
+      "marketPlaceName": "Stockholmsbörsen"
+    }
+  ],
+  "searchQuery": "ERIC B",
+  "facets": { "types": [ { "type": "STOCK", "count": 2 } ] },
+  "pagination": { "size": 10, "from": 0 }
+}

@@ -1,0 +1,42 @@
+{
+  "id": "5240",
+  "name": "Ericsson B",
+  "isin": "SE0000108656",
+  "instrumentId": "inst-5240",
+  "marketPlace": "XSTO",
+  "countryCode": "SE",
+  "tickSizeList": {
+    "tickSizeEntries": [
+      { "min": 0, "max": 0.4999, "tick": 0.0001 },
+      { "min": 0.5, "max": 0.9995, "tick": 0.0005 },
+      { "min": 1, "max": 4.999, "tick": 0.001 },
+      { "min": 5, "max": 9.995, "tick": 0.005 },
+      { "min": 10, "max": 49.99, "tick": 0.01 },
+      { "min": 50, "max": 99.98, "tick": 0.02 },
+      { "min": 100, "max": 499.95, "tick": 0.05 },
+      { "min": 500, "max": 999.9, "tick": 0.1 },
+      { "min": 1000, "max": 4999.5, "tick": 0.5 },
+      { "min": 5000, "max": 9999999, "tick": 1 }
+    ]
+  },
+  "collateralValue": 0.8,
+  "currency": "SEK",
+  "minValidUntil": "2026-09-25",
+  "maxValidUntil": "2026-10-23",
+  "instrumentType": "STOCK",
+  "volumeFactor": 1,
+  "featureSupport": {
+    "stopLoss": true,
+    "fillAndOrKill": true,
+    "openVolume": true,
+    "marketTrades": true,
+    "marketTradesSummary": true,
+    "nordicAtMid": false,
+    "stopLossMarketMakerQuote": false,
+    "routingStrategies": false,
+    "limitOnClose": false
+  },
+  "priceType": "MONETARY",
+  "tradingUnit": 1,
+  "tickerSymbol": "ERIC B"
+}

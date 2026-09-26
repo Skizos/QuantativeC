@@ -1,15 +1,38 @@
 # qe_impl: all C++ engine code as a static library (unit tests link it directly).
 add_library(qe_impl STATIC
+    src/qe/backtest/engine.cpp
+    src/qe/core/interp.cpp
+    src/qe/core/math.cpp
+    src/qe/core/rng.cpp
+    src/qe/core/sobol.cpp
+    src/qe/core/stats.cpp
+    src/qe/pricing/binomial.cpp
     src/qe/pricing/black_scholes.cpp
+    src/qe/pricing/implied_vol.cpp
+    src/qe/portfolio/hrp.cpp
+    src/qe/portfolio/optimizers.cpp
+    src/qe/portfolio/rebalance.cpp
+    src/qe/pricing/monte_carlo.cpp
+    src/qe/risk/covariance.cpp
+    src/qe/risk/stress.cpp
+    src/qe/risk/var_es.cpp
 )
 target_include_directories(qe_impl PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src")
+# Eigen: vcpkg baseline gives 5.0.1; Ubuntu packages give 3.4.0. Code must build with both (ADR 0001).
+find_package(Eigen3 CONFIG REQUIRED)
+target_link_libraries(qe_impl PUBLIC Eigen3::Eigen)
+target_compile_definitions(qe_impl PUBLIC EIGEN_MPL2_ONLY)
 target_compile_features(qe_impl PUBLIC cxx_std_20)
 qe_set_warnings(qe_impl)
 
 # qe: the shared library whose ONLY exports are declared in include/qe_api.h.
 add_library(qe SHARED
-    src/api/qe_api.cpp
+    src/api/backtest_api.cpp
     src/api/last_error.cpp
+    src/api/portfolio_api.cpp
+    src/api/pricing_api.cpp
+    src/api/qe_api.cpp
+    src/api/risk_api.cpp
 )
 target_include_directories(qe
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"

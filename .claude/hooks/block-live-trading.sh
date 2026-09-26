@@ -33,4 +33,27 @@ if printf '%s' "$input" | grep -Eiq -- "(order-entry/order|rest/order/(new|modif
   deny "command references an Avanza order endpoint."
 fi
 
+# 4) Money movement under Avanza's API (ADR 0004): transfers, withdrawals, deposits, payments.
+#    Matched by keyword because no maintained client documents these paths; "transactions" stays allowed.
+if printf '%s' "$input" | grep -Eiq -- "_api/[A-Za-z0-9/_.-]*(transfer|withdraw|deposit|payment|uttag|overforing|insattning)"; then
+  deny "command references an Avanza money-transfer endpoint (ADR 0004: the program never moves money)."
+fi
+
+# 5) The final backtest holdout (CLAUDE.md "Final holdout window locked unless I unlock it"): Claude may read
+#    config/holdout.json but never change, move, delete or restore it. Only the owner edits it.
+if printf '%s' "$input" | grep -Eiq -- "holdout\.json" \
+   && printf '%s' "$input" | grep -Eiq -- "(>|sed[^|;&]*-i|(^|[^a-z])(tee|mv|cp|rm|truncate|dd|install|chmod|ln)[[:space:]]|python|perl|ruby|node|pwsh|powershell|git[[:space:]]+(checkout|restore|rm|mv|reset|stash|apply)|Set-Content|Out-File|Remove-Item|Move-Item|Copy-Item)"; then
+  deny "command would change config/holdout.json (the final backtest holdout is the owner's to unlock)."
+fi
+
+# 6) Promotion (ADR 0003 §3): 'qa promote' raises the highest allowed trading mode. Only the owner runs it, and
+#    Claude never writes promotion/state.json (reading it is fine).
+if printf '%s' "$input" | grep -Eiq -- "(^|[^A-Za-z0-9_-])(qa(\.ps1|\.exe|\.dll)?|--)[[:space:]]+promote([^A-Za-z0-9_-]|$)"; then
+  deny "command runs 'qa promote' (promotion is the owner's step, ADR 0003 §3)."
+fi
+if printf '%s' "$input" | grep -Eiq -- "promotion/state\.json" \
+   && printf '%s' "$input" | grep -Eiq -- "(>|sed[^|;&]*-i|(^|[^a-z])(tee|mv|cp|rm|truncate|dd|install|chmod|ln)[[:space:]]|python|perl|ruby|node|pwsh|powershell|git[[:space:]]+(checkout|restore|rm|mv|reset|stash|apply)|Set-Content|Out-File|Remove-Item|Move-Item|Copy-Item)"; then
+  deny "command would change promotion/state.json (the owner's promotion record, ADR 0003 §3)."
+fi
+
 exit 0

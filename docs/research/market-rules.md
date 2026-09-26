@@ -29,7 +29,7 @@ Volatility guards and trading halts are not modelled in v1. When a halt occurs, 
 ## 2. Holidays and half days
 
 - Holidays: closed on Swedish public holidays plus exchange-specific days such as Christmas Eve, Midsummer Eve and New Year's Eve. A search extract says 2026 has about 10 weekday closures and several half days (UNVERIFIED). Christmas Eve 2026 (Thu 24 Dec) is a closed day per the same extract.
-- **I did not transcribe a date list**, because no primary source could be read. Plan: Phase 4 adds `config/market-calendar.XNSA.2026.json` and `…2027.json`. You fill them from Nasdaq's official calendar (<https://www.nasdaq.com/european-market-activity/trading-hours>) or a vendor, and a test checks every weekday of the year is classified as full, half or closed.
+- **I did not transcribe a date list**, because no primary source could be read. Plan: Phase 4 adds `config/market-calendar.XSTO.2026.json` and `…2027.json`. You fill them from Nasdaq's official calendar (<https://www.nasdaq.com/european-market-activity/trading-hours>) or a vendor, and a test checks every weekday of the year is classified as full, half or closed.
 
 ## 3. Tick sizes (MiFID II RTS 11)
 

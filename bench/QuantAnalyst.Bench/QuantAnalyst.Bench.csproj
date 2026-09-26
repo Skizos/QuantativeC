@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\QuantAnalyst.Analytics\QuantAnalyst.Analytics.csproj" />
     <ProjectReference Include="..\..\src\QuantAnalyst.Native\QuantAnalyst.Native.csproj" />
   </ItemGroup>
 

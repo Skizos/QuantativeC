@@ -1,6 +1,6 @@
 # ADR 0001 — Native interop: flat C ABI + `[LibraryImport]`
 
-- **Status:** Proposed (2026-09-25), awaiting approval
+- **Status:** Accepted (implemented in Phase 1; ABI 1.1 additions in Phase 2; ABI 1.2 backtest engine in Phase 5)
 - **Deciders:** project owner
 - **Related:** CLAUDE.md "Interop rules", `docs/research/versions.md`
 
@@ -81,9 +81,8 @@ Expose **one flat C ABI** (`native/include/qe_api.h`, implemented in `native/src
 
 ## Open items
 
-1. **Eigen version:** the vcpkg baseline resolves `eigen3` to **5.0.1**, a major bump from 3.4.x.
-   - Plan: use 5.0.1 and run the full numeric suite in Phase 2.
-   - If anything regresses, pin `eigen3` 3.4.0 via manifest `overrides` and record it here.
+1. ~~**Eigen version:** the vcpkg baseline resolves `eigen3` to **5.0.1**, a major bump from 3.4.x.~~
+   **Resolved 2026-09-25 (Phase 2):** keep 5.0.1. The vcpkg baseline `10541e31` pins eigen3 5.0.1, and the full Phase 2 numeric suite passed with it in CI on GCC (ubuntu-24.04), clang ASan+UBSan, and MSVC (windows-2025) ([run 36171749352](https://github.com/Skizos/QuantativeC/actions/runs/36171749352)). Cloud sessions use Ubuntu's Eigen 3.4.0, and the same suite passes there too. The code uses only APIs common to both.
 2. **QuantLib 1.42.1:** an optional vcpkg feature, off by default. It is only needed if we want cross-checks against QuantLib pricers in tests. Decide in Phase 2.
 3. **Solution file name:** `QuantAnalyst.sln` vs `.slnx`; see the master plan, Phase 1 note.
 

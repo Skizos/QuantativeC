@@ -1,5 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "QA_RUNNER": "claude"
+  },
   "permissions": {
     "allow": [
       "WebFetch(domain:learn.microsoft.com)",
@@ -39,7 +42,13 @@
       "Read(./secrets/**)",
       "Read(./recordings/live/**)",
       "Edit(./secrets/**)",
-      "Write(./secrets/**)"
+      "Write(./secrets/**)",
+      "Edit(./config/holdout.json)",
+      "Write(./config/holdout.json)",
+      "Edit(./promotion/state.json)",
+      "Write(./promotion/state.json)",
+      "Bash(qa promote:*)",
+      "Bash(./qa promote:*)"
     ]
   },
   "hooks": {

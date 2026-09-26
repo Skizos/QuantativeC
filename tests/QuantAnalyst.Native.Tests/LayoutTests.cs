@@ -29,6 +29,82 @@ public sealed class LayoutTests
             typeof(QeStructLayoutInfo).AssemblyQualifiedName!,
             ["Size", "Alignment", "FieldCount", "Reserved", "Offsets"]
         },
+        {
+            (int)QeStructId.BsGreeks,
+            typeof(BlackScholesGreeks).AssemblyQualifiedName!,
+            ["price", "delta", "gamma", "vega", "theta", "rho", "status", "reserved"]
+        },
+        {
+            (int)QeStructId.IvInput,
+            typeof(ImpliedVolInput).AssemblyQualifiedName!,
+            ["spot", "strike", "rate", "dividendYield", "expiryYears", "price", "optionType", "reserved"]
+        },
+        { (int)QeStructId.IvOutput, typeof(ImpliedVolOutput).AssemblyQualifiedName!, ["volatility", "status", "iterations"] },
+        { (int)QeStructId.LatticeInput, typeof(LatticeInput).AssemblyQualifiedName!, ["option", "steps", "exercise"] },
+        {
+            (int)QeStructId.McConfig,
+            typeof(QeMcConfig).AssemblyQualifiedName!,
+            ["StructSize", "Flags", "Paths", "Seed", "Replications", "Steps"]
+        },
+        { (int)QeStructId.McResult, typeof(MonteCarloResult).AssemblyQualifiedName!, ["price", "stdError", "paths", "seed"] },
+        { (int)QeStructId.CovConfig, typeof(QeCovConfig).AssemblyQualifiedName!, ["StructSize", "Method", "EwmaLambda"] },
+        {
+            (int)QeStructId.VarEs,
+            typeof(VarEsResult).AssemblyQualifiedName!,
+            ["valueAtRisk", "expectedShortfall", "observations", "seed"]
+        },
+        {
+            (int)QeStructId.OptConfig,
+            typeof(QeOptConfig).AssemblyQualifiedName!,
+            ["StructSize", "Method", "RiskAversion", "Tolerance", "MaxIterations", "Reserved"]
+        },
+        { (int)QeStructId.OptResult, typeof(QeOptResult).AssemblyQualifiedName!, ["Objective", "Iterations", "Converged"] },
+        {
+            (int)QeStructId.RebalanceAsset,
+            typeof(RebalanceAsset).AssemblyQualifiedName!,
+            ["price", "targetWeight", "currentQuantity", "lotSize"]
+        },
+        {
+            (int)QeStructId.RebalanceConfig,
+            typeof(QeRebalanceConfig).AssemblyQualifiedName!,
+            ["StructSize", "Reserved", "Cash", "CashBuffer", "MinTradeValue", "FeeMin", "FeeRate"]
+        },
+        {
+            (int)QeStructId.RebalanceTrade,
+            typeof(RebalanceTrade).AssemblyQualifiedName!,
+            ["targetQuantity", "tradeQuantity", "tradeValue", "fee", "finalWeight"]
+        },
+        {
+            (int)QeStructId.RebalanceSummary,
+            typeof(RebalanceSummary).AssemblyQualifiedName!,
+            ["portfolioValue", "cashAfter", "totalFees", "trackingError", "trades", "feasible"]
+        },
+        {
+            (int)QeStructId.BtConfig,
+            typeof(QeBtConfig).AssemblyQualifiedName!,
+            ["StructSize", "Reserved", "InitialCash", "CourtageMin", "CourtageRate", "FxFeeRate", "SlippageBps", "HalfSpreadBps", "ParticipationCap"]
+        },
+        { (int)QeStructId.BtInstrument, typeof(BacktestInstrument).AssemblyQualifiedName!, ["lotSize", "foreignCurrency", "reserved"] },
+        {
+            (int)QeStructId.BtBar,
+            typeof(BacktestBar).AssemblyQualifiedName!,
+            ["open", "high", "low", "close", "volume", "valid", "reserved"]
+        },
+        {
+            (int)QeStructId.BtOrder,
+            typeof(BacktestOrder).AssemblyQualifiedName!,
+            ["instrument", "side", "type", "reserved", "quantity", "limitPrice"]
+        },
+        {
+            (int)QeStructId.BtFill,
+            typeof(BacktestFill).AssemblyQualifiedName!,
+            ["instrument", "side", "type", "orderIndex", "quantity", "price", "courtage", "fxFee", "spreadSlippageCost"]
+        },
+        {
+            (int)QeStructId.BtState,
+            typeof(BacktestState).AssemblyQualifiedName!,
+            ["cash", "equity", "grossExposure", "courtage", "fxFees", "spreadSlippage", "fills", "orders"]
+        },
     };
 
     [Theory]
@@ -59,6 +135,12 @@ public sealed class LayoutTests
         Assert.Equal(16, Unsafe.SizeOf<BlackScholesOutput>());
         Assert.Equal(80, Unsafe.SizeOf<QeStructLayoutInfo>());
         Assert.Equal(QeEngineConfig.QeEngineConfigSize, Unsafe.SizeOf<QeEngineConfig>());
+        Assert.Equal(QeBtConfig.QeBtConfigSize, Unsafe.SizeOf<QeBtConfig>());
+        Assert.Equal(16, Unsafe.SizeOf<BacktestInstrument>());
+        Assert.Equal(48, Unsafe.SizeOf<BacktestBar>());
+        Assert.Equal(32, Unsafe.SizeOf<BacktestOrder>());
+        Assert.Equal(56, Unsafe.SizeOf<BacktestFill>());
+        Assert.Equal(64, Unsafe.SizeOf<BacktestState>());
     }
 
     [Fact]

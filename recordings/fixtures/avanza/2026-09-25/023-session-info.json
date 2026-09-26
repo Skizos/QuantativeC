@@ -1,0 +1,57 @@
+{
+  "format": "qa-recording/1",
+  "routesVersion": "2026-09-25",
+  "route": "session-info",
+  "tier": "A",
+  "recordedAtUtc": "2026-09-25T21:02:23.1422595\u002B00:00",
+  "request": {
+    "method": "GET",
+    "path": "/_api/authentication/session/info/session",
+    "query": null,
+    "headerNames": [
+      "Accept",
+      "Accept-Encoding",
+      "Cookie",
+      "User-Agent",
+      "X-SecurityToken"
+    ],
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "headerNames": [
+      "AVANZA_TRACE_ID",
+      "Cache-Control",
+      "Connection",
+      "Date",
+      "Keep-Alive",
+      "Pragma",
+      "Strict-Transport-Security",
+      "Transfer-Encoding",
+      "Vary",
+      "X-SecurityToken"
+    ],
+    "setCookieNames": [],
+    "body": {
+      "invalidSessionId": "\u003Credacted\u003E",
+      "user": {
+        "loggedIn": true,
+        "greetingName": "\u003Credacted\u003E",
+        "pushSubscriptionId": "\u003Credacted\u003E",
+        "pushBaseUrl": "\u003Credacted\u003E",
+        "securityToken": "\u003Credacted\u003E",
+        "company": false,
+        "minor": false,
+        "customerGroup": "\u003Credacted\u003E",
+        "start": false,
+        "id": "\u003Credacted\u003E"
+      }
+    }
+  },
+  "sanitized": {
+    "tool": "qa recordings sanitize",
+    "amountsReplaced": false,
+    "recordIdsReplaced": true
+  }
+}

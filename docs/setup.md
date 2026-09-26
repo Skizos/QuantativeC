@@ -51,6 +51,8 @@ cmake --preset msvc-dev; cmake --build --preset msvc-dev; ctest --preset msvc-de
 dotnet build QuantAnalyst.sln; dotnet test --solution QuantAnalyst.sln
 ```
 
+**Running `qa`:** it is not on your PATH. From the repository folder run `.\qa <command>`: the `qa.ps1` launcher rebuilds what changed (the native library through `build.ps1 -NoManaged`, then qa) and runs it. For a bare `qa` everywhere, add `function qa { & 'C:\path\to\QuantativeC\qa.ps1' @args }` to your `$PROFILE`. More in `docs/cli.md`.
+
 **How the managed tests find the native library:**
 1. CMake copies `qe.dll` to `artifacts/native/win-x64/`.
 2. `QuantAnalyst.Native` ships that file as `runtimes/win-x64/native/qe.dll` in every output folder.
@@ -104,9 +106,10 @@ Claude Code must never run QuantAnalyst in **Confirm** or **Auto** mode, or call
 - pass `--mode Confirm|Auto`, `--mode=auto`, `-m auto`, …
 - set `TRADING__MODE` / `Trading:Mode` to Confirm/Auto, including `dotnet user-secrets set`
 - reference Avanza order routes (`order-entry/order`, `rest/order/{new,modify,delete}`, `stoploss/{new,modify}`, `fund-order-page/{buy,sell}`)
+- reference Avanza money-movement paths: `transfer`, `withdraw`, `deposit`, `payment`, `uttag`, `overforing` or `insattning` under `/_api/` (ADR 0004)
 
 **Check it in three steps:**
-1. **Self-test:** `bash tests/hooks/block-live-trading.test.sh`. Expect 23 lines starting with `ok` and exit code 0. CI runs this on every push.
+1. **Self-test:** `bash tests/hooks/block-live-trading.test.sh`. Expect 29 lines starting with `ok` and exit code 0. CI runs this on every push.
 2. **Registration:** in Claude Code, run `/hooks` and confirm there is a `PreToolUse` entry for `Bash` pointing to `block-live-trading.sh`.
 3. **Live refusal:** ask Claude Code to run `echo qa paper run --mode Auto`. The tool call must be refused with `BLOCKED by .claude/hooks/block-live-trading.sh: …`. If it runs, stop, because the hook is not active.
 
@@ -117,12 +120,41 @@ Claude Code must never run QuantAnalyst in **Confirm** or **Auto** mode, or call
 
 ---
 
-## 5. Secrets (Phase 3 onwards)
+## 5. Logging in to Avanza (Phase 3 onwards)
 
-Nothing in Phase 1–2 needs credentials. The following comes into play in Phase 3:
-- **Store:** Avanza credentials (`AVANZA__USERNAME`, `AVANZA__PASSWORD`, `AVANZA__TOTPSECRET`, `AVANZA__ALLOWEDACCOUNTIDS`) go in **Windows Credential Manager**. `dotnet user-secrets` is the development fallback.
-- **Never:** in the repo, in `.env` files Claude can read, or in logs.
+**Default: BankID.** `qa` draws a QR code in the terminal; you scan it with the BankID app and approve. Nothing is stored on the PC.
+- Every `qa` command that talks to Avanza is one login, and you approve each one.
+- If you don't approve within 3 minutes, the command stops. Run it again to get a new QR code.
+- Use Windows Terminal or PowerShell 7 so the QR block characters render. If the code looks broken, maximise the window.
+
+**Later: TOTP (unattended).** Needed for Auto mode in Phase 8. When you have the TOTP secret:
+1. `qa secrets set` stores it (see below).
+2. Then either:
+   - add `--login totp` to a command, or
+   - make TOTP the default: `[Environment]::SetEnvironmentVariable('QA_AVANZA_LOGIN','totp','User')` and open a new terminal.
+
+Go back to BankID any time with `--login bankid`.
+
+### TOTP credentials
+
+TOTP credentials live in **Windows Credential Manager** as two generic credentials:
+
+| Target | User name | Password |
+|---|---|---|
+| `QuantAnalyst:Avanza` | your Avanza username | your Avanza password |
+| `QuantAnalyst:Avanza:TOTP` | `totp` | the Base32 TOTP secret Avanza showed when you enabled an authenticator app |
+
+**Set them up** with one of:
+- `qa secrets set`: prompts without echo and checks that the TOTP secret is valid Base32 before storing anything.
+- `cmdkey /generic:QuantAnalyst:Avanza /user:<username> /pass`: with no value after `/pass`, cmdkey prompts for it, so the secret stays out of your shell history. Repeat for `QuantAnalyst:Avanza:TOTP`.
+
+Then run `qa secrets check`. It reports which entries exist and never prints values.
+
+**Rules:**
+- **Development fallback** (non-Windows): environment variables `QA_AVANZA_USERNAME`, `QA_AVANZA_PASSWORD` and `QA_AVANZA_TOTP_SECRET`, selected with `--secret-store env`. Never used in CI. `dotnet user-secrets` is not used, because it stores plaintext JSON.
+- **Never** put credentials in the repo, in `.env` files Claude can read, or in logs. The logger redacts them anyway, and a test scans a full Trace-level run for them.
 - **Claude Code access:** `.claude/settings.json` denies reading `.env*`, `secrets/**` and `recordings/live/**`.
+- **Login lock (TOTP only):** a failed TOTP login is recorded in `state/auth.json`. A second failure within 24 h, or an HTTP 423/429 on login, **locks** TOTP login. `qa` then refuses to try TOTP until you check your login with BankID and run `qa login --clear-lock`. BankID login still works while TOTP is locked.
 
 ---
 
@@ -140,6 +172,8 @@ Nothing in Phase 1–2 needs credentials. The following comes into play in Phase
 
 | Symptom | Fix |
 |---|---|
+| `qa: The term 'qa' is not recognized as a name of a cmdlet, function, script file, or executable program` | `qa` is not on your PATH. From the repository folder use `.\qa …` (the `qa.ps1` launcher), or add the `$PROFILE` function from §1.3. |
+| `error: qe native library implements ABI 1.1, but QuantAnalyst.Native requires 1.2+` | The native library is older than the code (it was built before a `git pull`). Run `.\build.ps1` once; the updated `.\qa` launcher then rebuilds it by itself whenever the native sources change. |
 | `DllNotFoundException: Could not find the qe native library` | Build the native library first (`cmake --preset dev && cmake --build --preset dev`, or `./build.ps1`). The message lists every path searched. |
 | Build warning `QE0001` | Same cause: no staged library under `artifacts/native/`. |
 | `QE_USE_VCPKG=ON but VCPKG_ROOT is not set` | Install vcpkg (§1.2 or §2), or set `QE_USE_VCPKG=OFF` to use installed packages. |

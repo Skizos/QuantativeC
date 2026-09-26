@@ -13,8 +13,10 @@ public sealed class AbiTests
     }
 
     [Theory]
-    [InlineData(1, 0, true)]
+    [InlineData(1, 2, true)]
     [InlineData(1, 7, true)]
+    [InlineData(1, 1, false)]
+    [InlineData(1, 0, false)]
     [InlineData(0, 9, false)]
     [InlineData(2, 0, false)]
     public void IsCompatible_RequiresSameMajorAndAtLeastExpectedMinor(int major, int minor, bool expected) =>

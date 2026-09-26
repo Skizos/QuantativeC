@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Windows app's window and views (docs/plans/10-windows-app.md). Only XAML and thin code-behind: every rule and
+    every action lives in QuantAnalyst.Desktop.Core, which is tested on Linux. EnableWindowsTargeting lets the Linux CI
+    job build this project too; it runs on Windows only. Start it with .\qa-app.ps1.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>QuantAnalyst</AssemblyName>
+    <RootNamespace>QuantAnalyst.Desktop</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\QuantAnalyst.Desktop.Core\QuantAnalyst.Desktop.Core.csproj" />
+  </ItemGroup>
+
+</Project>
