@@ -100,8 +100,12 @@ public sealed class BacktestCliTests : IDisposable
         string costs = Path.Combine(dir, "costs.x.json");
         File.WriteAllText(costs, FixtureCosts(participationCap: "1.5"));
         Assert.Throws<BacktestConfigException>(() => CostModel.Load(costs));
-        File.WriteAllText(costs, FixtureCosts(verifiedOn: "\"26/09/2026\""));
-        Assert.Throws<BacktestConfigException>(() => CostModel.Load(costs)); // verified_on must be yyyy-MM-dd
+        foreach (string bad in new[] { "\"26/09/2026\"", "true", "20260926" })
+        {
+            File.WriteAllText(costs, FixtureCosts(verifiedOn: bad));
+            BacktestConfigException e = Assert.Throws<BacktestConfigException>(() => CostModel.Load(costs));
+            Assert.Contains($"verified_on must be null (not checked yet) or the date you checked the costs, in quotes, e.g. \"2026-09-26\"; it is {bad}.", e.Message, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

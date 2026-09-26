@@ -104,6 +104,14 @@ public sealed record CostModel(
 
             JsonElement courtage = root.GetProperty("courtage");
             JsonElement verified = root.GetProperty("verified_on");
+            if (verified.ValueKind is not (JsonValueKind.Null or JsonValueKind.String)
+                || (verified.ValueKind == JsonValueKind.String
+                    && !DateOnly.TryParseExact(verified.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _)))
+            {
+                throw new BacktestConfigException(
+                    $"{path}: verified_on must be null (not checked yet) or the date you checked the costs, in quotes, e.g. \"2026-09-26\"; it is {verified.GetRawText()}.");
+            }
+
             var model = new CostModel(
                 root.GetProperty("name").GetString()!,
                 root.GetProperty("currency").GetString()!,
