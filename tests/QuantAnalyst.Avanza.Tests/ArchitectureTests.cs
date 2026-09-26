@@ -5,8 +5,9 @@ using QuantAnalyst.Avanza.Http;
 namespace QuantAnalyst.Avanza.Tests;
 
 /// <summary>
-/// Structural guarantees for the read-only phase (CLAUDE.md "Absolute safety rules", ADR 0002, ADR 0004), checked
-/// by scanning the source tree so they also cover code that is never executed by tests.
+/// Structural guarantees (CLAUDE.md "Absolute safety rules", ADR 0002, ADR 0003, ADR 0004), checked by scanning the
+/// source tree so they also cover code that is never executed by tests. Since Phase 6 the three order-entry routes
+/// exist, only in <c>AvanzaOrderRoutes</c>; <c>OrderArchitectureTests</c> scans the IL for who uses them.
 /// </summary>
 public sealed partial class ArchitectureTests
 {
@@ -14,6 +15,9 @@ public sealed partial class ArchitectureTests
 
     // Order entry, stop-loss, fund orders (ADR 0002 §6) and any money movement (ADR 0004).
     private static readonly Regex Forbidden = ForbiddenRoutes();
+
+    // The subset that is never allowed anywhere; order entry is allowed only as the three AvanzaOrderRoutes (Phase 6).
+    private static readonly Regex Never = NeverRoutes();
 
     private static IEnumerable<(string File, string Literal)> SourceStringLiterals() =>
         Directory.EnumerateFiles(Path.Combine(RepoRoot, "src"), "*.cs", SearchOption.AllDirectories)
@@ -33,14 +37,54 @@ public sealed partial class ArchitectureTests
     }
 
     [Fact]
-    public void NoOrderStopLossOrMoneyTransferRouteExistsInSource()
+    public void NoStopLossFundOrderOrMoneyTransferRouteExistsInSource()
     {
         var offenders = SourceStringLiterals()
             .Where(x => x.Literal.Contains("/_api", StringComparison.Ordinal) || x.Literal.Contains("/_push", StringComparison.Ordinal))
-            .Where(x => Forbidden.IsMatch(x.Literal))
+            .Where(x => Never.IsMatch(x.Literal))
             .Select(x => $"{Path.GetRelativePath(RepoRoot, x.File)}: {x.Literal}")
             .ToList();
         Assert.Empty(offenders);
+    }
+
+    [Fact]
+    public void OrderEntryPaths_AppearOnlyAsTheThreeOrderRoutes()
+    {
+        string[] allowed = [.. AvanzaOrderRoutes.All.Select(r => $"\"{r.PathTemplate}\"")];
+        var offenders = SourceStringLiterals()
+            .Where(x => x.Literal.Contains("/_api", StringComparison.Ordinal) && Forbidden.IsMatch(x.Literal))
+            .Where(x => !(x.File.EndsWith($"Http{Path.DirectorySeparatorChar}AvanzaRoutes.cs", StringComparison.Ordinal) && allowed.Contains(x.Literal)))
+            .Select(x => $"{Path.GetRelativePath(RepoRoot, x.File)}: {x.Literal}")
+            .ToList();
+        Assert.Empty(offenders);
+
+        // Each allowed literal appears exactly once, inside AvanzaOrderRoutes.
+        string routes = File.ReadAllText(Path.Combine(RepoRoot, "src", "QuantAnalyst.Avanza", "Http", "AvanzaRoutes.cs"));
+        int orderClass = routes.IndexOf("internal static class AvanzaOrderRoutes", StringComparison.Ordinal);
+        Assert.True(orderClass > 0);
+        Assert.All(allowed, a =>
+        {
+            Assert.Equal(1, routes.Split(a).Length - 1);
+            Assert.True(routes.IndexOf(a, StringComparison.Ordinal) > orderClass, $"{a} is outside AvanzaOrderRoutes");
+        });
+    }
+
+    [Fact]
+    public void OrderRoutes_AreInternal_TierA_PostsOnly_AndSeparateFromTheReadRoutes()
+    {
+        Assert.False(typeof(AvanzaOrderRoutes).IsPublic);
+        Assert.Equal(["order.delete", "order.modify", "order.place"], AvanzaOrderRoutes.All.Select(r => r.Name).Order(StringComparer.Ordinal));
+        Assert.All(AvanzaOrderRoutes.All, r =>
+        {
+            Assert.Equal("POST", r.Method);
+            Assert.Equal(QuantAnalyst.Core.Broker.DtoTier.A, r.Tier);
+            Assert.False(r.IsAuthentication);
+            Assert.DoesNotContain(r, AvanzaRoutes.All);
+            Assert.StartsWith("https://github.com/", r.Source, StringComparison.Ordinal);
+        });
+        FieldInfo[] declared = typeof(AvanzaOrderRoutes).GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+            .Where(f => f.FieldType == typeof(AvanzaRoute)).ToArray();
+        Assert.Equal(AvanzaOrderRoutes.All.Count, declared.Length);
     }
 
     [Fact]
@@ -106,4 +150,8 @@ public sealed partial class ArchitectureTests
 
     [GeneratedRegex(@"order-entry|rest/order/(new|modify|delete)|/order/(new|modify|delete)|stoploss|stop-loss|fund-order|transfer|withdraw|deposit|payment|uttag|overforing|insattning", RegexOptions.IgnoreCase)]
     private static partial Regex ForbiddenRoutes();
+
+    // Never, in any file (ADR 0002 §6 stop-loss and fund orders; ADR 0004 money movement).
+    [GeneratedRegex(@"stoploss|stop-loss|fund-order|transfer|withdraw|deposit|payment|uttag|overforing|insattning", RegexOptions.IgnoreCase)]
+    private static partial Regex NeverRoutes();
 }

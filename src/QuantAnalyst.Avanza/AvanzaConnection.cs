@@ -18,6 +18,9 @@ namespace QuantAnalyst.Avanza;
 /// <item>login: Recording → RateLimit → Cookies → primary (no retries, ever)</item>
 /// <item>reads: Recording → ReadResilience → RateLimit → SecurityToken → Cookies → primary</item>
 /// <item>streams: RateLimit → SecurityToken → Cookies → primary (the stream client records and reconnects itself)</item>
+/// <item>orders: RateLimit → SecurityToken → Cookies → primary. No retry handler and no recorder (an order body holds
+/// the full account id). Used only by the internal order channel, which nothing outside this assembly can create in
+/// Phase 6.</item>
 /// </list>
 /// Create one per CLI invocation; <see cref="Authenticator"/> allows exactly one login per connection.
 /// </summary>
@@ -28,7 +31,11 @@ public sealed class AvanzaConnection : IDisposable
     private readonly HttpClient _authClient;
     private readonly HttpClient _readClient;
     private readonly HttpClient _streamClient;
+    private readonly HttpClient _orderClient;
     private readonly AvanzaGateway _gateway;
+    private readonly AvanzaJson _json;
+    private readonly TimeProvider _time;
+    private readonly TimeSpan _orderTimeout;
 
     private AvanzaConnection(
         AvanzaOptions options, ISecretStore secrets, ILogger logger, Redactor redactor, TimeProvider time, HttpMessageHandler? primary,
@@ -73,7 +80,16 @@ public sealed class AvanzaConnection : IDisposable
             new SecurityTokenHandler(session),
             new CookieHandler(session.Cookies)));
 
+        // Orders: one attempt each (ADR 0003 §6: an order is never retried), no recording.
+        _orderClient = Client(options, Chain(null,
+            new RateLimitHandler(bucket, time, logger),
+            new SecurityTokenHandler(session),
+            new CookieHandler(session.Cookies)));
+
         var json = new AvanzaJson(logger);
+        _json = json;
+        _time = time;
+        _orderTimeout = options.OrderTimeout;
         var api = new AvanzaApiClient(_readClient, json);
         var streams = new AvanzaStreamClient(_streamClient, options, time, logger, Random.Shared, recorder);
         _gateway = new AvanzaGateway(api, streams, json, time, redactor);
@@ -123,12 +139,19 @@ public sealed class AvanzaConnection : IDisposable
         IBankIdPrompt? bankIdPrompt = null) =>
         new(options, secrets, logger, redactor, time, primary, bankIdPrompt);
 
+    /// <summary>
+    /// The real order channel. Internal on purpose: in Phase 6 only this assembly's tests create it (against fixtures),
+    /// and the trading gateway refuses it anyway.
+    /// </summary>
+    internal Orders.AvanzaOrderChannel CreateOrderChannel() => new(_orderClient, _json, _time, _orderTimeout);
+
     public void Dispose()
     {
         // Chains are not disposed through the clients (disposeHandler: false) so the shared primary handler is released once.
         _authClient.Dispose();
         _readClient.Dispose();
         _streamClient.Dispose();
+        _orderClient.Dispose();
         if (_ownsPrimary)
         {
             _primary.Dispose();

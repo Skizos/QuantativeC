@@ -25,15 +25,16 @@ public sealed record AvanzaRoute(string Name, string Method, string PathTemplate
 }
 
 /// <summary>
-/// The single file with every Avanza path (CLAUDE.md "Avanza gateway rules"). Phase 3 is read-only: there are
-/// <b>no</b> order, stop-loss or money-transfer routes here, and architecture tests keep it that way (order routes
-/// arrive in Phase 6 as internal members visible only to the order channel; transfers never, ADR 0004).
+/// The single file with every Avanza path (CLAUDE.md "Avanza gateway rules"). <see cref="AvanzaRoutes"/> is read-only.
+/// The three order-entry routes live apart in the internal <see cref="AvanzaOrderRoutes"/>, which only
+/// <c>AvanzaOrderChannel</c> may reference (an IL-scanning architecture test checks it). There are no stop-loss, fund
+/// order or money-transfer routes, and there never will be for transfers (ADR 0004).
 /// Before changing anything: re-read the clients at HEAD, update docs/research/avanza-endpoints.md with the new
 /// commit URLs, and bump <see cref="RoutesVersion"/>.
 /// </summary>
 public static class AvanzaRoutes
 {
-    public const string RoutesVersion = "2026-09-25.2"; // .2: order-depth push stream (Phase 4)
+    public const string RoutesVersion = "2026-09-26.1"; // .1: order routes in AvanzaOrderRoutes (Phase 6, fixture-tested only)
 
     public static readonly Uri DefaultBaseAddress = new("https://www.avanza.se");
 
@@ -165,4 +166,34 @@ public static class AvanzaRoutes
         LoginRedirect, AccountsOverview, TradingAccounts, Positions, Orders, Deals,
         Orderbook, MarketData, Search, PriceChart, Transactions, OrderDepthStream,
     ];
+}
+
+/// <summary>
+/// Order entry (ADR 0003, Phase 6). <b>Internal</b>, and referenced only by <c>AvanzaOrderChannel</c> (an IL-scanning
+/// architecture test checks both). In Phase 6 nothing sends to these routes: the channel is tested against fixtures and
+/// the gateway accepts only simulated channels. The bodies are <b>provisional</b> until the owner captures a real
+/// web-app order, including the unresolved sell-side <c>profit</c> field (Qluxzz issue #156), before Phase 7.
+/// Sources re-read 2026-09-26: Qluxzz <c>constants.py</c> and <c>avanza.py</c> (place/delete moved on 2026-09-21,
+/// PR #164; modify from the 2025-02 fix, #131) and the Go SDK <c>trading/types.go</c> (same response shape).
+/// </summary>
+internal static class AvanzaOrderRoutes
+{
+    private const string Qluxzz = "https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py";
+
+    /// <summary>Body (Qluxzz <c>place_order</c>): {accountId, orderbookId, side, condition, price, validUntil, volume}.</summary>
+    public static readonly AvanzaRoute Place = new(
+        "order.place", "POST", "/_api/trading/order-entry/order/new", DtoTier.A, false, Qluxzz);
+
+    /// <summary>Body (Qluxzz <c>delete_order</c>): {accountId, orderId}.</summary>
+    public static readonly AvanzaRoute Delete = new(
+        "order.delete", "POST", "/_api/trading/order-entry/order/delete", DtoTier.A, false, Qluxzz);
+
+    /// <summary>
+    /// Body (Qluxzz <c>edit_order</c>): {accountId, metadata: {orderEntryMode: "STANDARD"}, openVolume: null, orderId,
+    /// price, validUntil, volume}. It may have moved with place/delete; unverified.
+    /// </summary>
+    public static readonly AvanzaRoute Modify = new(
+        "order.modify", "POST", "/_api/trading-critical/rest/order/modify", DtoTier.A, false, Qluxzz);
+
+    public static IReadOnlyList<AvanzaRoute> All { get; } = [Place, Delete, Modify];
 }

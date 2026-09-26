@@ -94,6 +94,19 @@ Every step writes an audit record. A submit timeout, transport error, 5xx or unr
   - An existing book wins over `config/paper.json`, and a note says so. A damaged book is refused, never replaced.
   - The first snapshot of each Stockholm day fixes the start-of-day value used by R19.
 
+**Step 5 (Avanza order channel, architecture tests):**
+- **`AvanzaOrderChannel` can't be reached in Phase 6.** It has an internal constructor, and it can only be created through `AvanzaConnection.CreateOrderChannel()`, which is also internal and has no production caller. The gateway refuses it in every mode, and a test checks that too.
+- **Its own pipeline: one attempt, no retries, no recording.** Every request is sent once, through rate limit, security token and cookies only. Order requests are never recorded, because their bodies carry the full account id.
+- **How answers are classified** (the table is in `docs/research/avanza-endpoints.md` §4). A drift, a gone endpoint or an expired session is returned as a `BrokerFault`, and the gateway turns it into the matching halt (the first two also fire the kill switch).
+- **IL architecture tests** (`OrderArchitectureTests`) read every production assembly and check that:
+  - only `OrderGateway` calls an order channel or creates `Approved*`
+  - only `AvanzaOrderChannel` touches `AvanzaOrderRoutes`
+  - only `AvanzaConnection` builds the channel
+
+  Each rule has a positive control. A mutation check (a rogue async `CancelAsync` caller added to Trading) made the test fail, as it should.
+- **The source scan** now allows the three order-entry literals only inside `AvanzaOrderRoutes`. Stop-loss, fund-order and money-movement paths stay forbidden everywhere.
+- **The Paper spy moves to step 6.** It needs `qa paper run` to exist, so it can check that a whole Paper session against the fake server sends zero order-route requests.
+
 ## Results
 
 (Filled in at the gate.)

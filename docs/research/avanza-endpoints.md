@@ -138,6 +138,29 @@ This is the first contact with the real API. The list below has **field names on
 3. **`profit` field:** Qluxzz issue #156 (2026-05-28) reports Avanza "complains about the missing param `profit`" on **sell** orders. It is unresolved and the format is unknown. This must be captured from a real web-app sell before Phase 7.
 4. **Price type:** both clients send `price` as a JSON float. We will serialize a `decimal`, rounded to tick, with invariant culture, and never a binary float string.
 
+**Implemented 2026-09-26 (Phase 6 step 5, fixture-tested only).** Re-read before writing the code:
+- the commit pages of both clients: HEADs are still `a6a18a9` (Qluxzz, 2026-09-21) and `43f3902` (Go SDK, 2026-07-05)
+- the raw sources at those commits:
+  - [Qluxzz `avanza/constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py): `ORDER_PLACE_PATH`, `ORDER_DELETE_PATH`, `ORDER_EDIT_PATH`
+  - [Qluxzz `avanza/avanza.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/avanza.py): `place_order`, `delete_order`, `edit_order` bodies
+  - [Go `trading/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/types.go): the `Place/Delete/ModifyOrderResponse` shape
+
+Decisions:
+- **Routes:** the three routes live in the internal `AvanzaOrderRoutes`, in the same routes file (routes version `2026-09-26.1`).
+- **Request bodies:** we send **Qluxzz's** bodies, because they are the ones confirmed against the new place/delete path. We send no `requestId` (conflict 2).
+  - The Go SDK's extra fields stay out until a captured web-app order shows which of them the new path expects.
+- **Responses:** Tier A, strict. An unknown field or an unknown `orderRequestStatus` counts as drift: the result is Unknown and the gateway halts.
+- **Status codes:**
+
+  | Answer | Outcome |
+  |---|---|
+  | 404 | Unknown, and the endpoint is flagged as gone |
+  | 401 / 403 | Unknown, and the session is flagged as expired |
+  | Timeout, transport error, 408, 5xx, redirect | Unknown |
+  | Any other 4xx | Rejected |
+
+- **One attempt only:** every request is sent once, through a pipeline with no retry handler and no recorder.
+
 ## 5. Streaming (push)
 
 **The old CometD/Bayeux websocket (`wss://www.avanza.se/_push/cometd`) is discontinued.** Qluxzz removed it in [PR #151, commit `75c4f62`](https://github.com/Qluxzz/avanza/commit/75c4f6207d74b488a67df3c48ad1989dcd77496b) on 2025-11-26 ("Remove discontinued web socket support"). It had channels `quotes`, `orderdepths`, `trades`, `brokertradesummary`, `positions`, `orders`, `deals`, `accounts`.

@@ -28,6 +28,9 @@ public sealed class AvanzaOptions
     /// <summary>Per-attempt timeout for reads and for each login step.</summary>
     public TimeSpan AttemptTimeout { get; init; } = TimeSpan.FromSeconds(15);
 
+    /// <summary>How long an order request (place, modify, delete) waits for its one answer; after that it is Unknown, never retried.</summary>
+    public TimeSpan OrderTimeout { get; init; } = TimeSpan.FromSeconds(10);
+
     /// <summary>Read retries after the first attempt (transport errors, timeouts, 408/429/5xx). Login is never retried.</summary>
     public int MaxReadRetries { get; init; } = 2;
 
@@ -90,7 +93,7 @@ public sealed class AvanzaOptions
             throw new ArgumentOutOfRangeException(nameof(BankIdTimeout), "BankID timeout must be 10 s–10 min and the poll interval at most 5 s.");
         }
 
-        if (AttemptTimeout <= TimeSpan.Zero || CircuitBreakDuration <= TimeSpan.Zero || CircuitWindow <= TimeSpan.Zero)
+        if (AttemptTimeout <= TimeSpan.Zero || OrderTimeout <= TimeSpan.Zero || CircuitBreakDuration <= TimeSpan.Zero || CircuitWindow <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(AttemptTimeout), "Timeouts and windows must be positive.");
         }

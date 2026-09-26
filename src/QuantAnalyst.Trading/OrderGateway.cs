@@ -233,7 +233,8 @@ public sealed class OrderGateway : IDisposable
 
     private SubmitResult Complete(OrderIntent intent, PreparedOrder prepared, RiskReport report, OmsOrder order, OrderSubmitResult result)
     {
-        _audit.Append("submit-result", new { order.ClientOrderId, outcome = result.Outcome.ToString(), brokerOrderId = result.BrokerOrderId?.Value, result.Message });
+        _audit.Append("submit-result", new { order.ClientOrderId, outcome = result.Outcome.ToString(), brokerOrderId = result.BrokerOrderId?.Value, result.Message, fault = result.Fault.ToString() });
+        RaiseFault(result, "place");
         switch (result.Outcome)
         {
             case SubmitOutcome.Accepted when result.BrokerOrderId is { } id:
@@ -287,7 +288,8 @@ public sealed class OrderGateway : IDisposable
             result = OrderSubmitResult.Unknown($"{ex.GetType().Name}: {ex.Message}");
         }
 
-        _audit.Append("cancel-result", new { clientOrderId, outcome = result.Outcome.ToString(), result.Message });
+        _audit.Append("cancel-result", new { clientOrderId, outcome = result.Outcome.ToString(), result.Message, fault = result.Fault.ToString() });
+        RaiseFault(result, "cancel");
         switch (result.Outcome)
         {
             case SubmitOutcome.Accepted:
@@ -307,6 +309,22 @@ public sealed class OrderGateway : IDisposable
         }
 
         return result;
+    }
+
+    // Drift and a gone endpoint fire the kill switch (it listens for these halts); an expired session halts the order flow.
+    private void RaiseFault(OrderSubmitResult result, string action)
+    {
+        HaltReason? reason = result.Fault switch
+        {
+            BrokerFault.SchemaDrift => HaltReason.SchemaDrift,
+            BrokerFault.EndpointGone => HaltReason.EndpointGone,
+            BrokerFault.SessionExpired => HaltReason.Session,
+            _ => null,
+        };
+        if (reason is { } r)
+        {
+            _halts.Raise(r, $"{_channel.Name} {action}: {result.Message}");
+        }
     }
 
     private async Task<RiskContext> BuildContextAsync(PreparedOrder order, InstrumentSpec spec, CancellationToken ct)

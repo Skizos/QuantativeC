@@ -345,6 +345,7 @@ internal sealed class TestRig : IDisposable
             RequestsPerSecond = realisticRateLimit ? Options.RequestsPerSecond : 10,
             Burst = realisticRateLimit ? Options.Burst : 20,
             AttemptTimeout = Options.AttemptTimeout,
+            OrderTimeout = Options.OrderTimeout,
             MaxReadRetries = Options.MaxReadRetries,
             RetryBaseDelay = Options.RetryBaseDelay,
             MaxRetryAfter = Options.MaxRetryAfter,

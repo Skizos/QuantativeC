@@ -36,15 +36,31 @@ public enum SubmitOutcome
     Unknown,
 }
 
+/// <summary>A condition behind a result that must also halt trading (ADR 0002 §2), beyond the one order.</summary>
+public enum BrokerFault
+{
+    None,
+
+    /// <summary>The answer did not match the Tier A schema: halt trading (kill switch).</summary>
+    SchemaDrift,
+
+    /// <summary>The order endpoint answered 404: it moved or is gone (kill switch).</summary>
+    EndpointGone,
+
+    /// <summary>401/403: the session expired; the order flow halts until one re-login succeeds.</summary>
+    SessionExpired,
+}
+
 /// <param name="BrokerOrderId">The broker's order id when accepted (and sometimes when rejected).</param>
 /// <param name="Message">The broker's message or our reason for Unknown. Contains no secrets.</param>
-public sealed record OrderSubmitResult(SubmitOutcome Outcome, OrderId? BrokerOrderId, string Message)
+/// <param name="Fault">Set when the result also means trading must halt.</param>
+public sealed record OrderSubmitResult(SubmitOutcome Outcome, OrderId? BrokerOrderId, string Message, BrokerFault Fault = BrokerFault.None)
 {
     public static OrderSubmitResult Accepted(OrderId id, string message = "") => new(SubmitOutcome.Accepted, id, message);
 
     public static OrderSubmitResult Rejected(string message, OrderId? id = null) => new(SubmitOutcome.Rejected, id, message);
 
-    public static OrderSubmitResult Unknown(string reason) => new(SubmitOutcome.Unknown, null, reason);
+    public static OrderSubmitResult Unknown(string reason, BrokerFault fault = BrokerFault.None) => new(SubmitOutcome.Unknown, null, reason, fault);
 }
 
 /// <summary>
