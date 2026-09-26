@@ -51,7 +51,7 @@ cmake --preset msvc-dev; cmake --build --preset msvc-dev; ctest --preset msvc-de
 dotnet build QuantAnalyst.sln; dotnet test --solution QuantAnalyst.sln
 ```
 
-**Running `qa`:** it is not on your PATH. From the repository folder run `.\qa <command>`: the `qa.ps1` launcher rebuilds qa when the sources changed and runs it. For a bare `qa` everywhere, add `function qa { & 'C:\path\to\QuantativeC\qa.ps1' @args }` to your `$PROFILE`. More in `docs/cli.md`.
+**Running `qa`:** it is not on your PATH. From the repository folder run `.\qa <command>`: the `qa.ps1` launcher rebuilds what changed (the native library through `build.ps1 -NoManaged`, then qa) and runs it. For a bare `qa` everywhere, add `function qa { & 'C:\path\to\QuantativeC\qa.ps1' @args }` to your `$PROFILE`. More in `docs/cli.md`.
 
 **How the managed tests find the native library:**
 1. CMake copies `qe.dll` to `artifacts/native/win-x64/`.
@@ -173,6 +173,7 @@ Then run `qa secrets check`. It reports which entries exist and never prints val
 | Symptom | Fix |
 |---|---|
 | `qa: The term 'qa' is not recognized as a name of a cmdlet, function, script file, or executable program` | `qa` is not on your PATH. From the repository folder use `.\qa …` (the `qa.ps1` launcher), or add the `$PROFILE` function from §1.3. |
+| `error: qe native library implements ABI 1.1, but QuantAnalyst.Native requires 1.2+` | The native library is older than the code (it was built before a `git pull`). Run `.\build.ps1` once; the updated `.\qa` launcher then rebuilds it by itself whenever the native sources change. |
 | `DllNotFoundException: Could not find the qe native library` | Build the native library first (`cmake --preset dev && cmake --build --preset dev`, or `./build.ps1`). The message lists every path searched. |
 | Build warning `QE0001` | Same cause: no staged library under `artifacts/native/`. |
 | `QE_USE_VCPKG=ON but VCPKG_ROOT is not set` | Install vcpkg (§1.2 or §2), or set `QE_USE_VCPKG=OFF` to use installed packages. |

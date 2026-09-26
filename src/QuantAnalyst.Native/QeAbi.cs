@@ -28,7 +28,8 @@ public static class QeAbi
         {
             throw new NativeAbiMismatchException(
                 $"qe native library implements ABI {native.Major}.{native.Minor}, but QuantAnalyst.Native " +
-                $"requires {ExpectedMajor}.{ExpectedMinor}+ with the same major version. Rebuild the native library.");
+                $"requires {ExpectedMajor}.{ExpectedMinor}+ with the same major version. Rebuild the native library: .\\build.ps1 on Windows " +
+                "(cmake --build --preset dev elsewhere), or run qa through the .\\qa launcher, which rebuilds it when its sources changed.");
         }
     }
 

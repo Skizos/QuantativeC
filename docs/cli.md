@@ -2,7 +2,12 @@
 
 `qa` is `src/QuantAnalyst.Cli`. It needs the native library built once by `.\build.ps1` (or `cmake --build --preset dev`; see `docs/setup.md`).
 
-`qa` is **not on your PATH**, so typing a bare `qa` fails with "The term 'qa' is not recognized". Use the launcher at the repository root instead. It rebuilds qa when the sources changed (e.g. after `git pull`) and runs it with the repository as its working folder:
+`qa` is **not on your PATH**, so typing a bare `qa` fails with "The term 'qa' is not recognized". Use the launcher at the repository root instead. After a `git pull` it rebuilds what changed and then runs qa with the repository as its working folder:
+- the native library, via `build.ps1 -NoManaged`: a few minutes the first time, and it runs the native tests
+- qa itself
+- the copy of the native library next to qa
+
+Set `QA_SKIP_NATIVE_BUILD=1` to skip the native step.
 
 ```powershell
 cd C:\path\to\QuantativeC
