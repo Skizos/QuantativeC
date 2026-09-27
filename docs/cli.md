@@ -289,4 +289,39 @@ Exit codes of `qa paper run`: 0 ok, 1 error, 3 halted (the kill switch fired, or
 - **At least one order sent** in those days.
 - **An intact audit chain.**
 
-Promoting to Confirm does **not** start Confirm mode: it arrives in Phase 7, which will refuse to start unless `qa promote --verify` would pass. Auto's gate needs Confirm results (20 confirmed live orders, slippage within the backtest's assumption), so `--to Auto` waits for Phase 7.
+Promoting to Confirm does **not** start Confirm mode. Every Confirm session runs the startup checks first, including the check that `qa promote --verify` would pass, and refuses to start if any fails. Auto's gate needs Confirm results (20 confirmed live orders, slippage within the backtest's assumption), so `--to Auto` waits for Phase 7's reports (step 6).
+
+## Confirm mode (Phase 7): real orders, each typed by you
+
+**You** start these, in your own terminal. Claude Code can't: the hook blocks them, and the program refuses to start
+Confirm when Claude Code started it.
+
+| Command | What it does |
+|---|---|
+| `qa trade run --mode confirm` | The daily Confirm session. It runs the startup checks, logs in once, brings the history up to yesterday and waits for the decision time. Then it shows an **order card** per order. You type the ticker plus `JA` (`ERIC-B JA`) within 30 s, and it re-checks everything before it sends. Anything else skips the order. It re-plans before every card, and each instrument gets one card a day. Stopping it (Ctrl+C, `qa kill`) cancels its working orders. |
+| `qa rebalance` | What the strategy would trade **now** on your live account (R1): one login, the plan, and **nothing sent**. |
+| `qa rebalance --mode confirm --execute` | The same cards as `qa trade run`, starting now (from 09:05) instead of at the decision time. |
+
+Common options:
+- the same as `qa paper run`: `--strategy`, `--param`, `--duration`, the folders, and `--login`
+- `--mode` is required for every live start; only `confirm` exists, and Auto is Phase 8
+
+**The startup checks.** The session prints all nine and refuses to start if any fails. The checks that need no login
+run before the login, so a refusal there never asks for BankID:
+1. not started from Claude Code (`CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT`)
+2. the promotion verifies with your key and allows Confirm
+3. this year's calendar and your courtage class are verified (R20)
+4. the kill switch is off
+5. no `state/trading-disabled.json`
+6. this session holds the session lock
+7. the audit chain is intact
+8. **after the login:** the account in `AVANZA__ALLOWEDACCOUNTIDS` passes R1
+9. the order channel is ready. **Today it isn't:** the Avanza order format stays provisional until your capture (O4, O5) and plan 07 step 7. Until then every start stops at this check, before any login.
+
+`qa status` lists the checks that can run offline under "Confirm checks" once you are promoted to Confirm.
+
+Exit codes of `qa trade run` and `qa rebalance --execute`:
+- 0 ok
+- 1 error (e.g. a missing `--mode`)
+- 3 refused by the startup checks, or halted or killed during the session
+- 4 login locked

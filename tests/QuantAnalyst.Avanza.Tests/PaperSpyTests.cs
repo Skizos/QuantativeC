@@ -217,7 +217,7 @@ public sealed class PaperSpyTests : IDisposable
         Assert.Empty(_server.Requests);
     }
 
-    private static string RepoRoot()
+    internal static string RepoRoot()
     {
         for (DirectoryInfo? d = new(AppContext.BaseDirectory); d is not null; d = d.Parent)
         {

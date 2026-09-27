@@ -417,6 +417,13 @@ public sealed class OrderGateway : IDisposable
             return (Skip(intent, prepared, again, "re-check failed: " + why), null);
         }
 
+        if (ct.IsCancellationRequested)
+        {
+            // Stopped between the answer and the send (Ctrl+C, the session's end): a stopping session sends nothing new.
+            _audit.Append("confirm-skip", new { intent.Ticker, reason = "the session was stopped before the order was sent" });
+            ct.ThrowIfCancellationRequested();
+        }
+
         string quoteAge = checkedCtx.Quote?.AsOfUtc is { } asOf ? $" (quote {Math.Max(0, (checkedCtx.NowUtc - asOf).TotalSeconds):0} s old)" : string.Empty;
         confirmation.Tell($"Re-checked: {again.Checks.Count} of {again.Checks.Count} pass{quoteAge}. Sending.");
         return (null, checkedCtx);
@@ -484,16 +491,9 @@ public sealed class OrderGateway : IDisposable
         {
             return await BuildContextAsync(order, spec, ct).ConfigureAwait(false);
         }
-        catch (Exception ex) when (ex is AccountStateException or BrokerException)
+        catch (Exception ex) when (BrokerHalts.IsLiveReadFailure(ex))
         {
-            HaltReason? reason = ex switch
-            {
-                AccountStateException => HaltReason.Account,
-                SessionExpiredException or LoginFailedException or LoginLockedException => HaltReason.Session,
-                SchemaDriftException => HaltReason.SchemaDrift,
-                EndpointGoneException => HaltReason.EndpointGone,
-                _ => null,
-            };
+            HaltReason? reason = BrokerHalts.For(ex);
             _audit.Append("account-unavailable", new { error = ex.GetType().Name, ex.Message, halt = reason?.ToString() });
             if (reason is { } r)
             {

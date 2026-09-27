@@ -195,8 +195,10 @@ The exact list, with who does what, is in `docs/plans/07-phase7-confirm.md` §"R
   - Avanza's pre-trade `validate` and fee calls (done)
   - the live account and positions feeding the limits, and the one-account check (done)
   - the order card with typed confirmation (done)
-  - startup checks of the signed promotion
+  - startup checks of the signed promotion (done)
+  - the Confirm session: `qa trade run --mode confirm` and `qa rebalance` (done)
   - the live end-of-day execution report
+  - the final order format from your capture
 - **Then you** place the first minimal-size orders yourself.
 
 **Naming the account that may trade (you can do this now):**
@@ -214,7 +216,12 @@ The exact list, with who does what, is in `docs/plans/07-phase7-confirm.md` §"R
 
 The number never appears in any output, log or file; everything shows `***` and the last 3 digits.
 
-## 8. How Confirm will work (Phase 7, planned)
+## 8. How Confirm works (Phase 7)
+
+**Built, but it can't start yet.** The session, the cards and the startup checks exist and are tested against a fake
+Avanza server. The last startup check refuses the Avanza order channel until your capture (O4, O5) finalises its
+format (plan 07 step 7). Until then, `.\qa trade run --mode confirm` prints its checks and stops before any login.
+`.\qa status` shows what is still open under "Confirm checks".
 
 **Your day:** almost the same as Paper, but you must be at the computer at the decision time.
 
@@ -275,9 +282,11 @@ the numbers are an example):
 - **Not in the first second:** an answer that arrives within 1 s of the card appearing was typed ahead (or meant for the card before), so it skips. A line typed while no card was shown never counts.
 - **A card only for an order that passes everything:** all 21 checks, including Avanza's own validation. Avanza is asked only about orders that pass our checks first.
 - **Re-checked before sending:** if anything changed to fail after you typed (the price moved outside the collar, the quote went stale, the kill switch fired), the order is skipped and the card says why.
-- **One order per confirmation.** After each fill or skip, the next card is re-planned with the new state.
+- **One order per confirmation.** Before every card the plan is made again on the current account and prices.
+- **One card per instrument a day:** a skipped, rejected or sent one is not proposed again that day, so a late `JA` can never confirm a different card.
 - **Ad hoc:** `.\qa rebalance` shows what the strategy would trade right now, sending nothing. `.\qa rebalance --mode confirm --execute` runs the same cards now instead of waiting for 09:10.
-- **The kill switch, the loss stop and the end-of-day report** work exactly as in Paper. The report adds each fill's slippage against the decision and arrival prices, and Avanza's fee against the model's.
+- **Stopping** (Ctrl+C, `.\qa kill`) cancels the session's working orders at Avanza, so nothing it placed is left unwatched. A stop between your `JA` and the send sends nothing.
+- **The kill switch and the loss stop** work exactly as in Paper, on your live account's values. The end-of-day report's live section (each fill's slippage against the decision and arrival prices, Avanza's fee against the model's) comes with step 6.
 
 After at least 20 confirmed live orders with no unresolved unknown states and slippage within the backtest's
 assumption, `.\qa report gate` will show the Auto gate (Phase 8).

@@ -142,13 +142,18 @@ public sealed class AvanzaConnection : IDisposable
         new(options, secrets, logger, redactor, time, primary, bankIdPrompt);
 
     /// <summary>
-    /// The real order channel. Internal on purpose: in Phase 6 only this assembly's tests create it (against fixtures),
-    /// and the trading gateway refuses it anyway.
+    /// The real order channel (Phase 7). Only the CLI's Confirm composition asks for it (an IL-scanning architecture
+    /// test checks every caller), and the trading gateway uses it only with the live authorization that the Confirm
+    /// startup checks issue for it. Until the owner's capture finalises the order format it says it is not ready, so no
+    /// authorization can be issued for it.
     /// </summary>
-    internal Orders.AvanzaOrderChannel CreateOrderChannel() => new(_orderClient, _json, _time, _orderTimeout);
+    public Orders.AvanzaOrderChannel CreateOrderChannel() => new(_orderClient, _json, _time, _orderTimeout);
 
-    /// <summary>Avanza's read-only pre-trade checks (validate + preliminary fee) through the read pipeline.</summary>
-    internal Orders.AvanzaPreflight CreatePreflight() => new(_api, _time);
+    /// <summary>
+    /// Avanza's read-only pre-trade checks (validate + preliminary fee) through the read pipeline. Asked for by the probe
+    /// and the CLI's Confirm composition only (architecture test).
+    /// </summary>
+    public Orders.AvanzaPreflight CreatePreflight() => new(_api, _time);
 
     public void Dispose()
     {

@@ -47,8 +47,17 @@ internal sealed record AvanzaCliServices(
     /// </summary>
     public Func<TextWriter, bool, IBankIdPrompt>? BankIdPrompt { get; init; }
 
-    /// <summary>Gets how environment variables are read (the R1 account allowlist); tests pass their own.</summary>
+    /// <summary>
+    /// Gets how environment variables are read: the R1 account allowlist, and the Confirm startup check that refuses a
+    /// process Claude Code started. Tests pass their own.
+    /// </summary>
     public Func<string, string?> GetVariable { get; init; } = Environment.GetEnvironmentVariable;
+
+    /// <summary>
+    /// Gets the order channel a Confirm session sends through: Avanza's. Tests pass a stand-in; whatever it is, the
+    /// session sends only with the live authorization the Confirm startup checks issue for that very channel.
+    /// </summary>
+    internal Func<AvanzaConnection, IBrokerOrderChannel> OrderChannel { get; init; } = connection => connection.CreateOrderChannel();
 
     public static AvanzaCliServices Default { get; } = new(
         (options, secrets, prompt, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor, prompt),
@@ -125,6 +134,8 @@ internal static partial class AvanzaCommands
         yield return Quote(services);
         yield return Stream(services);
         yield return Paper(services);
+        yield return Trade(services);
+        yield return Rebalance(services);
         yield return History(services);
         yield return Probe(services);
         yield return Recordings(services);

@@ -52,7 +52,10 @@ public sealed class AvanzaOrderChannel : IBrokerOrderChannel
 
     public string Name => ChannelName;
 
-    public string? NotReadyReason => Provisional;
+    /// <summary>Gets why no channel of this build may send real orders yet (for <c>qa status</c>), or null once the format is final.</summary>
+    public static string? FormatNotFinal => Provisional;
+
+    public string? NotReadyReason => FormatNotFinal;
 
     public Task<OrderSubmitResult> PlaceAsync(ApprovedOrder order, CancellationToken ct)
     {

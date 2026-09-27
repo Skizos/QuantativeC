@@ -1,6 +1,6 @@
 # 07 — Phase 7: Confirm mode (real orders, each one typed by you)
 
-- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–4 done** (2026-09-26 and
+- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–5 done** (2026-09-26 and
   2026-09-27, see Step notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
   automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5).
 - **Scope:** master plan §4 Phase 7; ADR 0003 §2 (BrokerPreflight), §3 (startup HMAC check), §5 (Confirm UX), §6
@@ -279,6 +279,58 @@ Nothing is taken from memory.
     `CreateOrderChannel` (then no longer "nothing asks for it")
   - `qa status` shows the same list
   - live fills come through reconciliation, which must also invalidate the account state
+
+**Step 5: the CLI and the Confirm spy (done 2026-09-27).**
+- **`qa trade run --mode confirm`** and **`qa rebalance --mode confirm --execute`** (`AvanzaCommands.Trade.cs`). `--mode` is
+  required; `paper` points to `qa paper run`, and `auto` and anything else are refused.
+  1. The startup checks run **before any login**, with the channel but without the account. When one fails, the whole list
+     is printed and nothing is logged in to. This is why every real start stops before BankID today: the Avanza channel
+     is not ready.
+  2. One login, then R1 from the trading accounts, then the full checks. Only a passing run yields the authorization.
+     Both runs are audited (`confirm-startup`).
+  3. The instruments (with ISIN and market place), the history refresh, the live account state, the quote stream, the
+     preflight and the console cards. Then the gateway with the authorization, the kill switch on the live account, and
+     live reconciliation (`GatewayBrokerState`).
+- **`ConfirmSession`** (Trading/Live) is the Paper session's day with cards:
+  - **It re-plans before every card** on the current account and quotes. Cards are at least 13 s apart (R11).
+  - **One card per instrument a day:** skipped, rejected and sent all count. This is the step 3 promise: a late `JA`
+    can never confirm a different card.
+  - Reconciliation every 30 s marks the account state stale. A read it can't do raises its halt:
+    - drift, or deals not modelled yet (the first real fill before O5) ⇒ `SchemaDrift` ⇒ the kill switch
+    - session expired ⇒ `Session`
+    - a timeout is audited and tried again
+  - **Stopping cancels its working orders** through the gateway, like Paper. **Found and fixed while testing:** a stop
+    between `JA` and the send now sends nothing (the gateway checks the stop signal after the re-check, and audits a
+    skip).
+- **`qa rebalance`** without `--execute`:
+  - one login, R1, the live account and a polled quote per instrument, then the plan
+  - read-only, and it needs no mode
+  - it does fix the day's start value for R19 if it is the day's first account read (the first snapshot of a Stockholm
+    day is the start of the day, whoever reads it)
+- **Shared halt mapping** (`BrokerHalts`) for the gateway, the kill switch and the session. The kill switch's loss stop no
+  longer throws on a failed account read: it halts when the failure means it, and otherwise tries again.
+- **`qa status`**, once promoted to Confirm, shows a "Confirm checks" line: every check that runs offline, plus the Avanza
+  order format (`AvanzaOrderChannel.FormatNotFinal`), with a next step for each open one.
+- **Access:** `CreateOrderChannel` and `CreatePreflight` are public now. The IL architecture tests pin their callers: only
+  the CLI services' channel factory asks for the channel, and only the CLI's Confirm composition asks for the preflight.
+  The command-tree test allows `trade` and `rebalance`; the order and transfer verbs stay forbidden.
+- **Tests (26 new):**
+  - **Confirm spy, 19,** whole CLI runs over the fake server, fake clock and scripted keyboard. The channel stand-in sends
+    the real channel's requests but says it is ready, as step 7 will:
+    - `ERIC-B JA` ⇒ exactly one place POST (account, orderbook, side checked) after two `validate` + fee pairs, a masked
+      account in all output, an intact audit and the lock released
+    - `VOLV-B JA`, `JA`, or no answer ⇒ zero order-route requests and one card only
+    - a re-check refusal from Avanza ⇒ none
+    - `rebalance --execute` ⇒ one
+    - five refusals before any request: Claude Code, the provisional format, the kill switch, no promotion, calendar not
+      verified
+    - an R1 refusal after the login ⇒ no order or preflight request
+    - the mode rules; `rebalance` plan-only sends only login POSTs
+    - status lists the open checks
+  - **Session, 6:** re-plan and one card per instrument, the 13 s pace, halting read failures, a passing one, stop cancels.
+  - **Gateway, 1:** a stop after `JA`.
+  - **Hook self-test still 78/78.** I never ran any of these commands in a shell: the tests call the command code
+    in-process against the fake server.
 
 ## Test map (planned)
 

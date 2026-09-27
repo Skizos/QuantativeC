@@ -273,7 +273,11 @@ public sealed class CliAvanzaTests : IDisposable
         string[] verbs = [.. Names(QaCli.Build(AvanzaCliServices.Default))];
         Assert.Contains("probe", verbs);
         Assert.Contains("sanitize", verbs);
-        string[] forbidden = ["buy", "sell", "place", "order", "cancel", "modify", "transfer", "withdraw", "deposit", "payment", "rebalance"];
+        string[] forbidden = ["buy", "sell", "place", "order", "cancel", "modify", "transfer", "withdraw", "deposit", "payment"];
         Assert.DoesNotContain(verbs, v => forbidden.Contains(v, StringComparer.OrdinalIgnoreCase));
+
+        // Phase 7: the only live verbs are the Confirm session and the rebalance, both behind the Confirm startup checks.
+        Assert.Contains("trade", verbs);
+        Assert.Contains("rebalance", verbs);
     }
 }

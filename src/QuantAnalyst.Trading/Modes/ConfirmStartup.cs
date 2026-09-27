@@ -81,11 +81,14 @@ public sealed record ConfirmStartupInputs
 
     public required string AuditDirectory { get; init; }
 
-    /// <summary>Gets R1 against the broker's trading accounts (<see cref="AccountAllowlist.FromEnvironment"/>).</summary>
-    public required AllowlistResult Account { get; init; }
+    /// <summary>
+    /// Gets R1 against the broker's trading accounts (<see cref="AccountAllowlist.FromEnvironment"/>), or null before
+    /// the login (then R1 is "not checked yet" and nothing is authorized).
+    /// </summary>
+    public required AllowlistResult? Account { get; init; }
 
-    /// <summary>Gets the channel the orders would go to.</summary>
-    public required IBrokerOrderChannel Channel { get; init; }
+    /// <summary>Gets the channel the orders would go to, or null before there is a connection (then nothing is authorized).</summary>
+    public required IBrokerOrderChannel? Channel { get; init; }
 
     /// <summary>Gets how environment variables are read (the Claude Code check); the CLI passes the real environment.</summary>
     public required Func<string, string?> GetVariable { get; init; }
@@ -114,6 +117,21 @@ public static class ConfirmStartup
     /// <summary>Claude Code sets these in every shell it starts.</summary>
     public static readonly IReadOnlyList<string> ClaudeCodeVariables = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"];
 
+    /// <summary>The checks that need a login or a connection; before them, only these may be "not checked yet".</summary>
+    public static readonly IReadOnlyList<string> NeedAConnection = ["account (R1)", "order channel"];
+
+    /// <summary>
+    /// True when every check that can run without a connection passed (the account and the channel may still be
+    /// unchecked). The CLI runs this before the login, so a start that must fail never asks for BankID.
+    /// </summary>
+    public static bool ReadyToConnect(ConfirmStartupResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        return result.Failures.All(f => NeedAConnection.Contains(f.Name) && f.Detail.StartsWith(NotChecked, StringComparison.Ordinal));
+    }
+
+    private const string NotChecked = "not checked yet";
+
     public static ConfirmStartupResult Check(ConfirmStartupInputs inputs)
     {
         ArgumentNullException.ThrowIfNull(inputs);
@@ -131,8 +149,8 @@ public static class ConfirmStartup
             ChannelReady(inputs),
         ];
 
-        LiveAuthorization? authorization = checks.All(c => c.Passed)
-            ? new LiveAuthorization(TradingMode.Confirm, inputs.Account.Account!.Id, inputs.Channel, now, checks)
+        LiveAuthorization? authorization = checks.All(c => c.Passed) && inputs is { Account.Account: { } account, Channel: { } channel }
+            ? new LiveAuthorization(TradingMode.Confirm, account.Id, channel, now, checks)
             : null;
         return new ConfirmStartupResult(checks, authorization);
     }
@@ -236,15 +254,18 @@ public static class ConfirmStartup
             : new StartupCheck("audit chain", false, v.Problem ?? "broken");
     }
 
-    private static StartupCheck AccountAllowed(ConfirmStartupInputs i) =>
-        i.Account.Allowed
-            ? new StartupCheck("account (R1)", true, $"{i.Account.Account!.Id.Masked}, ISK, tradable, not managed, no credit")
-            : new StartupCheck("account (R1)", false, string.Join(" ", i.Account.Problems));
+    private static StartupCheck AccountAllowed(ConfirmStartupInputs i) => i.Account switch
+    {
+        null => new StartupCheck("account (R1)", false, $"{NotChecked}: it needs the login"),
+        { Allowed: true, Account: { } a } => new StartupCheck("account (R1)", true, $"{a.Id.Masked}, ISK, tradable, not managed, no credit"),
+        { } r => new StartupCheck("account (R1)", false, string.Join(" ", r.Problems)),
+    };
 
-    private static StartupCheck ChannelReady(ConfirmStartupInputs i) =>
-        i.Channel is ISimulatedOrderChannel
-            ? new StartupCheck("order channel", false, $"'{i.Channel.Name}' is simulated; a live authorization is only for the real channel")
-            : i.Channel.NotReadyReason is { } why
-                ? new StartupCheck("order channel", false, $"'{i.Channel.Name}' is not ready: {why}")
-                : new StartupCheck("order channel", true, $"'{i.Channel.Name}', order format final");
+    private static StartupCheck ChannelReady(ConfirmStartupInputs i) => i.Channel switch
+    {
+        null => new StartupCheck("order channel", false, $"{NotChecked}: it needs the connection"),
+        ISimulatedOrderChannel c => new StartupCheck("order channel", false, $"'{c.Name}' is simulated; a live authorization is only for the real channel"),
+        { NotReadyReason: { } why } c => new StartupCheck("order channel", false, $"'{c.Name}' is not ready: {why}"),
+        { } c => new StartupCheck("order channel", true, $"'{c.Name}', order format final"),
+    };
 }

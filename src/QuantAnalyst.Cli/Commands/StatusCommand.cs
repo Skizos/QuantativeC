@@ -52,7 +52,7 @@ internal static class StatusCommand
             var paths = new StatusPaths(
                 parse.GetValue(configDir), parse.GetValue(store)!, parse.GetValue(stateDir)!, parse.GetValue(auditDir)!, parse.GetValue(killFile)!,
                 parse.GetValue(promotionDir)!, parse.GetValue(ledger));
-            Write(w, Build(paths, services.Time));
+            Write(w, Build(paths, services.Time, services.GetVariable, services.PromotionKeys));
             return 0;
         }));
         return command;
@@ -93,7 +93,9 @@ internal static class StatusCommand
         public const int Advice = 9;
     }
 
-    internal static StatusReport Build(StatusPaths paths, TimeProvider time)
+    /// <param name="getVariable">Environment variables (the Confirm checks); the real environment when null.</param>
+    /// <param name="promotionKeys">The owner's promotion key store (the Confirm checks); Windows Credential Manager when null.</param>
+    internal static StatusReport Build(StatusPaths paths, TimeProvider time, Func<string, string?>? getVariable = null, Func<IPromotionKeyStore>? promotionKeys = null)
     {
         var r = new StatusReport(time.GetUtcNow());
         CheckNative(r);
@@ -157,6 +159,11 @@ internal static class StatusCommand
         }
 
         CheckAuditAndGate(r, paths, promotion, time);
+        if (promotion is { MaxAllowed: >= TradingMode.Confirm } && calendar is not null && paper is not null)
+        {
+            CheckConfirm(r, paths, configDir, calendar, paper, getVariable ?? Environment.GetEnvironmentVariable, promotionKeys ?? PromotionKeyStores.Default, time);
+        }
+
         if (session is not null)
         {
             r.Step(Priority.Session, "A session is running: its window shows what it does. Stop it with Ctrl+C there, or from anywhere with: qa kill");
@@ -402,18 +409,86 @@ internal static class StatusCommand
         GateResult gate = PromotionGate.Confirm(reports, audit);
         if (promotion is { MaxAllowed: >= TradingMode.Confirm })
         {
-            r.Add(Mark.Ok, "Confirm gate", "promoted to Confirm; Confirm mode itself arrives with Phase 7");
+            r.Add(Mark.Ok, "Confirm gate", "promoted to Confirm");
         }
         else if (gate.Met)
         {
             r.Add(Mark.Ok, "Confirm gate", $"MET: {gate.Evidence.Count} clean Paper days in a row");
-            r.Step(Priority.Gate, "The Confirm gate is met. Promoting is your decision and your command: qa promote --to Confirm (docs/guide.md). Confirm mode itself arrives with Phase 7.");
+            r.Step(Priority.Gate, "The Confirm gate is met. Promoting is your decision and your command: qa promote --to Confirm (docs/guide.md).");
         }
         else
         {
             int sent = gate.Evidence.Sum(e => e.Submitted);
             r.Add(Mark.Todo, "Confirm gate", $"{gate.Evidence.Count} of {PromotionGate.MinPaperDays} clean Paper days{(sent == 0 ? ", no order sent in them yet" : string.Empty)} (qa report gate)");
         }
+    }
+
+    /// <summary>
+    /// The Confirm startup checks that can run offline (plan 07 step 5). The session lock, R1 and the channel itself are
+    /// checked when a session starts; the order format's readiness is known without a connection.
+    /// </summary>
+    private static void CheckConfirm(
+        StatusReport r, StatusPaths paths, string configDir, MarketCalendar calendar, PaperConfig paper, Func<string, string?> getVariable, Func<IPromotionKeyStore> keys, TimeProvider time)
+    {
+        CostModel? costs = Try(r, "Confirm checks", () => CostModel.Load(Path.Combine(configDir, $"costs.{paper.Costs}.json")));
+        if (costs is null)
+        {
+            return;
+        }
+
+        IPromotionKeyStore store;
+        try
+        {
+            store = keys();
+        }
+        catch (ArgumentException ex)
+        {
+            store = new UnreadableKeys(ex.Message);
+        }
+
+        ConfirmStartupResult result = ConfirmStartup.Check(new ConfirmStartupInputs
+        {
+            PromotionDirectory = paths.PromotionDir,
+            PromotionKeys = store,
+            EvidenceBaseDirectory = Environment.CurrentDirectory,
+            Calendar = calendar,
+            Costs = costs,
+            KillFile = paths.KillFile,
+            StateDirectory = paths.StateDir,
+            SessionLock = null,
+            AuditDirectory = paths.AuditDir,
+            Account = null,
+            Channel = null,
+            GetVariable = getVariable,
+            Time = time,
+        });
+        List<StartupCheck> open = [.. result.Failures.Where(f => f.Name != "one session" && !ConfirmStartup.NeedAConnection.Contains(f.Name))];
+        if (Avanza.Orders.AvanzaOrderChannel.FormatNotFinal is { } format)
+        {
+            open.Add(new StartupCheck("order channel", false, format));
+        }
+
+        if (open.Count == 0)
+        {
+            r.Add(Mark.Ok, "Confirm checks", "every check that runs offline passes; the account (R1) and the connection are checked when the session starts");
+            r.Step(Priority.Gate, "Confirm can start. You start it yourself, at the computer before the decision time: .\\qa trade run --mode confirm (qa accounts shows R1 now).");
+            return;
+        }
+
+        r.Add(Mark.Todo, "Confirm checks", $"{open.Count} not ready: {string.Join(", ", open.Select(c => c.Name))}");
+        foreach (StartupCheck c in open)
+        {
+            r.Step(Priority.Gate, $"Before Confirm, {c.Name}: {c.Detail}");
+        }
+    }
+
+    private sealed class UnreadableKeys(string why) : IPromotionKeyStore
+    {
+        public string Name => "the promotion key store";
+
+        public byte[]? Read() => throw new InvalidOperationException(why);
+
+        public void Create(byte[] key) => throw new InvalidOperationException(why);
     }
 
     internal static string NextSession(DateTimeOffset now, TradingSchedule? schedule)

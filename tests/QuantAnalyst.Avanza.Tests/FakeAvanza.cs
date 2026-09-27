@@ -58,6 +58,7 @@ internal sealed class FakeAvanza : HttpMessageHandler
 {
     private readonly Dictionary<string, Queue<Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>>> _overrides = new(StringComparer.Ordinal);
     private readonly List<RecordedRequest> _requests = [];
+    private readonly Dictionary<string, Func<HttpRequestMessage, HttpResponseMessage>> _always = new(StringComparer.Ordinal);
 
     public bool SendTokenHeader { get; set; } = true;
 
@@ -120,6 +121,20 @@ internal sealed class FakeAvanza : HttpMessageHandler
     public FakeAvanza On(AvanzaRoute route, params Func<HttpRequestMessage, HttpResponseMessage>[] responses) =>
         On(route.PathTemplate.Split('{')[0], responses);
 
+    /// <summary>Answers every request to a path prefix (after the one-shot overrides), for data read again and again.</summary>
+    public FakeAvanza Always(string pathPrefix, Func<HttpRequestMessage, HttpResponseMessage> response)
+    {
+        lock (_always)
+        {
+            _always[pathPrefix] = response;
+        }
+
+        return this;
+    }
+
+    public FakeAvanza Always(AvanzaRoute route, Func<HttpRequestMessage, HttpResponseMessage> response) =>
+        Always(route.PathTemplate.Split('{')[0], response);
+
     public static HttpResponseMessage Status(HttpStatusCode code, string body = "{}") =>
         new(code) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
@@ -143,6 +158,17 @@ internal sealed class FakeAvanza : HttpMessageHandler
             if (path.StartsWith(prefix, StringComparison.Ordinal) && queue.Count > 0)
             {
                 return await queue.Dequeue()(request, cancellationToken);
+            }
+        }
+
+        lock (_always)
+        {
+            foreach ((string prefix, Func<HttpRequestMessage, HttpResponseMessage> answer) in _always)
+            {
+                if (path.StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    return answer(request);
+                }
             }
         }
 

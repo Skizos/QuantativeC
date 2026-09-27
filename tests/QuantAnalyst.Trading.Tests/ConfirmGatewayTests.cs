@@ -285,6 +285,23 @@ public sealed class ConfirmGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task StoppingTheSession_AfterJA_ButBeforeTheSend_SendsNothing()
+    {
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        _confirm.Answer = (_, _) =>
+        {
+            stop.Cancel(); // Ctrl+C just as JA arrives
+            return Task.FromResult(ScriptedConfirmation.Yes);
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Submit(ct: stop.Token));
+
+        Assert.Empty(_channel.Placed);
+        Assert.Empty(_oms.All);
+        Assert.Contains("confirm-skip", AuditKinds());
+    }
+
+    [Fact]
     public async Task OurChecksComeFirst_AvanzaIsNotAskedAboutAnOrderThatFailsThem()
     {
         SubmitResult r = await Submit(qty: 1_000); // 100,300 SEK: R6, R7, R8, R9
