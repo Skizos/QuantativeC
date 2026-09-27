@@ -8,7 +8,11 @@ namespace QuantAnalyst.Trading.Model;
 /// <summary>What the pipeline needs to know about an instrument to normalise and round an order.</summary>
 /// <param name="LotSize">Shares per lot (Avanza <c>tradingUnit</c>; 1 for Nasdaq Stockholm equities).</param>
 /// <param name="TickTableVerified">True when the tick table came from Avanza's orderbook (authoritative); R20 input.</param>
-public sealed record InstrumentSpec(OrderbookId OrderbookId, string Ticker, string Name, string Currency, long LotSize, TickSizeTable TickSizes, bool TickTableVerified);
+/// <param name="Isin">For the order card and Avanza's pre-trade checks (live modes); null when unknown.</param>
+/// <param name="MarketPlace">Avanza's market place code, which the pre-trade checks send; null when unknown.</param>
+public sealed record InstrumentSpec(
+    OrderbookId OrderbookId, string Ticker, string Name, string Currency, long LotSize, TickSizeTable TickSizes, bool TickTableVerified,
+    string? Isin = null, string? MarketPlace = null);
 
 public interface IInstrumentCatalog
 {
@@ -41,6 +45,11 @@ public sealed record AccountSnapshot(
 public interface IAccountState
 {
     Task<AccountSnapshot> GetAsync(CancellationToken ct);
+
+    /// <summary>Makes the next <see cref="GetAsync"/> read fresh data (after an order, a fill, or before a re-check). The paper book is always current.</summary>
+    void Invalidate()
+    {
+    }
 }
 
 /// <summary>A fill reported by a simulated channel.</summary>

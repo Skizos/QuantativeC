@@ -1,6 +1,6 @@
 # 07 — Phase 7: Confirm mode (real orders, each one typed by you)
 
-- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–2 done** (2026-09-26 and
+- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–3 done** (2026-09-26 and
   2026-09-27, see Step notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
   automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5).
 - **Scope:** master plan §4 Phase 7; ADR 0003 §2 (BrokerPreflight), §3 (startup HMAC check), §5 (Confirm UX), §6
@@ -77,8 +77,8 @@ Nothing is taken from memory.
 |---|---|---|
 | **The commands** | `qa trade run --mode confirm` runs the daily session with a card per order. `qa rebalance` lists what the strategy would trade now and sends nothing. `qa rebalance --mode confirm --execute` runs the cards now instead of at 09:10. `qa paper run` stays as it is (it equals `qa trade run --mode paper`). | Every live start carries `--mode confirm`, which the hook's rule 1 already blocks for Claude. You get one familiar session command. |
 | **The confirmation text** | The ticker plus `JA`: `ERIC-B JA`, `ERIC B JA` or `eric-b ja`. The hyphen/space and case are normalised as everywhere else in qa. `JA` alone, `y`, Enter or another ticker **skips** that order. | ADR 0003 §5. Typing the ticker proves you read which order it is. |
-| **30 s expiry** | Measured from the card's render with the injected clock, and checked again after the input line arrives. A correct answer after 30 s is a skip. | ADR 0003 §5. The clock is testable. |
-| **Re-check after JA** | All of R1–R21, including a **fresh `validate`**, on a fresh quote, before sending. Anything now failing ⇒ skip, with the failing checks on the card. | ADR 0003 §5; prices move while you read. |
+| **30 s expiry** | Measured from the card's render with the injected clock, and checked again after the input line arrives. A correct answer after 30 s is a skip. An answer within the first **1 s** is a skip too (added in step 3), and a line typed while no card was shown never counts. | ADR 0003 §5. The clock is testable. Nobody reads a card in under a second: a faster answer was typed ahead or meant for the card before. |
+| **Re-check after JA** | All of R1–R21, including a **fresh `validate`**, on a fresh quote and a fresh account read, before sending. Anything now failing ⇒ skip, with the failing checks on the card. | ADR 0003 §5; prices move while you read. |
 | **A skip** | An audited `confirm-skip` event, **not** a reject: it doesn't count towards "3 rejects in a row" and doesn't spoil a clean day. The next card is re-planned. | Declining is the human doing their job. |
 | **Fee on the card** | Avanza's `preliminaryfee` next to the model's courtage. A difference of more than 1 SEK is flagged on the card, and R9 uses Avanza's figure. | ADR 0003 R9/R21. The class need not be trusted blindly. |
 | **Account (R1)** | Exactly one account id in `AVANZA__ALLOWEDACCOUNTIDS`, and it must be an ISK in your accounts overview. It is unset, more than one, not found or not an ISK ⇒ Confirm refuses to start. Masked `***123` everywhere. | ADR 0003 R1: one ISK expected. |
@@ -192,6 +192,47 @@ Nothing is taken from memory.
     other two accounts (not an ISK; not tradable). The state gives 3.45 SEK available, 435 shares worth 461.334 SEK,
     and a value of 466.6299 SEK.
   - CLI: the `qa accounts` line and JSON field, masked.
+
+**Step 3: order card and confirmation (done 2026-09-27).**
+- **`OrderCard`** (Trading/Confirm) has every ADR 0003 §5 field and all 21 checks with observed against limit, and
+  ends with exactly what to type. The real rendering is in `docs/guide.md` §8.
+- **`ConfirmationPrompt`** reads the input on one background thread; a console read can't be cancelled, so a card can
+  expire while the terminal still waits for a line. Each line is stamped with the injected clock when it arrives.
+  - Confirms: the ticker plus `JA`, normalised (case, hyphen, underscore, spaces), between 1 s and 30 s after the card
+    appeared.
+  - Skips: everything else. The reason never repeats what was typed, so a password typed by mistake can't reach the
+    audit log.
+  - Lines typed before the card appeared are discarded. A closed input skips every card.
+  - **`ConsoleOrderConfirmation`** prints the card, the `>` prompt and the verdict. The CLI uses it from step 5.
+- **The gateway's Confirm path** (`OrderGateway`, the only sender):
+  1. Our checks first. Avanza's `validate` + `preliminaryfee` are asked only when every other check passes; then R21
+     judges the validation and R9 counts Avanza's fee. A preflight fault raises its halt.
+  2. The card, through `IOrderConfirmation`. A halt while it is shown (the kill switch included) ends the wait as a
+     skip. Stopping the session cancels it and sends nothing.
+  3. After `JA`: the account is re-read, the quote is the latest, Avanza is asked again, and all 21 checks run again.
+     Anything failing ⇒ skip.
+  4. Only then the gate (`decision: confirmed`) and the send. The account state is invalidated after every send and
+     every fill.
+  - **New statuses:** `Skipped` (declined, expired, too fast, no input, halted, or the re-check failed) and `Blocked`
+    (the account couldn't be read).
+  - **A new halt, `Account`:** the live account changed and may no longer trade. Session expiry, drift and a gone
+    endpoint on the account reads raise their usual halts; a timeout only blocks that order.
+- **Audit records:** `preflight`, `confirm-card`, `confirm-answer`, `recheck`, `confirm-skip`, `account-unavailable`.
+  The end-of-day report treats a failed re-check as a skip, not a risk rejection. Skips are listed as events and
+  don't spoil the day.
+- **Where it can run now:** only as a rehearsal on a simulated channel, and only in tests. Nothing composes Confirm
+  yet: `PromotionState.HighestImplemented` is still Paper, and the real channel is refused until step 4's startup
+  checks exist. `InstrumentSpec` gained the ISIN and market place, which `qa paper run` now fills from the orderbook.
+- **For step 5:** the session must not show a card again for an instrument whose card was skipped in the same run.
+  Together with the 1 s rule, this means a late `JA` can never confirm a different card.
+- **Tests (57):**
+  - prompt: 31 (normalised answers, every kind of refusal, the 1 s and 30 s boundaries, type-ahead, a late answer
+    meant for the card before, end of input, cancellation, the console card)
+  - card: 2
+  - gateway: 24 (one send per confirmed card after the re-check, audit order, every non-`JA` answer as a skip that is
+    not a reject in the end-of-day report, a price move and an Avanza refusal at the re-check, a halt or a stop during
+    the card, Avanza asked only after our checks, R21, R9 on Avanza's fee, the fee flag, a preflight fault halts, no
+    ISIN, account failures and their halts, fills invalidate the account, constructor rules, Paper never asks Avanza)
 
 ## Test map (planned)
 

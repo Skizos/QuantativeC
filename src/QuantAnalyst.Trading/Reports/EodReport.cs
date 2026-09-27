@@ -149,7 +149,7 @@ public sealed record EodReport
         private readonly HashSet<string> _modes = [];
         private bool? _lastRiskPassed;
         private bool _complete;
-        private int _sessions, _decisions, _intents, _submitted, _accepted, _brokerRejected, _unknown, _riskRejected, _reconRuns, _reconMismatch;
+        private int _sessions, _decisions, _intents, _submitted, _accepted, _brokerRejected, _unknown, _riskRejected, _reconRuns, _reconMismatch, _skipped;
         private bool _reconCleanAtEnd = true;
         private EodAccount? _account;
 
@@ -199,6 +199,18 @@ public sealed record EodReport
                         }
                     }
 
+                    break;
+                case "recheck":
+                    // Confirm: the re-check after the typed answer decides whether the order is created. A failed
+                    // re-check is a skip (audited as confirm-skip), not a risk rejection.
+                    _lastRiskPassed = d.GetProperty("passed").GetBoolean();
+                    break;
+                case "confirm-skip":
+                    _skipped++;
+                    _lastRiskPassed = null;
+                    break;
+                case "account-unavailable":
+                    Events.Add("account state unavailable: " + Str(d, "message"));
                     break;
                 case "oms-new":
                     string newId = Str(d, "clientOrderId")!;
@@ -298,6 +310,11 @@ public sealed record EodReport
             if (_rejections.Count > 0)
             {
                 Events.Add("risk rejections: " + string.Join(", ", _rejections.Select(r => $"{r.Key}×{r.Value}")));
+            }
+
+            if (_skipped > 0)
+            {
+                Events.Add($"{_skipped} order card(s) skipped at the confirmation (not rejections)");
             }
 
             return new EodReport

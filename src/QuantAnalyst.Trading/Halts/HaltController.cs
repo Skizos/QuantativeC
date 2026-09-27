@@ -26,6 +26,9 @@ public enum HaltReason
     /// <summary>An illegal OMS state transition: a bug, so stop.</summary>
     OmsInvariant,
 
+    /// <summary>The live account may no longer trade (R1 changed) or its state can't be used (Phase 7).</summary>
+    Account,
+
     /// <summary>The kill switch fired. Only <c>qa kill --reset</c> clears it.</summary>
     KillSwitch,
 }

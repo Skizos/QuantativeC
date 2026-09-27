@@ -82,7 +82,7 @@ internal static partial class AvanzaCommands
             foreach (UniverseEntry entry in setup.Universe.Entries)
             {
                 InstrumentTradingParams p = await ctx.Connection.Gateway.GetTradingParamsAsync(entry.OrderbookId, ctx.Ct).ConfigureAwait(false);
-                specs.Add(new InstrumentSpec(entry.OrderbookId, entry.Ticker, p.Name, p.Currency, Math.Max(1, p.TradingUnit), p.TickSizes, TickTableVerified: true));
+                specs.Add(new InstrumentSpec(entry.OrderbookId, entry.Ticker, p.Name, p.Currency, Math.Max(1, p.TradingUnit), p.TickSizes, TickTableVerified: true, p.Isin, p.MarketPlace));
             }
 
             try
