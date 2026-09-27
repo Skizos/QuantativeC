@@ -1,6 +1,7 @@
 <UserControl x:Class="QuantAnalyst.Desktop.Views.StatusView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <Grid>
             <Grid.ColumnDefinitions>
@@ -9,8 +10,23 @@
                 <ColumnDefinition Width="2*" MinWidth="300" />
             </Grid.ColumnDefinitions>
 
+            <StackPanel Grid.Column="0">
+            <!-- The paper account's value, day by day. -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="PAPER ACCOUNT" Style="{StaticResource Overline}" />
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <TextBlock Text="{Binding PaperValue}" Style="{StaticResource Hero}" />
+                        <TextBlock Text="{Binding PaperChange}" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Bottom" Margin="14,0,0,6"
+                                   Foreground="{Binding PaperDirection, Converter={StaticResource MarkToBrush}}" />
+                    </StackPanel>
+                    <c:SeriesChart Data="{Binding PaperChart}" Height="170" Margin="0,12,0,0" EmptyText="The chart starts after the first Paper session" />
+                    <TextBlock Text="{Binding PaperNote}" Style="{StaticResource Caption}" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
             <!-- The setup, one line per thing a trading day depends on. -->
-            <Border Grid.Column="0" Style="{StaticResource Card}" VerticalAlignment="Top">
+            <Border Style="{StaticResource Card}" VerticalAlignment="Top">
                 <StackPanel>
                     <TextBlock Text="{Binding Heading}" Style="{StaticResource H2}" Margin="0,0,0,12" />
                     <ItemsControl ItemsSource="{Binding Lines}">
@@ -36,6 +52,7 @@
                     </ItemsControl>
                 </StackPanel>
             </Border>
+            </StackPanel>
 
             <!-- What to do next, and one button for it. -->
             <Border Grid.Column="2" Style="{StaticResource Card}" VerticalAlignment="Top">

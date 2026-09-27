@@ -1,3 +1,8 @@
+using QuantAnalyst.Core;
+using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.History;
+using QuantAnalyst.Data.Store;
+using QuantAnalyst.Desktop.Core.Charts;
 using QuantAnalyst.Desktop.Core.Engine;
 using QuantAnalyst.Desktop.Core.ViewModels;
 using QuantAnalyst.Trading.Audit;
@@ -114,6 +119,82 @@ public sealed class ViewModelTests : IDisposable
 
         await shell.Instruments.RemoveCommand.ExecuteAsync(row);
         Assert.Equal(["universe", "remove", "ERIC B"], runner.Calls.Single().Take(3));
+    }
+
+    [Fact]
+    public async Task TheInstrumentChart_ShowsTheStoredCloses_WithRanges_AndTheSavedStrategysAverages()
+    {
+        _ws.AllowEricB();
+        PaperConfig.SaveStrategy(Path.Combine(_ws.Workspace.ConfigDir, PaperConfig.FileName),
+            new PaperStrategy("ma-cross", new Dictionary<string, string> { ["fast"] = "2", ["slow"] = "4" }));
+        var days = new List<DailyBar>();
+        for (DateOnly d = new(2026, 6, 1); days.Count < 80; d = d.AddDays(1))
+        {
+            if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
+            {
+                decimal close = 100m + days.Count;
+                days.Add(new DailyBar(d, close, close, close, close, 1000));
+            }
+        }
+
+        using (HistoryStore store = HistoryStore.Open(_ws.Workspace.Store))
+        {
+            store.RegisterSource(AvanzaChartImporter.AvanzaPriceChart);
+            store.UpsertDailyBars(new OrderbookId("5240"), days, AvanzaChartImporter.AvanzaPriceChart, "test", _ws.Time.GetUtcNow());
+        }
+
+        InstrumentsViewModel page = Shell().Instruments;
+        await page.RefreshAsync();
+        Assert.Equal("ERIC B", page.SelectedRow!.Ticker); // the first name is shown at once
+        await page.LoadChartAsync();
+
+        Assert.Equal(80, page.Chart.Main.Count); // 1Y holds all 80 days
+        Assert.Equal(["2-day average", "4-day average"], page.Chart.Overlays.Select(o => o.Name));
+        Assert.Equal(100, page.Chart.Baseline);
+        Assert.Equal("179,00 kr", page.LastClose);
+        Assert.Equal("up", page.RangeDirection);
+        Assert.StartsWith("\u25B2 +79,00", page.RangeChange, StringComparison.Ordinal);
+        Assert.Contains("2- and 4-day averages", page.ChartNote, StringComparison.Ordinal);
+
+        page.SelectedRange = page.Ranges.Single(r => r.Label == "1M");
+        Assert.InRange(page.Chart.Main.Count, 20, 24);
+        Assert.EndsWith("· 1M", page.RangeChange, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheInstrumentChart_SaysSoWhenNothingIsStoredYet()
+    {
+        _ws.AllowEricB();
+        InstrumentsViewModel page = Shell().Instruments;
+        await page.RefreshAsync();
+        await page.LoadChartAsync();
+        Assert.True(page.Chart.IsEmpty);
+        Assert.StartsWith("No stored prices yet", page.ChartNote, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheStatusPage_ChartsThePaperAccountsValue_FromTheReports()
+    {
+        StatusViewModel status = Shell().Status;
+        await status.RefreshAsync();
+        Assert.True(status.PaperChart.IsEmpty);
+        Assert.Equal("5\u00A0000,00 kr", status.PaperValue); // the starting cash
+        Assert.Contains("after the first Paper session", status.PaperNote, StringComparison.Ordinal);
+
+        foreach ((int day, decimal start, decimal end) in new[] { (28, 5000m, 5006m), (29, 5006m, 5010m) })
+        {
+            var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 9, day, 15, 32, 0, TimeSpan.Zero));
+            var audit = new AuditLog(_ws.Workspace.AuditDir, clock);
+            audit.Append("session-start", new { mode = "Paper" });
+            audit.Append("end-of-day", new { day = new { startOfDayValue = start, accountValue = end, cash = end, feesPaid = 0m } });
+        }
+
+        await status.RefreshAsync();
+        Assert.Equal([5000.0, 5006.0, 5010.0], status.PaperChart.Main.Select(p => p.Value));
+        Assert.Equal(5000, status.PaperChart.Baseline);
+        Assert.Equal("5\u00A0010,00 kr", status.PaperValue);
+        Assert.StartsWith("+10,00 kr (+0,20\u00A0%) since 28 Sep", status.PaperChange, StringComparison.Ordinal);
+        Assert.Equal("up", status.PaperDirection);
     }
 
     // ---- Strategy ---------------------------------------------------------------------------------------------

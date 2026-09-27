@@ -116,3 +116,28 @@ now, the activity log).
   sources, with positive controls. It checks every XAML file.
 - **Tests:** 26 new (XAML checks 7, formatting and tones 19); app tests 58; all 1,009 managed tests pass, 1 skipped
   (Windows only).
+
+**Step 2: charts (done 2026-09-27).**
+- **`Desktop.Core/Charts`:**
+  - `ChartData` and `ChartLayout`: pixels, nice value steps with at least three labelled lines, hour labels for a day
+    and date labels for history, hover, markers, levels and the baseline
+  - `ChartRange`: 1M 3M 6M 1Y 3Y All
+  - `Indicators.Sma`
+  - `ChartSources`: stored closes, and the paper value per close from the end-of-day reports
+- **`SeriesChart`** (WPF) draws what the layout says:
+  - a soft area and a line, green at or above the baseline and red below
+  - averages as thin blue and amber lines, fills as dots, limits as dashed lines with their price
+  - values at the right and times below
+  - a crosshair with a bubble (value, change, time) on hover
+  - a sparkline mode for step 3
+- **Instruments:** the allowlist is a list on the left. On the right is the selected name's chart:
+  - the last close and its date
+  - the change over the range, with its arrow and colour
+  - range buttons
+  - when the saved strategy is ma-cross, its two moving averages and a line saying what they mean
+  The store is read only while no command runs, and a name is read once until its history changes.
+- **Status:** a Paper account card with the value at the last close, the change since Paper started, and the chart of
+  every close (from the end-of-day reports, so the same numbers as `qa report eod`).
+- **Found by the tests:** a narrow price range (70,1–71,3) got only two axis labels. The layout now always gives at
+  least three.
+- **Tests:** 24 new (chart maths 21, instrument chart 2, paper history 1); all 1,033 managed tests pass, 1 skipped.

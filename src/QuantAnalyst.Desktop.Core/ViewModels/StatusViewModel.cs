@@ -2,8 +2,11 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using QuantAnalyst.Cli.Commands;
 using QuantAnalyst.Core.Market;
+using QuantAnalyst.Desktop.Core.Charts;
 using QuantAnalyst.Desktop.Core.Engine;
 using QuantAnalyst.Desktop.Core.Mvvm;
+using QuantAnalyst.Desktop.Core.Presentation;
+using QuantAnalyst.Trading.Paper;
 
 namespace QuantAnalyst.Desktop.Core.ViewModels;
 
@@ -32,6 +35,11 @@ public sealed class StatusViewModel : PageViewModel
     private string _nextActionLabel = string.Empty;
     private PageKind? _nextActionPage;
     private bool _startSessionNext;
+    private ChartData _paperChart = ChartData.Empty;
+    private string _paperValue = string.Empty;
+    private string _paperChange = string.Empty;
+    private string _paperDirection = "flat";
+    private string _paperNote = string.Empty;
 
     public StatusViewModel(Workspace workspace, QaEngine engine, TimeProvider time, Action<PageKind> navigate)
         : base(PageKind.Status, "Status", "What is set up, what is missing, and what to do next.", engine)
@@ -75,6 +83,40 @@ public sealed class StatusViewModel : PageViewModel
 
     public RelayCommand NextActionCommand { get; }
 
+    /// <summary>Gets the paper account's value at each Paper day's close (from the end-of-day reports).</summary>
+    public ChartData PaperChart
+    {
+        get => _paperChart;
+        private set => Set(ref _paperChart, value);
+    }
+
+    /// <summary>Gets the paper account's value at the last close, e.g. "5 012,40 kr".</summary>
+    public string PaperValue
+    {
+        get => _paperValue;
+        private set => Set(ref _paperValue, value);
+    }
+
+    /// <summary>Gets the change since Paper started, e.g. "+12,40 kr (+0,25 %) since 28 Sep".</summary>
+    public string PaperChange
+    {
+        get => _paperChange;
+        private set => Set(ref _paperChange, value);
+    }
+
+    /// <summary>Gets "up", "down" or "flat" for <see cref="PaperChange"/> (its colour).</summary>
+    public string PaperDirection
+    {
+        get => _paperDirection;
+        private set => Set(ref _paperDirection, value);
+    }
+
+    public string PaperNote
+    {
+        get => _paperNote;
+        private set => Set(ref _paperNote, value);
+    }
+
     public override async Task RefreshAsync()
     {
         StatusCommand.StatusReport report;
@@ -102,12 +144,52 @@ public sealed class StatusViewModel : PageViewModel
             Steps.Add(string.Create(CultureInfo.InvariantCulture, $"{n++}. {step}"));
         }
 
+        await LoadPaperHistoryAsync();
+
         (string actionLabel, PageKind? page, bool start) = NextAction(Lines);
         NextActionLabel = actionLabel;
         _nextActionPage = page;
         _startSessionNext = start;
         NextActionCommand.Refresh();
         Say(string.Empty);
+    }
+
+    private async Task LoadPaperHistoryAsync()
+    {
+        try
+        {
+            IReadOnlyList<PaperDay> days = await Task.Run(() => ChartSources.PaperDays(_workspace, _time));
+            if (days.Count == 0)
+            {
+                decimal cash = PaperConfig.Load(Path.Combine(_workspace.ConfigDir, PaperConfig.FileName)).Cash;
+                PaperChart = ChartData.Empty;
+                PaperValue = Fmt.Sek(cash);
+                PaperChange = string.Empty;
+                PaperDirection = "flat";
+                PaperNote = "The paper account's starting cash. The chart starts after the first Paper session.";
+                return;
+            }
+
+            decimal start = days[0].StartOfDay;
+            decimal end = days[^1].End;
+            decimal change = end - start;
+            PaperChart = new ChartData
+            {
+                Main = ChartSources.PaperValuePoints(days),
+                Baseline = (double)start,
+                Axis = TimeAxis.Daily,
+                FormatValue = v => Fmt.Amount((decimal)v, 0),
+            };
+            PaperValue = Fmt.Sek(end);
+            PaperChange = string.Create(CultureInfo.InvariantCulture,
+                $"{Fmt.ChangeSek(change)} ({Fmt.ChangePct(start != 0 ? change / start : 0m)}) since {days[0].Date:d MMM}");
+            PaperDirection = Tone.Direction(change);
+            PaperNote = string.Create(CultureInfo.InvariantCulture, $"Value at each close, {days.Count} Paper day(s).");
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or Trading.Risk.TradingConfigException)
+        {
+            PaperNote = $"The paper history could not be read: {ex.Message}";
+        }
     }
 
     /// <summary>The one button: fix what blocks first, in the order qa status lists its steps, else start the session.</summary>
