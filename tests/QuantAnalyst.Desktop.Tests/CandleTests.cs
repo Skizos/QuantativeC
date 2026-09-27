@@ -116,7 +116,8 @@ public sealed class CandleTests
         Assert.Equal((l.PlotRight - l.PlotLeft) / 4, l.SlotWidth, 9);
         Assert.Equal(l.PlotLeft + (l.SlotWidth / 2), l.Candles[0].X, 9);
         Assert.All(l.Candles.Skip(1).Zip(l.Candles), p => Assert.Equal(l.SlotWidth, p.First.X - p.Second.X, 9));
-        Assert.InRange(l.BodyWidth, 1, 24);
+        Assert.Equal(30, l.BodyWidth); // ¾ of a 133 px slot, capped at 30 px
+        Assert.Equal(15, CandleLayout.Compute(new CandleChartData { Candles = FourDays() }, null, 148, 300).BodyWidth); // ¾ of 20 px
 
         PlacedCandle up = l.Candles[0];
         PlacedCandle down = l.Candles[1];
@@ -223,6 +224,22 @@ public sealed class CandleTests
 
         var months = new CandleChartData { Candles = Candles.Aggregate(FourDays(), CandlePeriod.Month), Period = CandlePeriod.Month };
         Assert.Equal(["Sep 2026", "Oct 2026"], CandleLayout.Compute(months, null, 800, 300).XTicks.Select(t => t.Label));
+    }
+
+    [Fact]
+    public void AChartOpens_WithCandlesAtLeastFourPixelsWide_ZoomingOutShowsTheRest()
+    {
+        var many = new CandleChartData { Candles = [.. Enumerable.Range(0, 750).Select(i => Day(Monday.AddDays(i), 10, 11, 9, 10.5))] };
+        CandleLayout all = CandleLayout.Compute(many, null, 468, 300); // a 400 px plot: 100 candles fit
+        Assert.Equal(new CandleViewport(650, 100), all.View);
+        Assert.True(all.SlotWidth >= CandleLayout.MinOpeningSlot);
+
+        CandleLayout range = CandleLayout.Compute(many with { InitialCount = 60 }, null, 468, 300);
+        Assert.Equal(new CandleViewport(690, 60), range.View); // the range fits: as asked
+
+        CandleLayout zoomedOut = CandleLayout.Compute(many, all.View.Zoom(750, 100, 1), 468, 300);
+        Assert.Equal(new CandleViewport(0, 750), zoomedOut.View); // narrower than 4 px only when you zoom out
+        Assert.Equal(1, zoomedOut.BodyWidth);
     }
 
     // ---- zoom and pan ----------------------------------------------------------------------------------------

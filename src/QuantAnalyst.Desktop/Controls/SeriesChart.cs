@@ -186,13 +186,13 @@ public sealed class SeriesChart : FrameworkElement
         foreach (AxisTick t in layout.YTicks)
         {
             dc.DrawLine(grid, new Point(layout.PlotLeft, Snap(t.Position)), new Point(layout.PlotRight, Snap(t.Position)));
-            FormattedText label = Text(t.Label, 11, muted);
+            FormattedText label = Text(t.Label, 12, muted);
             dc.DrawText(label, new Point(layout.PlotRight + 8, t.Position - (label.Height / 2)));
         }
 
         foreach (AxisTick t in layout.XTicks)
         {
-            FormattedText label = Text(t.Label, 11, muted);
+            FormattedText label = Text(t.Label, 12, muted);
             double left = Math.Clamp(t.Position - (label.Width / 2), 0, Math.Max(0, layout.PlotRight - label.Width));
             dc.DrawText(label, new Point(left, layout.PlotBottom + 6));
         }

@@ -44,7 +44,7 @@ public sealed class ChartsViewModel : PageViewModel, IDisposable
     private ChartInstrument? _selected;
     private string _source = History;
     private CandlePeriod _period = CandlePeriod.Day;
-    private ChartRange _range = ChartRange.All[2];
+    private ChartRange _range = ChartRange.All[1]; // 3M: day candles wide enough to read
     private bool _showVolume = true;
     private bool _showAverages = true;
     private bool _showTrades = true;

@@ -78,12 +78,12 @@ public sealed class ChartsPageTests : IDisposable
         Assert.True(charts.IsHistory);
         Assert.Equal(CandlePeriod.Daily, charts.Periods);
         Assert.Same(CandlePeriod.Day, charts.SelectedPeriod);
-        Assert.Equal("6M", charts.SelectedRange.Label);
+        Assert.Equal("3M", charts.SelectedRange.Label); // day candles wide enough to read
 
         CandleChartData chart = charts.Chart;
         Assert.Equal(120, chart.Candles.Count); // all of them: zoom out for the older ones
         DailyBar last = days[^1];
-        Assert.Equal(days.Count(d => d.Date >= last.Date.AddMonths(-6)), chart.InitialCount);
+        Assert.Equal(days.Count(d => d.Date >= last.Date.AddMonths(-3)), chart.InitialCount);
         Assert.Equal(new Candle(CandlePeriod.Midnight(last.Date), (double)last.Open, (double)last.High, (double)last.Low, (double)last.Close, last.Volume), chart.Candles[^1]);
         Assert.True(chart.HasVolume);
         Assert.Equal(["20-day average", "50-day average"], chart.Overlays.Select(o => o.Name));
@@ -93,10 +93,10 @@ public sealed class ChartsPageTests : IDisposable
         Assert.Equal(("ERIC B", "Ericsson B"), (charts.Ticker, charts.Name));
         Assert.Equal(Presentation(last.Close) + " kr", charts.LastText);
         Assert.Equal("Close " + last.Date.ToString("ddd d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture), charts.AsOfText);
-        Assert.EndsWith("· 6M", charts.ChangeText, StringComparison.Ordinal);
+        Assert.EndsWith("· 3M", charts.ChangeText, StringComparison.Ordinal);
         Assert.Equal("up", charts.Direction);
         Assert.StartsWith("Latest day · ", charts.StatsTitle, StringComparison.Ordinal);
-        Assert.Equal(["Open", "High", "Low", "Close", "Volume", "6M high", "6M low"], charts.Stats.Select(s => s.Label));
+        Assert.Equal(["Open", "High", "Low", "Close", "Volume", "3M high", "3M low"], charts.Stats.Select(s => s.Label));
         Assert.Equal(Presentation(last.Open), charts.Stats[0].Value);
         Assert.Contains("Wheel to zoom", charts.Note, StringComparison.Ordinal);
 

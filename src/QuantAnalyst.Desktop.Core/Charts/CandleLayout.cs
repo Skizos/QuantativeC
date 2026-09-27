@@ -159,8 +159,12 @@ public sealed record PriceTag(double Y, string Label, bool IsUp);
 /// </summary>
 public sealed class CandleLayout
 {
+    /// <summary>The narrowest candle slot a chart opens with, in pixels; zooming out can go narrower.</summary>
+    public const double MinOpeningSlot = 4;
+
     private const double PaneGap = 10;
     private const double MinBodyHeight = 1;
+    private const double VolumeShare = 0.16;
 
     private readonly CandleChartData _data;
 
@@ -176,10 +180,10 @@ public sealed class CandleLayout
         double innerBottom = Math.Max(insets.Top + 1, height - insets.Bottom);
         HasVolume = data.HasVolume && innerBottom - insets.Top > 120;
         VolumeBottom = innerBottom;
-        VolumeTop = HasVolume ? innerBottom - Math.Round((innerBottom - insets.Top) * 0.2) : innerBottom;
+        VolumeTop = HasVolume ? innerBottom - Math.Round((innerBottom - insets.Top) * VolumeShare) : innerBottom;
         PlotBottom = HasVolume ? Math.Max(PlotTop + 1, VolumeTop - PaneGap) : innerBottom;
         SlotWidth = (PlotRight - PlotLeft) / Math.Max(1, view.Count);
-        BodyWidth = Math.Clamp(Math.Floor(SlotWidth * 0.7), 1, 24);
+        BodyWidth = Math.Clamp(Math.Floor(SlotWidth * 0.75), 1, 30);
 
         (YMin, YMax, YStep) = ChartLayout.ValueScale(VisibleValues());
         long maxVolume = 0;
@@ -246,15 +250,22 @@ public sealed class CandleLayout
     /// <summary>Gets the last close on screen, for the tag on the right axis; null without candles.</summary>
     public PriceTag? LastPrice { get; }
 
-    /// <summary>Lays out <paramref name="data"/> with <paramref name="view"/> on screen (the latest <see cref="CandleChartData.InitialCount"/> when null).</summary>
+    /// <summary>
+    /// Lays out <paramref name="data"/> with <paramref name="view"/> on screen. Without a view it opens on the latest
+    /// <see cref="CandleChartData.InitialCount"/> candles, or fewer when they would be thinner than
+    /// <see cref="MinOpeningSlot"/> (zoom out for the rest).
+    /// </summary>
     public static CandleLayout Compute(CandleChartData data, CandleViewport? view, double width, double height, ChartInsets? insets = null)
     {
         ArgumentNullException.ThrowIfNull(data);
+        ChartInsets box = insets ?? ChartInsets.Axes;
+        width = Math.Max(1, width);
         int total = data.Candles.Count;
+        int fits = Math.Max(CandleViewport.MinCount, (int)Math.Floor((width - box.Left - box.Right) / MinOpeningSlot));
         CandleViewport v = view is { } given && given.Count > 0 && given.End <= total
             ? given
-            : CandleViewport.Latest(total, data.InitialCount);
-        return new CandleLayout(data, v, Math.Max(1, width), Math.Max(1, height), insets ?? ChartInsets.Axes);
+            : CandleViewport.Latest(total, Math.Min(data.InitialCount ?? total, fits));
+        return new CandleLayout(data, v, width, Math.Max(1, height), box);
     }
 
     /// <summary>The candle under <paramref name="x"/> with its numbers, or null without candles.</summary>

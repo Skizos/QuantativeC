@@ -24,6 +24,7 @@ public sealed class CandleChart : FrameworkElement
         nameof(EmptyText), typeof(string), typeof(CandleChart), new FrameworkPropertyMetadata("No candles yet", FrameworkPropertyMetadataOptions.AffectsRender));
 
     private const double ZoomStep = 0.85;
+    private const double AxisText = 12;
 
     private CandleViewport? _view;
     private CandleLayout? _layout;
@@ -131,7 +132,7 @@ public sealed class CandleChart : FrameworkElement
         Brush muted = Res("InkMutedBrush", Brushes.Gray);
         if (data.IsEmpty)
         {
-            FormattedText empty = Text(EmptyText, 13, muted);
+            FormattedText empty = Text(EmptyText, 14, muted);
             dc.DrawText(empty, new Point((box.Width - empty.Width) / 2, (box.Height - empty.Height) / 2));
             return;
         }
@@ -172,20 +173,20 @@ public sealed class CandleChart : FrameworkElement
         foreach (AxisTick t in layout.YTicks)
         {
             dc.DrawLine(grid, new Point(layout.PlotLeft, Snap(t.Position)), new Point(layout.PlotRight, Snap(t.Position)));
-            FormattedText label = Text(t.Label, 11, muted);
+            FormattedText label = Text(t.Label, AxisText, muted);
             dc.DrawText(label, new Point(layout.PlotRight + 8, t.Position - (label.Height / 2)));
         }
 
         if (layout.HasVolume)
         {
             dc.DrawLine(grid, new Point(layout.PlotLeft, Snap(layout.VolumeBottom)), new Point(layout.PlotRight, Snap(layout.VolumeBottom)));
-            FormattedText label = Text("Volume", 10.5, muted);
+            FormattedText label = Text("Volume", AxisText - 0.5, muted);
             dc.DrawText(label, new Point(layout.PlotRight + 8, layout.VolumeTop));
         }
 
         foreach (AxisTick t in layout.XTicks)
         {
-            FormattedText label = Text(t.Label, 11, muted);
+            FormattedText label = Text(t.Label, AxisText, muted);
             double left = Math.Clamp(t.Position - (label.Width / 2), 0, Math.Max(0, layout.PlotRight - label.Width));
             dc.DrawText(label, new Point(left, layout.VolumeBottom + 6));
         }
@@ -222,7 +223,7 @@ public sealed class CandleChart : FrameworkElement
             }
 
             dc.DrawLine(pen, new Point(layout.PlotLeft, Snap(level.Y)), new Point(layout.PlotRight, Snap(level.Y)));
-            FormattedText label = Text(level.Level.Label, 11, info);
+            FormattedText label = Text(level.Level.Label, AxisText, info);
             dc.DrawText(label, new Point(layout.PlotLeft + 6, level.Y - label.Height - 1));
         }
     }
@@ -274,7 +275,7 @@ public sealed class CandleChart : FrameworkElement
             bool buy = m.Marker.Kind == MarkerKind.Buy;
             double x = m.At.X;
             double y = m.At.Y;
-            const double s = 6.5;
+            const double s = 7.5;
             var triangle = new StreamGeometry();
             using (StreamGeometryContext g = triangle.Open())
             {
@@ -305,7 +306,7 @@ public sealed class CandleChart : FrameworkElement
 
         Brush tone = tag.IsUp ? up : down;
         dc.DrawLine(new Pen(tone, 1) { DashStyle = new DashStyle([1, 3], 0) }, new Point(layout.PlotLeft, Snap(tag.Y)), new Point(layout.PlotRight, Snap(tag.Y)));
-        FormattedText text = Text(tag.Label, 11, Brushes.White, bold: true);
+        FormattedText text = Text(tag.Label, AxisText, Brushes.White, bold: true);
         var rect = new Rect(layout.PlotRight + 2, tag.Y - (text.Height / 2) - 2, text.Width + 12, text.Height + 4);
         dc.DrawRoundedRectangle(tone, null, rect, 4, 4);
         dc.DrawText(text, new Point(rect.Left + 6, rect.Top + 2));
@@ -325,7 +326,7 @@ public sealed class CandleChart : FrameworkElement
         {
             dc.DrawLine(cross, new Point(layout.PlotLeft, Snap(mouse.Y)), new Point(layout.PlotRight, Snap(mouse.Y)));
             string price = Data?.FormatValue?.Invoke(layout.PriceAt(mouse.Y)) ?? layout.PriceAt(mouse.Y).ToString("0.00", CultureInfo.InvariantCulture);
-            FormattedText label = Text(price, 11, Brushes.White, bold: true);
+            FormattedText label = Text(price, AxisText, Brushes.White, bold: true);
             var rect = new Rect(layout.PlotRight + 2, mouse.Y - (label.Height / 2) - 2, label.Width + 12, label.Height + 4);
             dc.DrawRoundedRectangle(ink, null, rect, 4, 4);
             dc.DrawText(label, new Point(rect.Left + 6, rect.Top + 2));
@@ -349,7 +350,7 @@ public sealed class CandleChart : FrameworkElement
             parts.Add((volume, ink, true));
         }
 
-        FormattedText[] texts = [.. parts.Select(p => Text(p.Text, 12, p.Brush, p.Bold))];
+        FormattedText[] texts = [.. parts.Select(p => Text(p.Text, 13, p.Brush, p.Bold))];
         double width = texts.Sum(t => t.WidthIncludingTrailingWhitespace) + 16;
         double height = texts.Max(t => t.Height) + 8;
         dc.DrawRoundedRectangle(Faded(Res("SurfaceBrush", Brushes.White), 235), new Pen(Res("LineBrush", Brushes.Gainsboro), 1),
@@ -365,7 +366,7 @@ public sealed class CandleChart : FrameworkElement
         PlacedMarker? near = layout.Markers.Where(m => Math.Abs(m.At.X - mouse.X) <= 10 && Math.Abs(m.At.Y - mouse.Y) <= 14).FirstOrDefault();
         if (near is not null)
         {
-            FormattedText label = Text(near.Marker.Label, 11.5, Brushes.White);
+            FormattedText label = Text(near.Marker.Label, 12.5, Brushes.White);
             double left = Math.Clamp(near.At.X + 12, layout.PlotLeft, Math.Max(layout.PlotLeft, layout.PlotRight - label.Width - 16));
             var rect = new Rect(left, near.At.Y - (label.Height / 2) - 4, label.Width + 16, label.Height + 8);
             dc.DrawRoundedRectangle(ink, null, rect, 6, 6);
