@@ -459,6 +459,24 @@ public sealed class ConfirmGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task AConfirmedOrder_AndItsReconciledFill_AreInTheExecutionReport()
+    {
+        using var rig = new StartupRig(_time);
+        var live = new RecordingLiveChannel();
+        _gateway = New(live, TradingMode.Confirm, e => e with { Live = rig.Authorize(live) });
+        _preflight.Default = FakePreflight.Valid(1m);
+
+        SubmitResult r = await Submit(); // decided at 100.37; the market at the send: bid 100.40, ask 100.60
+        _oms.ApplyFillValue(r.Order!.ClientOrderId, 10, 10 * 100.3m, 0m, "reconciliation"); // as live reconciliation books a deal
+
+        EodLiveOrder o = Assert.Single(EodReport.Build(_dir.Path, new DateOnly(2026, 9, 28), _time).Live!.Orders);
+        Assert.Equal(("ERIC B", "Buy", 10L, 100.3m, "Filled", false), (o.Ticker, o.Side, o.Filled, o.AverageFillPrice, o.State, o.Simulated));
+        Assert.Equal((100.37m, 100.5m), (o.DecisionPrice, o.ArrivalMid));
+        Assert.Equal((-7.0m, -19.9m), (o.SlippageVsDecisionBps, o.SlippageVsArrivalBps)); // below both: better than either
+        Assert.Equal((1m, 0m), (o.AvanzaFee, o.ModelFee));
+    }
+
+    [Fact]
     public async Task WithTheRealChannel_ADeclinedCard_SendsNothing()
     {
         using var rig = new StartupRig(_time);

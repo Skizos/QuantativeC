@@ -269,6 +269,7 @@ public sealed class ConfirmSpyTests : IDisposable
         Assert.Contains(" Re-checked: 21 of 21 pass", output, StringComparison.Ordinal);
         Assert.Contains(" Sent: order 700000002, Working.", output, StringComparison.Ordinal);
         Assert.Contains("nothing more to trade today.", output, StringComparison.Ordinal);
+        Assert.Contains("Live: 1 confirmed order(s), 0 filled (the backtest assumes 10).", output, StringComparison.Ordinal); // half-spread 5 + slippage 5
 
         RecordedRequest place = Assert.Single(OrderRouteRequests());
         Assert.Equal(("POST", AvanzaOrderRoutes.Place.Path()), (place.Method, place.PathAndQuery));

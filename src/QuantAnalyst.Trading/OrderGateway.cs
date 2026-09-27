@@ -282,16 +282,17 @@ public sealed class OrderGateway : IDisposable
         // Mode gate: Backtest and Paper pass to the simulated channel; Confirm shows the card, reads the answer and re-checks.
         if (_env.Mode == TradingMode.Confirm)
         {
-            (SubmitResult? skipped, RiskContext? confirmed) = await ConfirmAsync(intent, prepared, spec, ctx, report, fees, ct).ConfigureAwait(false);
+            (SubmitResult? skipped, RiskContext? confirmed, FeeComparison? confirmedFees) = await ConfirmAsync(intent, prepared, spec, ctx, report, fees, ct).ConfigureAwait(false);
             if (skipped is not null)
             {
                 return skipped;
             }
 
             ctx = confirmed!;
+            fees = confirmedFees;
         }
 
-        _audit.Append("gate", new { mode = _env.Mode.ToString(), channel = _channel.Name, decision = _env.Mode == TradingMode.Confirm ? "confirmed" : "simulate" });
+        AuditGate(intent, ctx, fees);
 
         DateTimeOffset now = _time.GetUtcNow();
         DateOnly today = StockholmDate(now);
@@ -365,7 +366,7 @@ public sealed class OrderGateway : IDisposable
     /// Confirm: the card, the typed answer, then every check again on fresh data (account, quote, Avanza's validation).
     /// Returns the skip, or the context the order is sent on.
     /// </summary>
-    private async Task<(SubmitResult? Skipped, RiskContext? Context)> ConfirmAsync(
+    private async Task<(SubmitResult? Skipped, RiskContext? Context, FeeComparison? Fees)> ConfirmAsync(
         OrderIntent intent, PreparedOrder prepared, InstrumentSpec spec, RiskContext ctx, RiskReport report, FeeComparison? fees, CancellationToken ct)
     {
         IOrderConfirmation confirmation = _env.Confirmation!;
@@ -398,14 +399,14 @@ public sealed class OrderGateway : IDisposable
         _audit.Append("confirm-answer", new { verdict = answer.Verdict.ToString(), answer.Reason, afterSeconds = answer.After?.TotalSeconds });
         if (!answer.Confirmed)
         {
-            return (Skip(intent, prepared, report, answer.Reason), null);
+            return (Skip(intent, prepared, report, answer.Reason), null, null);
         }
 
         _env.Account.Invalidate();
         if (await TryBuildContextAsync(prepared, spec, ct).ConfigureAwait(false) is not { } fresh)
         {
             confirmation.Tell("Re-check: the account state could not be read. Skipped; nothing was sent.");
-            return (Skip(intent, prepared, report, "the re-check could not read the account state"), null);
+            return (Skip(intent, prepared, report, "the re-check could not read the account state"), null, null);
         }
 
         (RiskReport again, FeeComparison? againFees, RiskContext checkedCtx) = await JudgeAsync(prepared, spec, fresh, ct).ConfigureAwait(false);
@@ -414,7 +415,7 @@ public sealed class OrderGateway : IDisposable
         {
             string why = Failures(again);
             confirmation.Tell($"Re-check failed: {why}. Skipped; nothing was sent.");
-            return (Skip(intent, prepared, again, "re-check failed: " + why), null);
+            return (Skip(intent, prepared, again, "re-check failed: " + why), null, null);
         }
 
         if (ct.IsCancellationRequested)
@@ -426,7 +427,36 @@ public sealed class OrderGateway : IDisposable
 
         string quoteAge = checkedCtx.Quote?.AsOfUtc is { } asOf ? $" (quote {Math.Max(0, (checkedCtx.NowUtc - asOf).TotalSeconds):0} s old)" : string.Empty;
         confirmation.Tell($"Re-checked: {again.Checks.Count} of {again.Checks.Count} pass{quoteAge}. Sending.");
-        return (null, checkedCtx);
+        return (null, checkedCtx, againFees);
+    }
+
+    /// <summary>
+    /// The mode gate's record. A confirmed order also records what the execution-quality report (plan 07 step 6) measures
+    /// it against: the decision price, the market when it was sent, and Avanza's quoted fee next to the model's.
+    /// </summary>
+    private void AuditGate(OrderIntent intent, RiskContext ctx, FeeComparison? fees)
+    {
+        if (_env.Mode != TradingMode.Confirm)
+        {
+            _audit.Append("gate", new { mode = _env.Mode.ToString(), channel = _channel.Name, decision = "simulate" });
+            return;
+        }
+
+        Quote? q = ctx.Quote;
+        _audit.Append("gate", new
+        {
+            mode = _env.Mode.ToString(),
+            channel = _channel.Name,
+            decision = "confirmed",
+            simulated = _simulated,
+            decisionPrice = intent.DecisionPrice,
+            arrivalBid = q?.Bid,
+            arrivalAsk = q?.Ask,
+            arrivalMid = q is { Bid: { } bid, Ask: { } ask } ? (bid + ask) / 2 : (decimal?)null,
+            arrivalLast = q?.Last,
+            avanzaFee = fees?.AvanzaFees,
+            modelFee = fees?.ModelFees ?? ctx.EstimatedFees,
+        });
     }
 
     /// <summary>Asks for the answer; a halt while the card is shown (e.g. the kill switch) ends the wait as a skip.</summary>

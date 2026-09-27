@@ -410,6 +410,11 @@ internal static class StatusCommand
         if (promotion is { MaxAllowed: >= TradingMode.Confirm })
         {
             r.Add(Mark.Ok, "Confirm gate", "promoted to Confirm");
+            GateResult auto = PromotionGate.Auto(reports, audit);
+            int confirmed = reports.Where(d => d.Modes.Contains("Confirm")).SelectMany(d => d.Live?.Orders ?? []).Count(o => !o.Simulated);
+            r.Add(auto.Met ? Mark.Ok : Mark.Todo, "Auto gate", auto.Met
+                ? "MET (Auto arrives in Phase 8)"
+                : $"{confirmed} of {PromotionGate.MinConfirmedOrders} confirmed live orders; the rest of the gate: qa report gate");
         }
         else if (gate.Met)
         {

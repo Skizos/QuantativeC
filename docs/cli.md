@@ -229,8 +229,11 @@ only. Confirm and Auto cannot start in Phase 6.
 | `qa kill [--reason "…"]` | **Kill switch.** Writes `./KILL`: a running session halts within a second and cancels every working order through the gateway. Without a session, the next one refuses to start. |
 | `qa kill --status` / `qa kill --reset [--reason "…"]` | Shows / clears the kill switch. Reset works only while no session runs (`state/session.lock`) and is audited. |
 | `qa audit verify [--dir audit]` | Checks the audit log's hash chain across all days (`audit/YYYY-MM-DD.jsonl`, one record per pipeline step). Exit 2 when broken. |
-| `qa report eod [--date yyyy-MM-dd \| --all] [--json]` | The end-of-day report of a day, **rebuilt from the audit log**, saved to `reports/eod/YYYY-MM-DD.json`. It covers orders sent and accepted, risk rejections by check, and every paper fill against the market's VWAP over the fill window (or the arrival mid for fills at entry). It also shows reconciliation runs, violations, events, and the day's value and fees. `qa paper run` writes it at the close, and a partial one when stopped early. |
-| `qa report gate` | Rebuilds every day and shows how far you are from the Confirm gate. |
+| `qa report eod [--date yyyy-MM-dd \| --all] [--json]` | The end-of-day report of a day, **rebuilt from the audit log**, saved to `reports/eod/YYYY-MM-DD.json`. It covers orders sent and accepted, risk rejections by check, and every paper fill against the market's VWAP over the fill window (or the arrival mid for fills at entry). It also shows reconciliation runs, violations, events, and the day's value and fees. `qa paper run` writes it at the close, and a partial one when stopped early. On a Confirm day it adds the **live execution quality**:
+<br>• every confirmed order, with its average fill against the decision price and against the mid when it was sent, in bps (positive is a cost)
+<br>• Avanza's quoted fee against the model's
+<br>• the value-weighted mean slippage against the backtest's cost assumption (half-spread + slippage from the cost file) |
+| `qa report gate` | Rebuilds every day and shows both promotion gates: how far Paper is from Confirm, and how far Confirm is from **Auto**. The Auto gate needs 20 confirmed live orders, none still Unknown at the end of a day, the mean slippage against the arrival mid within the backtest's assumption, no violations on Confirm days, and an intact audit chain. Auto itself arrives in Phase 8. |
 
 **Before your first session** (`qa status` lists whichever of these are still missing):
 1. `qa history import ERIC-B` (and your other names) so they are in the instrument master. After that, `qa paper run` keeps the history up to date itself.

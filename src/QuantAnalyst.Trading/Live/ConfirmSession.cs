@@ -21,6 +21,7 @@ public sealed record ConfirmSessionSummary(
     int Filled,
     decimal? AccountValue,
     decimal? StartOfDayValue,
+    decimal? Cash,
     bool Killed,
     bool ReconciliationClean);
 
@@ -38,6 +39,8 @@ public sealed record ConfirmSessionSummary(
 /// <item>at the close reconciles and reports the day (Avanza ends day orders itself).</item>
 /// </list>
 /// Stopping it cancels its working orders through the gateway: nothing it placed is left unwatched.
+/// <paramref name="costAssumptionBps"/> (the backtest's half-spread + slippage) is recorded at the start, so the end-of-day
+/// report can compare the realised slippage with it (plan 07 step 6).
 /// </summary>
 public sealed class ConfirmSession(
     OrderGateway gateway,
@@ -52,7 +55,8 @@ public sealed class ConfirmSession(
     Func<CancellationToken, Task<PlanResult>> plan,
     TextWriter output,
     bool decideAtStart = false,
-    Func<DateOnly, string>? endOfDayReport = null)
+    Func<DateOnly, string>? endOfDayReport = null,
+    decimal? costAssumptionBps = null)
 {
     public static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan ReconcileEvery = TimeSpan.FromSeconds(30);
@@ -79,7 +83,7 @@ public sealed class ConfirmSession(
 
     public async Task<ConfirmSessionSummary> RunAsync(DateTimeOffset stopAtUtc, CancellationToken ct)
     {
-        audit.Append("session-start", new { mode = "Confirm", stopAtUtc, decideAtStart });
+        audit.Append("session-start", new { mode = "Confirm", stopAtUtc, decideAtStart, costAssumptionBps });
         try
         {
             while (!ct.IsCancellationRequested && time.GetUtcNow() < stopAtUtc)
@@ -302,7 +306,7 @@ public sealed class ConfirmSession(
         }
 
         int filled = gateway.Oms.All.Count(o => o.FilledVolume > 0);
-        return new ConfirmSessionSummary(_cards, _accepted, _skipped, _riskRejected, _blocked, filled, a?.AccountValue, a?.StartOfDayValue, kill.IsKilled, _lastClean);
+        return new ConfirmSessionSummary(_cards, _accepted, _skipped, _riskRejected, _blocked, filled, a?.AccountValue, a?.StartOfDayValue, a?.AvailableCash, kill.IsKilled, _lastClean);
     }
 
     private static string Local(DateTimeOffset utc) =>

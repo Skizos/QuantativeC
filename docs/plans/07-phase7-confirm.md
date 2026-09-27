@@ -1,6 +1,6 @@
 # 07 — Phase 7: Confirm mode (real orders, each one typed by you)
 
-- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–5 done** (2026-09-26 and
+- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–6 done** (2026-09-26 and
   2026-09-27, see Step notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
   automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5).
 - **Scope:** master plan §4 Phase 7; ADR 0003 §2 (BrokerPreflight), §3 (startup HMAC check), §5 (Confirm UX), §6
@@ -331,6 +331,41 @@ Nothing is taken from memory.
   - **Gateway, 1:** a stop after `JA`.
   - **Hook self-test still 78/78.** I never ran any of these commands in a shell: the tests call the command code
     in-process against the fake server.
+
+**Step 6: reports (done 2026-09-27).**
+- **What the gateway records:** a confirmed order's `gate` record now carries what it is measured against:
+  - the decision price
+  - the bid, ask, mid and last when it was sent (the re-check's quote)
+  - Avanza's quoted fee (the re-check's preliminary fee) and the model's
+- **What the session records:** the Confirm session's `session-start` records the backtest's cost assumption: half-spread
+  + slippage from the courtage file (10 bps for Start today).
+- **The end-of-day report** (`EodReport.Live`), still built from the audit log alone:
+  - every confirmed order, with its average fill (partial fills weighted by value) against the decision price and
+    against the arrival mid, in bps, signed so positive is a cost; Avanza's quoted fee against the model's; and the fees
+    booked with the fills (0 until step 7 models the real deals)
+  - the day's value-weighted mean slippage, compared with the assumption
+  - the count of fees more than 1 SEK from the model
+  - `UnknownAtEnd`, the orders still Unknown when the day's audit ends
+  - rehearsals on a simulated channel are marked and never count
+- **The Auto gate** (`PromotionGate.Auto`), over every Confirm day:
+  - ≥ 20 confirmed live orders
+  - no order Unknown at the end of a day
+  - the value-weighted mean slippage vs the arrival mid ≤ the strictest recorded assumption
+  - **no violations on Confirm days**: stricter than ADR 0003's list, because a live day with a violation is no evidence
+  - an intact audit chain
+  - the fees quoted and modelled are shown for information
+  - It is shown by `qa report gate` (under the Confirm gate) and counted in `qa status`. The promotion command still
+    refuses Auto: Auto is Phase 8.
+- **Fixed while building it (step 5 bug):** the Confirm session's close record has no paper cash or fees, and rebuilding
+  that day's report would have thrown. The report now takes whatever values the record has. The session also records
+  the available cash.
+- **Tests (14 new):**
+  - 11 on audit fixtures: the slippage maths with partial fills, a sell and an unfilled order; a mean above the
+    assumption; the Confirm close record; Unknown at the end; the Auto gate met at 20 and not met at 19, above the
+    assumption, with rehearsals only, without an assumption, with an Unknown or a violation, and on Paper days only
+  - 1 through the real gateway and the OMS: a confirmed order and its reconciled fill in the report
+  - 2 CLI: `qa report eod` and `qa report gate`, and the `qa status` count
+  - The Confirm spy now also checks the live line of the session's own report.
 
 ## Test map (planned)
 

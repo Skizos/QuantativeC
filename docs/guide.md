@@ -197,7 +197,7 @@ The exact list, with who does what, is in `docs/plans/07-phase7-confirm.md` §"R
   - the order card with typed confirmation (done)
   - startup checks of the signed promotion (done)
   - the Confirm session: `qa trade run --mode confirm` and `qa rebalance` (done)
-  - the live end-of-day execution report
+  - the live end-of-day execution report and the Auto gate (done)
   - the final order format from your capture
 - **Then you** place the first minimal-size orders yourself.
 
@@ -286,7 +286,16 @@ the numbers are an example):
 - **One card per instrument a day:** a skipped, rejected or sent one is not proposed again that day, so a late `JA` can never confirm a different card.
 - **Ad hoc:** `.\qa rebalance` shows what the strategy would trade right now, sending nothing. `.\qa rebalance --mode confirm --execute` runs the same cards now instead of waiting for 09:10.
 - **Stopping** (Ctrl+C, `.\qa kill`) cancels the session's working orders at Avanza, so nothing it placed is left unwatched. A stop between your `JA` and the send sends nothing.
-- **The kill switch and the loss stop** work exactly as in Paper, on your live account's values. The end-of-day report's live section (each fill's slippage against the decision and arrival prices, Avanza's fee against the model's) comes with step 6.
+- **The kill switch and the loss stop** work exactly as in Paper, on your live account's values.
+- **The end-of-day report** has a live section for every confirmed order:
+  - its fills against the decision price and against the mid when it was sent, in bps (positive is a cost)
+  - Avanza's quoted fee against the model's
+  - the day's value-weighted mean slippage against the backtest's cost assumption (half-spread + slippage)
 
-After at least 20 confirmed live orders with no unresolved unknown states and slippage within the backtest's
-assumption, `.\qa report gate` will show the Auto gate (Phase 8).
+**Towards Auto (Phase 8):** `.\qa report gate` shows the Auto gate under the Confirm gate, and `.\qa status` shows how
+many confirmed orders you have. The gate needs:
+- 20 confirmed live orders
+- none still Unknown at the end of a day
+- mean slippage within the backtest's assumption
+- no violations on Confirm days
+- an intact audit chain

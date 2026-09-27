@@ -120,6 +120,55 @@ public sealed class CliPromotionTests : IDisposable
         Assert.Contains("clean Paper trading days in a row: 3 (need 10)", output, StringComparison.Ordinal);
     }
 
+    /// <summary>One Confirm day: a confirmed ERIC B buy of 10 decided at 70.80, sent when the mid was 70.85, filled at 70.86.</summary>
+    private void ConfirmDay(DateOnly date)
+    {
+        var log = new AuditLog(Audit, new FakeTimeProvider(new DateTimeOffset(date.ToDateTime(new TimeOnly(7, 0)), TimeSpan.Zero)));
+        string id = Guid.NewGuid().ToString();
+        log.Append("session-start", new { mode = "Confirm", costAssumptionBps = 12m });
+        log.Append("recheck", new { passed = true, checks = Array.Empty<object>() });
+        log.Append("gate", new { mode = "Confirm", channel = "avanza", decision = "confirmed", simulated = false, decisionPrice = 70.80m, arrivalMid = 70.85m, avanzaFee = 1m, modelFee = 1m });
+        log.Append("oms-new", new { clientOrderId = id, ticker = "ERIC B", side = "Buy", volume = 10, limitPrice = 71.2m });
+        log.Append("submit", new { clientOrderId = id });
+        log.Append("submit-result", new { clientOrderId = id, outcome = "Accepted" });
+        log.Append("oms-fill", new { clientOrderId = id, volume = 10, price = 70.86m, value = 708.6m, fees = 1m, source = "reconciliation", to = "Filled" });
+        log.Append("reconcile", new { mismatches = Array.Empty<string>() });
+        log.Append("end-of-day", new { day = new { accountValue = 5000m, startOfDayValue = 5000m, cash = 4291m } });
+    }
+
+    [Fact]
+    public void ReportEod_ShowsEachConfirmedOrder_AndGateShowsTheAutoGate()
+    {
+        ConfirmDay(new DateOnly(2026, 10, 12));
+
+        (int code, string output, string error) = Qa(string.Empty, "report", "eod", "--date", "2026-10-12", "--audit-dir", Audit, "--reports-dir", Reports);
+        Assert.True(code == 0, error);
+        Assert.Contains("Live: 1 confirmed order(s), 1 filled, slippage +1.4 bps vs the arrival mid (the backtest assumes 12).", output, StringComparison.Ordinal);
+        Assert.Contains("  live Buy ERIC B (limit 71.2, Filled): filled 10/10 @ 70.86; +8.5 bps vs the decision, +1.4 bps vs the arrival mid; fee Avanza 1.00 / model 1.00 SEK", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa(string.Empty, "report", "gate", "--audit-dir", Audit, "--reports-dir", Reports);
+        Assert.Equal(0, code);
+        Assert.Contains("Auto gate: not met yet (Auto itself arrives in Phase 8)", output, StringComparison.Ordinal);
+        Assert.Contains("[--] confirmed live orders: 1 (need 20), over 1 Confirm day(s) from 2026-10-12", output, StringComparison.Ordinal);
+        Assert.Contains("[ok] slippage vs the arrival mid: +1.4 bps over 1 filled order(s); the backtest assumes 12 bps", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Status_OncePromotedToConfirm_CountsTheOrdersTowardsTheAutoGate()
+    {
+        _keys.Key = Promotion.NewKey();
+        Promotion.Append(PromotionDir, Promotion.Sign(
+            new PromotionRecord("Confirm", "Paper", new DateTimeOffset(2026, 10, 9, 16, 0, 0, TimeSpan.Zero), "owner", [], Promotion.EvidenceHash([]), ["[ok] test"], string.Empty), _keys.Key));
+        ConfirmDay(new DateOnly(2026, 10, 12));
+
+        (int code, string output, string error) = Qa(string.Empty, "status", "--audit-dir", Audit, "--promotion-dir", PromotionDir,
+            "--state-dir", Path.Combine(_root, "state"), "--kill-file", Path.Combine(_root, "KILL"));
+
+        Assert.True(code == 0, error);
+        Assert.Contains("promoted to Confirm", output, StringComparison.Ordinal);
+        Assert.Contains("1 of 20 confirmed live orders; the rest of the gate: qa report gate", output, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Promote_NeedsTheKey_AndInitKeyCreatesItOnce()
     {
@@ -182,7 +231,7 @@ public sealed class CliPromotionTests : IDisposable
     }
 
     [Fact]
-    public void Promote_TamperedState_IsRefused_AndAutoWaitsForPhase7()
+    public void Promote_TamperedState_IsRefused_AndAutoWaitsForPhase8()
     {
         _keys.Key = Promotion.NewKey();
         PaperDays(10);
@@ -190,7 +239,7 @@ public sealed class CliPromotionTests : IDisposable
 
         (int code, _, string error) = Promote("Auto", "--to", "Auto");
         Assert.Equal(1, code);
-        Assert.Contains("arrives with Phase 7", error, StringComparison.Ordinal);
+        Assert.Contains("Auto mode arrives in Phase 8. Its gate", error, StringComparison.Ordinal);
 
         string state = Path.Combine(PromotionDir, PromotionState.StateFile);
         File.WriteAllText(state, File.ReadAllText(state).Replace("\"operator\": \"", "\"operator\": \"x", StringComparison.Ordinal));

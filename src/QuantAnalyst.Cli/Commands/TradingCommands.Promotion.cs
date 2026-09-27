@@ -58,7 +58,7 @@ internal static partial class TradingCommands
 
         var gateAudit = AuditDirOption();
         var gateReports = ReportsDirOption();
-        var gate = new Command("gate", "Rebuild every day's report and show how far Paper is from the Confirm promotion gate (10 clean Paper days). Read-only for promotion.");
+        var gate = new Command("gate", "Rebuild every day's report and show the promotion gates: Paper to Confirm (10 clean Paper days), and Confirm to Auto (20 confirmed live orders, slippage within the backtest's assumption). Read-only.");
         gate.Options.Add(gateAudit);
         gate.Options.Add(gateReports);
         gate.SetAction(parse => Execute(parse, w =>
@@ -69,10 +69,19 @@ internal static partial class TradingCommands
                 w.WriteLine(r.Summary());
             }
 
-            GateResult result = PromotionGate.Confirm(reports, AuditLog.Verify(parse.GetValue(gateAudit)!));
+            AuditVerification chain = AuditLog.Verify(parse.GetValue(gateAudit)!);
+            GateResult result = PromotionGate.Confirm(reports, chain);
             w.WriteLine();
             w.WriteLine($"Confirm gate: {(result.Met ? "MET" : "not met yet")}");
             foreach (string line in result.Lines)
+            {
+                w.WriteLine("  " + line);
+            }
+
+            GateResult auto = PromotionGate.Auto(reports, chain);
+            w.WriteLine();
+            w.WriteLine($"Auto gate: {(auto.Met ? "MET" : "not met yet")} (Auto itself arrives in Phase 8)");
+            foreach (string line in auto.Lines)
             {
                 w.WriteLine("  " + line);
             }
@@ -162,7 +171,7 @@ internal static partial class TradingCommands
 
                 if (target != TradingMode.Confirm)
                 {
-                    throw new ArgumentException($"The {target} gate needs Confirm-mode results (ADR 0003 §3: 20 confirmed live orders, slippage within the backtest's assumption); it arrives with Phase 7.");
+                    throw new ArgumentException($"{target} mode arrives in Phase 8. Its gate (ADR 0003 §3: 20 confirmed live orders, slippage within the backtest's assumption) is in 'qa report gate' already.");
                 }
 
                 (IReadOnlyList<EodReport> reports, IReadOnlyDictionary<DateOnly, string> paths) = RebuildAll(parse.GetValue(auditDir)!, parse.GetValue(reportsDir)!);
@@ -254,7 +263,17 @@ internal static partial class TradingCommands
 
     internal static void WriteReport(TextWriter w, EodReport r, string path)
     {
+        CultureInfo c = CultureInfo.InvariantCulture;
         w.WriteLine(r.Summary());
+        foreach (EodLiveOrder o in r.Live?.Orders ?? [])
+        {
+            string fill = o.AverageFillPrice is { } avg ? string.Create(c, $"filled {o.Filled}/{o.Volume} @ {avg:0.####}") : $"filled 0/{o.Volume}";
+            string vsDecision = o.SlippageVsDecisionBps is { } d ? string.Create(c, $"{d:+0.0;-0.0} bps vs the decision") : "no decision price";
+            string vsArrival = o.SlippageVsArrivalBps is { } a ? string.Create(c, $"{a:+0.0;-0.0} bps vs the arrival mid") : "no arrival mid";
+            string fees = string.Create(c, $"fee Avanza {(o.AvanzaFee is { } f ? f.ToString("N2", c) : "-")} / model {o.ModelFee:N2} SEK");
+            w.WriteLine($"  live {o.Side} {o.Ticker} (limit {o.Limit.ToString("0.####", c)}, {o.State}{(o.Simulated ? ", rehearsal" : string.Empty)}): {fill}; {vsDecision}, {vsArrival}; {fees}");
+        }
+
         foreach (EodFill f in r.Fills)
         {
             w.WriteLine(string.Create(CultureInfo.InvariantCulture,
