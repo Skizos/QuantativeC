@@ -394,7 +394,7 @@ The owner asked for the first finding above to be closed in code: money added to
 | **What it caps** | The value that R6, R7, R8 and R19 are sized on, and the value the plan invests, is min(the account's value, the cap). Below the cap nothing changes. | One number that the limits and the plan share, so they can't disagree |
 | **R19** | The day's loss limit in SEK is 2 % of min(the start-of-day value, the cap): at most 100 SEK however large the ISK. The risk engine and the kill switch use the same rule (`RiskLimits.DailyLossStopHit`). | The loss stop is the limit that must not grow with a deposit |
 | **R8** | Every holding in the account counts against 100 % of the capped value. On an ISK whose other holdings exceed the cap, no buy passes. | Fail-safe. The handover checklist says to use a dedicated ISK. |
-| **The plan** | Buys are also clipped to R8's room, after counting the buys already planned in the same decision. A small cap then gives smaller cards or none, instead of rejections that add up to the three-in-a-row kill. **Known limit:** the plan sees holdings, not unfilled buys from earlier cards (the account snapshot has no open orders). Close to the cap, R8 can still reject a planned buy, and R8 still holds either way. | The plan already clips to R6 and R7 for the same reason |
+| **The plan** | Buys are also clipped to R8's room, after counting the buys already planned in the same decision. A small cap then gives smaller cards or none, instead of rejections that add up to the three-in-a-row kill. **R7 and R8 room also counts the buys still working** (added the same day, at the owner's request). The plan gets the gateway's own open-order list (`OrderGateway.OpenOrders`, which the checks read too), so an unfilled buy from an earlier card uses room in both. | The plan already clips to R6 and R7 for the same reason |
 | **Paper** | Paper uses the same file, so it is sized on at most 5,000 SEK too. It starts at 5,000 SEK, so nothing changes until it gains. | One set of limits for Paper and Confirm |
 | **`RiskLimits.AdrDefaults`** | No cap (`decimal.MaxValue`): ADR 0003 §4 as first written. The tests size on 100,000 SEK accounts. | The committed file carries the cap. A test fails if it is ever committed above 5,000. |
 | **Shown** | `qa risk-limits` gets a row and sizes on the capped value. So does the `qa status` "Risk limits" line. An order card's R6, R7, R8 and R19 limits say when the cap applies. | You see what the cap does |
@@ -404,6 +404,9 @@ The owner asked for the first finding above to be closed in code: money added to
 - loader: the field is required and must be > 0, and the committed value is at most 5,000
 - engine: R6, R7, R8 and R19, each passing below the cap and failing above it
 - the plan: clipped by the cap and by R8's room, including buys planned earlier in the same decision
+- the plan with working buys: R7 and R8 room reduced by them, and a property test. For 45 mixes of holdings and working
+  buys, every order the plan proposes passes R7 and R8 on the same numbers, with the earlier orders of the plan
+  working. Both tests fail when the planner ignores working buys.
 - kill switch: the loss stop sized on the cap
 - CLI: `qa risk-limits` sized on the cap
 

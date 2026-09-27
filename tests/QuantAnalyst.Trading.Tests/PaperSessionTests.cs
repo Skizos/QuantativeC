@@ -28,7 +28,7 @@ public sealed class DailyPlannerTests
         new(new AccountId(PaperConfig.AccountId), value, value, new Dictionary<OrderbookId, long> { [Eric] = eric }, new Dictionary<OrderbookId, decimal> { [Eric] = ericValue }, value);
 
     private PlanResult Plan(double[] targets, AccountSnapshot? account = null, ExecutionOptions? execution = null) =>
-        DailyPlanner.Plan(targets, Specs, account ?? Account(), _quotes, Risk, execution ?? new ExecutionOptions(), "test", _time.GetUtcNow());
+        DailyPlanner.Plan(targets, Specs, account ?? Account(), [], _quotes, Risk, execution ?? new ExecutionOptions(), "test", _time.GetUtcNow());
 
     private void Price(OrderbookId id, decimal bid, decimal ask) => _quotes.Set(id, _time.GetUtcNow(), bid, 1_000, ask, 1_000, (bid + ask) / 2, 1_000);
 
@@ -67,7 +67,7 @@ public sealed class DailyPlannerTests
         // ADR 0003 §4 (Changes 2026-09-27): a 100,000 SEK account with a 5,000 SEK cap is planned as 5,000 SEK.
         Price(Eric, 99.9m, 100.1m);
         var capped = new PreTradeRiskEngine(RiskLimits.AdrDefaults with { MaxAccountValueSek = 5_000m });
-        PlanResult p = DailyPlanner.Plan([0.2, double.NaN], Specs, Account(), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
+        PlanResult p = DailyPlanner.Plan([0.2, double.NaN], Specs, Account(), [], _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
 
         OrderIntent i = Assert.Single(p.Intents);
         Assert.Equal(4, i.Quantity); // 20 % of 4,950 = 9 shares, clipped to R6's 500 SEK (10 % of the cap) at a 100.5 limit
@@ -76,7 +76,7 @@ public sealed class DailyPlannerTests
         Assert.Contains(p.Notes, n => n.Contains("sized on the 5,000 SEK account cap, not the account's 100,000 SEK", StringComparison.Ordinal));
 
         // Below the cap the account itself is the size, and nothing is noted.
-        PlanResult small = DailyPlanner.Plan([0.2, double.NaN], Specs, Account(4_000m), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
+        PlanResult small = DailyPlanner.Plan([0.2, double.NaN], Specs, Account(4_000m), [], _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
         Assert.Equal(3, Assert.Single(small.Intents).Quantity); // R6: 400 SEK
         Assert.DoesNotContain(small.Notes, n => n.Contains("account cap", StringComparison.Ordinal));
     }
@@ -91,18 +91,93 @@ public sealed class DailyPlannerTests
         AccountSnapshot Holding(decimal other) => new(new AccountId(PaperConfig.AccountId), 100_000m, 50_000m, new Dictionary<OrderbookId, long> { [Eric] = 0 },
             new Dictionary<OrderbookId, decimal> { [Eric] = 0m, [RiskEngineTests.Other] = other }, 100_000m);
 
-        OrderIntent one = Assert.Single(DailyPlanner.Plan([0.2, double.NaN], Specs, Holding(4_800m), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow()).Intents);
+        OrderIntent one = Assert.Single(DailyPlanner.Plan([0.2, double.NaN], Specs, Holding(4_800m), [], _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow()).Intents);
         Assert.Equal(1, one.Quantity); // 200 SEK of room
         Assert.Contains("clipped from 9 by R8 gross exposure", one.Reason, StringComparison.Ordinal);
 
-        PlanResult two = DailyPlanner.Plan([0.2, 0.2], Specs, Holding(4_500m), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
+        PlanResult two = DailyPlanner.Plan([0.2, 0.2], Specs, Holding(4_500m), [], _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
         OrderIntent first = Assert.Single(two.Intents);
         Assert.Equal((Eric, 4L), (first.OrderbookId, first.Quantity)); // 402 SEK of the 500 SEK room
         Assert.Contains(two.Notes, n => n.Contains("TEST B: Buy 9 wanted, but R8 gross exposure leaves no room", StringComparison.Ordinal));
 
-        PlanResult none = DailyPlanner.Plan([0.2, double.NaN], Specs, Holding(95_000m), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
+        PlanResult none = DailyPlanner.Plan([0.2, double.NaN], Specs, Holding(95_000m), [], _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
         Assert.Empty(none.Intents); // no card that R8 would reject
         Assert.Contains(none.Notes, n => n.Contains("R8 gross exposure leaves no room", StringComparison.Ordinal));
+    }
+
+    private static OpenOrderView WorkingBuy(OrderbookId id, long volume, decimal limit) => new(Guid.NewGuid(), id, OrderSide.Buy, volume, limit, IsUnknown: false);
+
+    private static AccountSnapshot Book(decimal ericValue, decimal otherValue) => new(new AccountId(PaperConfig.AccountId), 100_000m, 50_000m,
+        new Dictionary<OrderbookId, long> { [Eric] = (long)(ericValue / 100m) },
+        new Dictionary<OrderbookId, decimal> { [Eric] = ericValue, [RiskEngineTests.Other] = otherValue }, 100_000m);
+
+    [Fact]
+    public void BuysStillWorking_CountAgainstR7AndR8_LikeTheChecks()
+    {
+        // Closes the edge case from the account cap: an unfilled buy from an earlier card uses room too.
+        Price(Eric, 99.9m, 100.1m);
+        Price(Test, 99.9m, 100.1m);
+        var capped = new PreTradeRiskEngine(RiskLimits.AdrDefaults with { MaxAccountValueSek = 5_000m });
+
+        // R8: 4,500 held + 300 working in TEST B leaves 200 SEK of the capped 5,000.
+        OrderIntent r8 = Assert.Single(DailyPlanner.Plan([0.2, double.NaN], Specs, Book(0m, 4_500m), [WorkingBuy(Test, 3, 100m)], _quotes, capped,
+            new ExecutionOptions(), "test", _time.GetUtcNow()).Intents);
+        Assert.Equal(1, r8.Quantity);
+        Assert.Contains("by R8 gross exposure", r8.Reason, StringComparison.Ordinal);
+
+        // R7: 400 held + 300 working in ERIC B leaves 300 SEK of the 1,000 per name.
+        OrderIntent r7 = Assert.Single(DailyPlanner.Plan([0.2, double.NaN], Specs, Book(400m, 0m), [WorkingBuy(Eric, 3, 100m)], _quotes, capped,
+            new ExecutionOptions(), "test", _time.GetUtcNow()).Intents);
+        Assert.Equal(2, r7.Quantity); // 300 / 100.5
+        Assert.Contains("by R7 position", r7.Reason, StringComparison.Ordinal);
+
+        // A working sell uses no room.
+        OrderIntent sell = Assert.Single(DailyPlanner.Plan([0.2, double.NaN], Specs, Book(0m, 4_500m),
+            [new OpenOrderView(Guid.NewGuid(), Test, OrderSide.Sell, 3, 100m, false)], _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow()).Intents);
+        Assert.Equal(4, sell.Quantity); // R6's 500 SEK, as without the sell
+    }
+
+    [Fact]
+    public void WhateverThePlanProposes_PassesR7AndR8_OnTheSameNumbers()
+    {
+        // The plan and the checks read the same account and open orders. Each proposed order is checked as the gateway
+        // would, with the earlier orders of the same plan working (sent, not filled), at the unrounded limit (buys round
+        // down, so this is the worst case).
+        Price(Eric, 99.9m, 100.1m);
+        Price(Test, 49.9m, 50.1m);
+        var capped = new PreTradeRiskEngine(RiskLimits.AdrDefaults with { MaxAccountValueSek = 5_000m });
+        int checkedOrders = 0;
+        foreach (decimal other in new[] { 0m, 2_000m, 4_300m, 4_900m, 6_000m })
+        {
+            foreach (decimal ericHeld in new[] { 0m, 400m, 900m })
+            {
+                foreach (OpenOrderView[] working in new OpenOrderView[][] { [], [WorkingBuy(Eric, 2, 100m)], [WorkingBuy(Test, 5, 50m), WorkingBuy(Eric, 1, 99m)] })
+                {
+                    AccountSnapshot book = Book(ericHeld, other);
+                    PlanResult plan = DailyPlanner.Plan([0.3, 0.3], Specs, book, working, _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
+                    var open = new List<OpenOrderView>(working);
+                    foreach (OrderIntent i in plan.Intents)
+                    {
+                        RiskContext ctx = RiskEngineTests.Baseline() with
+                        {
+                            AccountValue = book.AccountValue,
+                            StartOfDayValue = book.StartOfDayValue,
+                            Positions = book.Positions,
+                            PositionValues = book.PositionValues,
+                            OpenOrders = [.. open],
+                        };
+                        RiskReport report = capped.Evaluate(new PreparedOrder(i, i.Quantity, i.LimitPrice, i.LimitPrice), ctx);
+                        string what = $"other {other}, ERIC B held {ericHeld}, {working.Length} working: {i.Side} {i.Quantity} {i.Ticker} @ {i.LimitPrice}";
+                        Assert.True(report["R7"].Passed, $"R7 {report["R7"].Observed} vs {report["R7"].Limit}; {what}");
+                        Assert.True(report["R8"].Passed, $"R8 {report["R8"].Observed} vs {report["R8"].Limit}; {what}");
+                        open.Add(WorkingBuy(i.OrderbookId, i.Quantity, i.LimitPrice!.Value));
+                        checkedOrders++;
+                    }
+                }
+            }
+        }
+
+        Assert.True(checkedOrders >= 20, $"only {checkedOrders} orders were proposed; the test must exercise the room");
     }
 
     [Fact]

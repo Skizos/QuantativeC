@@ -142,7 +142,7 @@ internal static partial class AvanzaCommands
                 }
 
                 double[] targets = StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
-                return Task.FromResult(DailyPlanner.Plan(targets, specs, book.Snapshot(), quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now));
+                return Task.FromResult(DailyPlanner.Plan(targets, specs, book.Snapshot(), gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now));
             }
 
             DateTimeOffset start = time.GetUtcNow();

@@ -250,7 +250,7 @@ only. Confirm and Auto cannot start in Phase 6.
 - **Resting:** fills only when a later trade prints **through** the limit, at the limit, taking at most 10 % of the traded volume (shared by your resting orders, oldest first). A touch is not a fill.
 - **Courtage** comes from the courtage class, charged per order (the minimum once), plus the class's FX fee for non-SEK instruments (none on Start while you are under its limit).
 - **With 5,000 SEK:** R6 allows 500 SEK per order and R7 1,000 SEK per instrument, so a share priced above 500 SEK cannot be bought at all, and a larger target is built over several days. The limits are ADR 0003's, in `config/risk-limits.json`.
-- **The account cap** (`max_account_value_sek`, 5,000 SEK) sizes R6, R7, R8 and R19 and the plan on the account's value, but never on more than the cap. A larger account doesn't raise any limit, and the loss stop never exceeds 100 SEK a day. The plan also clips buys to R8's room, so a full account gets no order rather than a rejection.
+- **The account cap** (`max_account_value_sek`, 5,000 SEK) sizes R6, R7, R8 and R19 and the plan on the account's value, but never on more than the cap. A larger account doesn't raise any limit, and the loss stop never exceeds 100 SEK a day. The plan also clips buys to R7's and R8's room, counting the buys still working, so a full account gets no order rather than a rejection.
 
 **Safety:**
 - **Unknown outcomes:** a submit with an unknown outcome is never retried, and it blocks its instrument (R18) until reconciliation resolves it.
