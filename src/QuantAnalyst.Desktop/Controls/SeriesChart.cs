@@ -26,6 +26,8 @@ public sealed class SeriesChart : FrameworkElement
 
     private double? _hoverX;
 
+    public SeriesChart() => ClipToBounds = true; // labels and bubbles never spill over the page next to it
+
     public ChartData? Data
     {
         get => (ChartData?)GetValue(DataProperty);

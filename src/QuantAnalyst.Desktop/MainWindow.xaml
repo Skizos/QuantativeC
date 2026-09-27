@@ -114,8 +114,11 @@
 
                 <DockPanel Grid.Column="0" Margin="28,22,20,8">
                     <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
-                        <DockPanel>
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <!-- The title, and the page's tools beside it; in a narrow pane the tools move under the title. -->
+                        <c:AdaptiveRow FillMinWidth="170" Spacing="16">
+                            <TextBlock c:AdaptiveRow.Fill="True" Text="{Binding SelectedPage.Title}" Style="{StaticResource H1}" TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                 <c:Icon Data="{StaticResource IconSplit}" Width="16" Height="16" Margin="0,0,6,0" Foreground="{StaticResource InkSecondaryBrush}" />
                                 <TextBlock Text="Beside" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,8,0" />
                                 <ComboBox ItemsSource="{Binding BesideChoices}" SelectedItem="{Binding SelectedBeside}" Width="132" Margin="0,0,12,0"
@@ -135,18 +138,36 @@
                                     </StackPanel>
                                 </Button>
                             </StackPanel>
-                            <TextBlock Text="{Binding SelectedPage.Title}" Style="{StaticResource H1}" TextTrimming="CharacterEllipsis" />
-                        </DockPanel>
+                        </c:AdaptiveRow>
                         <TextBlock Text="{Binding SelectedPage.Subtitle}" Style="{StaticResource Hint}" Margin="0,4,0,12" />
                         <ContentControl Content="{Binding SelectedPage}" ContentTemplate="{StaticResource PageMessage}" Focusable="False" />
                     </StackPanel>
                     <ContentControl Content="{Binding SelectedPage}" Focusable="False" />
                 </DockPanel>
 
-                <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
-                              Background="{StaticResource LineBrush}" Margin="0,22,0,8" Cursor="SizeWE" ShowsPreview="False"
+                <!-- The divider: a thin line with a wide grip, green under the mouse and while dragged. -->
+                <GridSplitter Grid.Column="1" Width="12" HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
+                              Margin="0,22,0,8" Cursor="SizeWE" ShowsPreview="False" Focusable="False"
                               Visibility="{Binding HasBeside, Converter={StaticResource Visibility}}"
-                              ToolTip="Drag to share the width between the two pages" />
+                              ToolTip="Drag to share the width between the two pages">
+                    <GridSplitter.Template>
+                        <ControlTemplate TargetType="GridSplitter">
+                            <Border Background="Transparent">
+                                <Border x:Name="Line" Width="2" CornerRadius="1" HorizontalAlignment="Center" Background="{StaticResource LineStrongBrush}" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Line" Property="Background" Value="{StaticResource AccentBrush}" />
+                                    <Setter TargetName="Line" Property="Width" Value="4" />
+                                </Trigger>
+                                <Trigger Property="IsDragging" Value="True">
+                                    <Setter TargetName="Line" Property="Background" Value="{StaticResource AccentBrush}" />
+                                    <Setter TargetName="Line" Property="Width" Value="4" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </GridSplitter.Template>
+                </GridSplitter>
 
                 <Border Grid.Column="2" Visibility="{Binding HasBeside, Converter={StaticResource Visibility}}">
                     <DockPanel Margin="20,22,28,8" DataContext="{Binding BesidePage}">

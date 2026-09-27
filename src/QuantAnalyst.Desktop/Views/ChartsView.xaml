@@ -6,15 +6,8 @@
     <Border Style="{StaticResource Card}" Margin="0" Padding="18,14,18,12">
         <DockPanel>
             <!-- Your instruments as chips (the allowlist and any name the running session trades), and a new window. -->
-            <DockPanel DockPanel.Dock="Top">
-                <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Command="{Binding OpenWindowCommand}" Margin="12,0,0,0" VerticalAlignment="Top"
-                        ToolTip="Opens another chart in a window of its own, e.g. another name or Today next to History. Open as many as you like.">
-                    <StackPanel Orientation="Horizontal">
-                        <c:Icon Data="{StaticResource IconWindow}" Width="16" Height="16" Margin="0,0,6,0" />
-                        <TextBlock Text="New chart window" />
-                    </StackPanel>
-                </Button>
-                <ListBox Style="{StaticResource Segments}" ItemsSource="{Binding Instruments}" SelectedItem="{Binding Selected}" VerticalAlignment="Center">
+            <c:AdaptiveRow DockPanel.Dock="Top" FillMinWidth="160">
+                <ListBox c:AdaptiveRow.Fill="True" Style="{StaticResource Segments}" ItemsSource="{Binding Instruments}" SelectedItem="{Binding Selected}" VerticalAlignment="Center">
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
                             <WrapPanel />
@@ -26,7 +19,14 @@
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
-            </DockPanel>
+                <Button Style="{StaticResource Ghost}" Command="{Binding OpenWindowCommand}" Margin="0" VerticalAlignment="Top"
+                        ToolTip="Opens another chart in a window of its own, e.g. another name or Today next to History. Open as many as you like.">
+                    <StackPanel Orientation="Horizontal">
+                        <c:Icon Data="{StaticResource IconWindow}" Width="16" Height="16" Margin="0,0,6,0" />
+                        <TextBlock Text="New chart window" />
+                    </StackPanel>
+                </Button>
+            </c:AdaptiveRow>
 
             <!-- The price on one line: ticker, name, last price, change, as of when. -->
             <WrapPanel DockPanel.Dock="Top" Margin="0,10,0,0">
@@ -92,7 +92,7 @@
                            ToolTip="{Binding Note}" />
             </StackPanel>
 
-            <c:CandleChart Data="{Binding Chart}" EmptyText="{Binding EmptyText}" MinHeight="420" Margin="0,8,0,0" />
+            <c:CandleChart Data="{Binding Chart}" EmptyText="{Binding EmptyText}" MinHeight="220" Margin="0,8,0,0" />
         </DockPanel>
     </Border>
 </UserControl>

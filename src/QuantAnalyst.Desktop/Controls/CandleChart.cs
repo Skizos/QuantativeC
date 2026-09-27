@@ -36,6 +36,7 @@ public sealed class CandleChart : FrameworkElement
     {
         Focusable = false;
         Cursor = Cursors.Cross;
+        ClipToBounds = true; // labels and bubbles never spill over the page next to it
     }
 
     public CandleChartData? Data
@@ -335,31 +336,48 @@ public sealed class CandleChart : FrameworkElement
         // The candle's numbers in a strip at the top left, so the bubble never hides the candles.
         Brush tone = hover.IsUp ? up : down;
         Brush secondary = Res("InkSecondaryBrush", Brushes.DimGray);
-        var parts = new List<(string Text, Brush Brush, bool Bold)>
-        {
-            (hover.Time + "   ", Res("InkBrush", Brushes.Black), true),
-            ("O ", secondary, false), (hover.Open + "  ", ink, true),
-            ("H ", secondary, false), (hover.High + "  ", ink, true),
-            ("L ", secondary, false), (hover.Low + "  ", ink, true),
-            ("C ", secondary, false), (hover.Close + "  ", ink, true),
-            (hover.Change + "  ", tone, true),
-        };
+        var groups = new List<(string Text, Brush Brush, bool Bold)[]>();
+        groups.Add([(hover.Time + "   ", ink, true)]);
+        groups.Add([("O ", secondary, false), (hover.Open + "  ", ink, true)]);
+        groups.Add([("H ", secondary, false), (hover.High + "  ", ink, true)]);
+        groups.Add([("L ", secondary, false), (hover.Low + "  ", ink, true)]);
+        groups.Add([("C ", secondary, false), (hover.Close + "  ", ink, true)]);
+        groups.Add([(hover.Change + "  ", tone, true)]);
         if (hover.Volume is { } volume)
         {
-            parts.Add(("Vol ", secondary, false));
-            parts.Add((volume, ink, true));
+            groups.Add([("Vol ", secondary, false), (volume, ink, true)]);
         }
 
-        FormattedText[] texts = [.. parts.Select(p => Text(p.Text, 13, p.Brush, p.Bold))];
-        double width = texts.Sum(t => t.WidthIncludingTrailingWhitespace) + 16;
-        double height = texts.Max(t => t.Height) + 8;
-        dc.DrawRoundedRectangle(Faded(Res("SurfaceBrush", Brushes.White), 235), new Pen(Res("LineBrush", Brushes.Gainsboro), 1),
-            new Rect(layout.PlotLeft + 4, layout.PlotTop + 2, width, height), 6, 6);
-        double x = layout.PlotLeft + 12;
-        foreach (FormattedText t in texts)
+        // Label and number stay together; a strip wider than a narrow chart goes on to more lines.
+        double maxWidth = Math.Max(80, layout.PlotRight - layout.PlotLeft - 24);
+        var lines = new List<List<FormattedText>> { new() };
+        double lineWidth = 0;
+        foreach ((string Text, Brush Brush, bool Bold)[] group in groups)
         {
-            dc.DrawText(t, new Point(x, layout.PlotTop + 6));
-            x += t.WidthIncludingTrailingWhitespace;
+            FormattedText[] texts = [.. group.Select(p => Text(p.Text, 13, p.Brush, p.Bold))];
+            double width = texts.Sum(t => t.WidthIncludingTrailingWhitespace);
+            if (lines[^1].Count > 0 && lineWidth + width > maxWidth)
+            {
+                lines.Add([]);
+                lineWidth = 0;
+            }
+
+            lines[^1].AddRange(texts);
+            lineWidth += width;
+        }
+
+        double lineHeight = lines.SelectMany(l => l).Max(t => t.Height);
+        double stripWidth = lines.Max(l => l.Sum(t => t.WidthIncludingTrailingWhitespace)) + 16;
+        dc.DrawRoundedRectangle(Faded(Res("SurfaceBrush", Brushes.White), 235), new Pen(Res("LineBrush", Brushes.Gainsboro), 1),
+            new Rect(layout.PlotLeft + 4, layout.PlotTop + 2, stripWidth, (lines.Count * lineHeight) + 8), 6, 6);
+        for (int i = 0; i < lines.Count; i++)
+        {
+            double x = layout.PlotLeft + 12;
+            foreach (FormattedText t in lines[i])
+            {
+                dc.DrawText(t, new Point(x, layout.PlotTop + 6 + (i * lineHeight)));
+                x += t.WidthIncludingTrailingWhitespace;
+            }
         }
 
         // A trade under the mouse: its label next to it.

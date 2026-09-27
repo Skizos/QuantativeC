@@ -30,6 +30,9 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
   - **New window:** the page in a window of its own, e.g. on another screen or snapped with Win + ← / →. Open as many as
     you like; they show the same numbers as the main window and close with it.
   - **Refresh** reads the page again from the files the terminal uses. Every page on screen also refreshes by itself.
+  - Every page fits half the window: in a narrow pane the buttons move under the title, lists go above their details
+    (they scroll), the Overview's tiles go two by two, and the charts shrink instead of being cut off. Drag the divider
+    to give a page more room.
 - **Overview** (the start page):
   - four tiles: the next session with a countdown ("Mon 28 Sep · decides at 09:10", "in 1 d 21 h"), the Confirm gate
     as 10 dots (one per clean Paper day), the live-trading account (masked, e.g. `***193`) and the kill switch

@@ -6,8 +6,25 @@
         <StackPanel>
             <!-- State, when, Start/Stop and the kill switch. -->
             <Border Style="{StaticResource Card}">
-                <DockPanel>
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- The state beside Start and Stop; in a narrow pane the buttons go under it. -->
+                <c:AdaptiveRow FillMinWidth="260" Spacing="16">
+                    <StackPanel c:AdaptiveRow.Fill="True">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Left" Style="{StaticResource Chip}" Background="{Binding Phase, Converter={StaticResource MarkToSoftBrush}}"
+                                    Margin="0,0,12,0" VerticalAlignment="Top">
+                                <TextBlock Text="{Binding PhaseText}" Style="{StaticResource ChipText}" Foreground="{Binding Phase, Converter={StaticResource MarkToBrush}}" />
+                            </Border>
+                            <TextBlock Text="{Binding Schedule}" TextWrapping="Wrap" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock Text="{Binding KillState}" Style="{StaticResource Caption}" Margin="0,8,0,0" />
+                        <WrapPanel Margin="0,10,0,0" Visibility="{Binding KillActive, Converter={StaticResource Visibility}}">
+                            <TextBox Text="{Binding ResetReason, UpdateSourceTrigger=PropertyChanged}" Width="280" Margin="0,0,10,6"
+                                     ToolTip="Why may trading go on? The reason is kept in the audit log." />
+                            <Button Content="Clear the kill switch" Command="{Binding ResetKillCommand}" Margin="0,0,0,6"
+                                    ToolTip="Only while no session runs. The reason is kept in the audit log." />
+                        </WrapPanel>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Button Style="{StaticResource Primary}" Command="{Binding StartCommand}"
                                 ToolTip="Logs in (BankID or TOTP), updates the history, waits for 09:10, trades on paper until the close.">
                             <StackPanel Orientation="Horizontal">
@@ -23,22 +40,7 @@
                             </StackPanel>
                         </Button>
                     </StackPanel>
-                    <StackPanel>
-                        <StackPanel Orientation="Horizontal">
-                            <Border Style="{StaticResource Chip}" Background="{Binding Phase, Converter={StaticResource MarkToSoftBrush}}" Margin="0,0,12,0">
-                                <TextBlock Text="{Binding PhaseText}" Style="{StaticResource ChipText}" Foreground="{Binding Phase, Converter={StaticResource MarkToBrush}}" />
-                            </Border>
-                            <TextBlock Text="{Binding Schedule}" TextWrapping="Wrap" FontWeight="SemiBold" VerticalAlignment="Center" />
-                        </StackPanel>
-                        <TextBlock Text="{Binding KillState}" Style="{StaticResource Caption}" Margin="0,8,0,0" />
-                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0" Visibility="{Binding KillActive, Converter={StaticResource Visibility}}">
-                            <TextBox Text="{Binding ResetReason, UpdateSourceTrigger=PropertyChanged}" Width="340" Margin="0,0,10,0"
-                                     ToolTip="Why may trading go on? The reason is kept in the audit log." />
-                            <Button Content="Clear the kill switch" Command="{Binding ResetKillCommand}"
-                                    ToolTip="Only while no session runs. The reason is kept in the audit log." />
-                        </StackPanel>
-                    </StackPanel>
-                </DockPanel>
+                </c:AdaptiveRow>
             </Border>
 
             <!-- Today, live: shown once the session has reported. -->
@@ -87,10 +89,10 @@
                 <!-- The account's value today, against the start of the day. -->
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
-                        <DockPanel>
-                            <TextBlock DockPanel.Dock="Right" Text="{Binding Live.Strategy}" Style="{StaticResource Caption}" VerticalAlignment="Bottom" />
-                            <TextBlock Text="Account value today" Style="{StaticResource H2}" />
-                        </DockPanel>
+                        <c:AdaptiveRow FillMinWidth="180" RowSpacing="2">
+                            <TextBlock c:AdaptiveRow.Fill="True" Text="Account value today" Style="{StaticResource H2}" />
+                            <TextBlock Text="{Binding Live.Strategy}" Style="{StaticResource Caption}" VerticalAlignment="Bottom" />
+                        </c:AdaptiveRow>
                         <TextBlock Text="Green above the value at the start of the day (dashed line), red below." Style="{StaticResource Caption}" Margin="0,2,0,0" />
                         <c:SeriesChart Data="{Binding Live.ValueChart}" Height="240" Margin="0,12,0,0" EmptyText="The value appears once the session is running" />
                     </StackPanel>
@@ -132,24 +134,19 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Today's orders and the decision. -->
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="2*" />
-                        <ColumnDefinition Width="16" />
-                        <ColumnDefinition Width="*" MinWidth="260" />
-                    </Grid.ColumnDefinitions>
-                    <Border Grid.Column="0" Style="{StaticResource Card}" Padding="8,14,8,8">
+                <!-- Today's orders beside the decision; in a narrow pane the decision goes below. -->
+                <c:AdaptiveSplit FirstShare="0.64" Breakpoint="760">
+                    <Border Style="{StaticResource Card}" Padding="8,14,8,8">
                         <StackPanel>
                             <TextBlock Text="Orders today" Style="{StaticResource H2}" Margin="12,0,12,8" />
                             <DataGrid ItemsSource="{Binding Live.Orders}">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="90" />
-                                    <DataGridTextColumn Header="Side" Binding="{Binding Side}" Width="60" FontWeight="SemiBold" />
-                                    <DataGridTextColumn Header="Instrument" Binding="{Binding Ticker}" Width="*" />
-                                    <DataGridTextColumn Header="Shares" Binding="{Binding Volume}" Width="70" />
-                                    <DataGridTextColumn Header="Limit" Binding="{Binding Limit}" Width="80" />
-                                    <DataGridTemplateColumn Header="Status" Width="120">
+                                    <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="0.9*" MinWidth="68" />
+                                    <DataGridTextColumn Header="Side" Binding="{Binding Side}" Width="0.6*" MinWidth="44" FontWeight="SemiBold" />
+                                    <DataGridTextColumn Header="Instrument" Binding="{Binding Ticker}" Width="1.1*" MinWidth="70" />
+                                    <DataGridTextColumn Header="Shares" Binding="{Binding Volume}" Width="0.7*" MinWidth="52" />
+                                    <DataGridTextColumn Header="Limit" Binding="{Binding Limit}" Width="0.8*" MinWidth="58" />
+                                    <DataGridTemplateColumn Header="Status" Width="1.2*" MinWidth="100">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Border Style="{StaticResource Chip}" Background="{Binding State, Converter={StaticResource MarkToSoftBrush}}">
@@ -158,15 +155,15 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Filled" Binding="{Binding Filled}" Width="70" />
-                                    <DataGridTextColumn Header="Avg price" Binding="{Binding Average}" Width="90" />
+                                    <DataGridTextColumn Header="Filled" Binding="{Binding Filled}" Width="0.7*" MinWidth="54" />
+                                    <DataGridTextColumn Header="Avg price" Binding="{Binding Average}" Width="0.9*" MinWidth="66" />
                                 </DataGrid.Columns>
                             </DataGrid>
                             <TextBlock Text="No orders yet today." Style="{StaticResource Caption}" Margin="12,8"
                                        Visibility="{Binding Live.Orders.Count, Converter={StaticResource NonEmptyToVisibility}, ConverterParameter=inverse}" />
                         </StackPanel>
                     </Border>
-                    <Border Grid.Column="2" Style="{StaticResource Card}">
+                    <Border Style="{StaticResource Card}">
                         <StackPanel>
                             <TextBlock Text="The decision" Style="{StaticResource H2}" />
                             <TextBlock Text="{Binding Live.DecisionText}" Style="{StaticResource Caption}" Margin="0,4,0,10" />
@@ -181,7 +178,7 @@
                             </ItemsControl>
                         </StackPanel>
                     </Border>
-                </Grid>
+                </c:AdaptiveSplit>
             </StackPanel>
 
             <!-- Before a session: the paper account as last saved. -->
@@ -191,10 +188,10 @@
                     <TextBlock Text="{Binding Account}" TextWrapping="Wrap" Style="{StaticResource H3}" Margin="0,4,0,12" />
                     <DataGrid ItemsSource="{Binding Positions}" MaxHeight="220">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="Instrument" Binding="{Binding Ticker}" Width="*" FontWeight="SemiBold" />
-                            <DataGridTextColumn Header="Shares" Binding="{Binding Quantity}" Width="100" />
-                            <DataGridTextColumn Header="Cost" Binding="{Binding Cost}" Width="160" />
-                            <DataGridTextColumn Header="Last fill" Binding="{Binding LastFill}" Width="140" />
+                            <DataGridTextColumn Header="Instrument" Binding="{Binding Ticker}" Width="1.2*" MinWidth="90" FontWeight="SemiBold" />
+                            <DataGridTextColumn Header="Shares" Binding="{Binding Quantity}" Width="0.7*" MinWidth="60" />
+                            <DataGridTextColumn Header="Cost" Binding="{Binding Cost}" Width="1.2*" MinWidth="100" />
+                            <DataGridTextColumn Header="Last fill" Binding="{Binding LastFill}" Width="1*" MinWidth="90" />
                         </DataGrid.Columns>
                     </DataGrid>
                     <TextBlock Text="Charts of today's value, prices and orders appear here while a session runs." Style="{StaticResource Caption}" Margin="0,12,0,0" />

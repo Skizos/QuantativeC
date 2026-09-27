@@ -5,15 +5,16 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
         <!-- At a glance: the next session, the Confirm gate, the live-trading account and the kill switch. -->
-        <UniformGrid Columns="4" Margin="0,0,-12,4">
-            <Border Style="{StaticResource Tile}">
+        <!-- Four tiles in a wide pane, two in half of it, one in a narrow one. -->
+        <c:AdaptiveGrid MinItemWidth="210" Spacing="12" Margin="0,0,0,16">
+            <Border Style="{StaticResource Tile}" Margin="0">
                 <StackPanel>
                     <TextBlock Text="NEXT SESSION" Style="{StaticResource Overline}" />
                     <TextBlock Text="{Binding NextSessionText}" Style="{StaticResource KpiValue}" FontSize="17" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding NextSessionIn}" Style="{StaticResource Caption}" Margin="0,2,0,0" />
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource Tile}">
+            <Border Style="{StaticResource Tile}" Margin="0">
                 <StackPanel>
                     <TextBlock Text="CONFIRM GATE" Style="{StaticResource Overline}" />
                     <ItemsControl ItemsSource="{Binding GateDots}" Margin="0,8,0,6">
@@ -42,7 +43,7 @@
                     <TextBlock Text="{Binding GateProgress}" Style="{StaticResource Caption}" />
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource Tile}">
+            <Border Style="{StaticResource Tile}" Margin="0">
                 <StackPanel>
                     <TextBlock Text="LIVE TRADING ACCOUNT" Style="{StaticResource Overline}" />
                     <Border Style="{StaticResource Chip}" Margin="0,8,0,0" Background="{Binding LiveAccountTone, Converter={StaticResource MarkToSoftBrush}}">
@@ -52,7 +53,7 @@
                     <TextBlock Text="Chosen on the Accounts page" Style="{StaticResource Caption}" Margin="0,6,0,0" />
                 </StackPanel>
             </Border>
-            <Border Style="{StaticResource Tile}">
+            <Border Style="{StaticResource Tile}" Margin="0">
                 <StackPanel>
                     <TextBlock Text="KILL SWITCH" Style="{StaticResource Overline}" />
                     <Border Style="{StaticResource Chip}" Margin="0,8,0,0" Background="{Binding KillTone, Converter={StaticResource MarkToSoftBrush}}">
@@ -62,25 +63,20 @@
                     <TextBlock Text="The red KILL button stops everything" Style="{StaticResource Caption}" Margin="0,6,0,0" />
                 </StackPanel>
             </Border>
-        </UniformGrid>
+        </c:AdaptiveGrid>
 
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="3*" />
-                <ColumnDefinition Width="16" />
-                <ColumnDefinition Width="2*" MinWidth="300" />
-            </Grid.ColumnDefinitions>
-
-            <StackPanel Grid.Column="0">
+        <!-- The account and the checklist beside the next steps; in a narrow pane the next steps go below. -->
+        <c:AdaptiveSplit FirstShare="0.6" Breakpoint="820">
+            <StackPanel>
             <!-- The paper account's value, day by day. -->
             <Border Style="{StaticResource Card}">
                 <StackPanel>
                     <TextBlock Text="PAPER ACCOUNT" Style="{StaticResource Overline}" />
-                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                        <TextBlock Text="{Binding PaperValue}" Style="{StaticResource Hero}" />
-                        <TextBlock Text="{Binding PaperChange}" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Bottom" Margin="14,0,0,6"
+                    <WrapPanel Margin="0,4,0,0">
+                        <TextBlock Text="{Binding PaperValue}" Style="{StaticResource Hero}" Margin="0,0,14,0" />
+                        <TextBlock Text="{Binding PaperChange}" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Bottom" Margin="0,0,0,6"
                                    Foreground="{Binding PaperDirection, Converter={StaticResource MarkToBrush}}" />
-                    </StackPanel>
+                    </WrapPanel>
                     <c:SeriesChart Data="{Binding PaperChart}" Height="170" Margin="0,12,0,0" EmptyText="The chart starts after the first Paper session" />
                     <TextBlock Text="{Binding PaperNote}" Style="{StaticResource Caption}" Margin="0,8,0,0" />
                 </StackPanel>
@@ -94,19 +90,18 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
                                 <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="0,10">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="64" />
-                                            <ColumnDefinition Width="140" />
-                                            <ColumnDefinition Width="*" />
-                                        </Grid.ColumnDefinitions>
-                                        <Border Grid.Column="0" Style="{StaticResource Chip}" VerticalAlignment="Top"
-                                                Background="{Binding Mark, Converter={StaticResource MarkToSoftBrush}}">
-                                            <TextBlock Text="{Binding Mark}" Style="{StaticResource ChipText}" Foreground="{Binding Mark, Converter={StaticResource MarkToBrush}}" />
-                                        </Border>
-                                        <TextBlock Grid.Column="1" Text="{Binding Label}" FontWeight="SemiBold" Margin="0,1,12,0" TextWrapping="Wrap" />
-                                        <TextBlock Grid.Column="2" Text="{Binding Text}" TextWrapping="Wrap" Foreground="{StaticResource InkSecondaryBrush}" Margin="0,1,0,0" />
-                                    </Grid>
+                                    <!-- Mark and label, the finding beside them; in a narrow card the finding goes under them. -->
+                                    <c:AdaptiveRow FillMinWidth="200" Spacing="0" RowSpacing="4">
+                                        <StackPanel Orientation="Horizontal" Width="204" HorizontalAlignment="Left" VerticalAlignment="Top">
+                                            <Border Width="64" HorizontalAlignment="Left" VerticalAlignment="Top">
+                                                <Border Style="{StaticResource Chip}" Background="{Binding Mark, Converter={StaticResource MarkToSoftBrush}}">
+                                                    <TextBlock Text="{Binding Mark}" Style="{StaticResource ChipText}" Foreground="{Binding Mark, Converter={StaticResource MarkToBrush}}" />
+                                                </Border>
+                                            </Border>
+                                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" Width="128" Margin="0,1,12,0" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBlock c:AdaptiveRow.Fill="True" Text="{Binding Text}" TextWrapping="Wrap" Foreground="{StaticResource InkSecondaryBrush}" Margin="0,1,0,0" />
+                                    </c:AdaptiveRow>
                                 </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
@@ -116,7 +111,7 @@
             </StackPanel>
 
             <!-- What to do next, and one button for it. -->
-            <Border Grid.Column="2" Style="{StaticResource Card}" VerticalAlignment="Top">
+            <Border Style="{StaticResource Card}" VerticalAlignment="Top">
                 <StackPanel>
                     <TextBlock Text="Next steps" Style="{StaticResource H2}" Margin="0,0,0,12" />
                     <ItemsControl ItemsSource="{Binding Steps}">
@@ -130,7 +125,7 @@
                             HorizontalAlignment="Stretch" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
-        </Grid>
+        </c:AdaptiveSplit>
         </StackPanel>
     </ScrollViewer>
 </UserControl>
