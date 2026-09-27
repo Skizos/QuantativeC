@@ -297,7 +297,8 @@ Promoting to Confirm does **not** start Confirm mode. Every Confirm session runs
 ## Confirm mode (Phase 7): real orders, each typed by you
 
 **You** start these, in your own terminal. Claude Code can't: the hook blocks them, and the program refuses to start
-Confirm when Claude Code started it.
+Confirm when Claude Code started it. Before the first real session, go through the checklist in
+`docs/handover-confirm.md`.
 
 | Command | What it does |
 |---|---|

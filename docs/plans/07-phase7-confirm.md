@@ -2,7 +2,8 @@
 
 - **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–6 done** (2026-09-26 and
   2026-09-27, see Step notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
-  automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5).
+  automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5). Step 8's handover checklist for O9
+  is drafted in `docs/handover-confirm.md` and is finalised after step 7.
 - **Scope:** master plan §4 Phase 7; ADR 0003 §2 (BrokerPreflight), §3 (startup HMAC check), §5 (Confirm UX), §6
   (live reconciliation); ADR 0002 (fail-safe gateway); CLAUDE.md "Absolute safety rules".
 - **Gate:**
@@ -56,7 +57,7 @@ Owner's part (**O**) and Claude's part (**C**). Confirm is usable when every lin
 | C6 | Claude | The live end-of-day execution-quality report and the Auto gate's numbers | C5 | step 6 green |
 | C7 | Claude | Final order DTOs and deals mapper from O4/O5; removes the "provisional" flag | O4, O5 | step 7 green |
 | C8 | Claude | Docs, a gate run, and the handover checklist | C1–C7 | step 8 |
-| O9 | you | **First real orders:** `qa trade run --mode confirm`, minimal size, watching the cards | everything above | your first live end-of-day report |
+| O9 | you | **First real orders:** `qa trade run --mode confirm`, minimal size, watching the cards; the checklist is `docs/handover-confirm.md` | everything above | your first live end-of-day report |
 
 ## Research re-check (before step 1, per CLAUDE.md)
 
@@ -366,6 +367,20 @@ Nothing is taken from memory.
   - 1 through the real gateway and the OMS: a confirmed order and its reconciled fill in the report
   - 2 CLI: `qa report eod` and `qa report gate`, and the `qa status` count
   - The Confirm spy now also checks the live line of the session's own report.
+
+**Step 8, drafted early: the handover checklist (2026-09-27).** It is in `docs/handover-confirm.md`: the prerequisites with
+their evidence, the evening before, the morning, each card, the day, after the close, what to send Claude, and when to
+step back. Lines that step 7 can change are marked. Reading the code for it turned up four things for the owner. None of
+them is a defect; the checklist covers each:
+- **The limits scale with the whole ISK.** R6, R7 and R19 are shares of the allowed account's whole value (every holding
+  plus cash), not of 5,000 SEK. The strategy also counts every share of an allowlisted name in that ISK as its own, so it
+  may propose selling one you hold for another reason. Recommended: a dedicated ISK funded with the amount to trade.
+  Otherwise, lower `max_order_value_sek` (the plan clips to it, so a lower cap makes smaller cards, not rejections).
+- **Orders placed by hand on that ISK halt the session.** Reconciliation treats an open order it did not place as a
+  mismatch, and the kill switch fires after 60 s. This includes a crashed session's leftover order on a same-day restart.
+- **A scheduled Paper task conflicts.** It would hold the session lock, and Confirm refuses to start ("one session").
+- **Don't lower `max_orders_per_day` for a small first day.** The plan does not know R10, so the extra orders would be
+  rejections, and three in a row fire the kill switch. To keep the day small, skip cards and lower the order cap instead.
 
 ## Test map (planned)
 

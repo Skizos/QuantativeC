@@ -223,6 +223,10 @@ Avanza server. The last startup check refuses the Avanza order channel until you
 format (plan 07 step 7). Until then, `.\qa trade run --mode confirm` prints its checks and stops before any login.
 `.\qa status` shows what is still open under "Confirm checks".
 
+**Before your first real day, go through `docs/handover-confirm.md`.** It is the checklist for O9: every prerequisite
+with its evidence, what to set the evening before (small orders, no open orders on the ISK, no scheduled Paper run),
+what you will see, what to send Claude, and when to step back. It is a draft until your capture is in (plan 07 step 7).
+
 **Your day:** almost the same as Paper, but you must be at the computer at the decision time.
 
 ```powershell
