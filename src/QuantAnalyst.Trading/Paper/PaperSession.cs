@@ -4,6 +4,7 @@ using QuantAnalyst.Trading.Audit;
 using QuantAnalyst.Trading.Halts;
 using QuantAnalyst.Trading.Kill;
 using QuantAnalyst.Trading.Model;
+using QuantAnalyst.Trading.Observation;
 using QuantAnalyst.Trading.Oms;
 using QuantAnalyst.Trading.Reconciliation;
 using QuantAnalyst.Trading.Scheduling;
@@ -35,6 +36,8 @@ public sealed record PaperSessionSummary(
 /// On the way out it cancels everything still working through the gateway and ends the rest, so no paper order
 /// outlives the session. <c>endOfDayReport</c> (the CLI's end-of-day report writer) runs at the close, and for a partial
 /// day when the session stops earlier. Quotes reach the paper channel from the caller (<see cref="PaperOrderChannel.OnQuote"/>).
+/// An <c>observer</c> (the Windows app) is told the account's value every few seconds and the day's decision; it can't
+/// change anything (<see cref="GuardedObserver"/>).
 /// </summary>
 public sealed class PaperSession(
     OrderGateway gateway,
@@ -48,8 +51,12 @@ public sealed class PaperSession(
     TimeProvider time,
     Func<CancellationToken, Task<PlanResult>> decide,
     TextWriter output,
-    Func<DateOnly, string>? endOfDayReport = null)
+    Func<DateOnly, string>? endOfDayReport = null,
+    ISessionObserver? observer = null)
 {
+    /// <summary>How often an observer is told the account's value.</summary>
+    public static readonly TimeSpan AccountEvery = TimeSpan.FromSeconds(5);
+
     public static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan ReconcileEvery = TimeSpan.FromSeconds(30);
 
@@ -65,10 +72,13 @@ public sealed class PaperSession(
     private int _accepted;
     private int _riskRejected;
     private bool _lastClean = true;
+    private readonly ISessionObserver? _observer = GuardedObserver.Wrap(observer);
+    private DateTimeOffset? _lastAccountTick;
 
     public async Task<PaperSessionSummary> RunAsync(DateTimeOffset stopAtUtc, CancellationToken ct)
     {
         audit.Append("session-start", new { mode = "Paper", stopAtUtc, book.Costs, cash = book.Cash });
+        TellAccount(force: true);
         try
         {
             while (!ct.IsCancellationRequested && time.GetUtcNow() < stopAtUtc)
@@ -95,6 +105,8 @@ public sealed class PaperSession(
             {
                 Report(today, partial: true);
             }
+
+            TellAccount(force: true);
         }
 
         PaperSessionSummary summary = Summarize();
@@ -114,6 +126,7 @@ public sealed class PaperSession(
         }
 
         await kill.TickAsync(ct).ConfigureAwait(false);
+        TellAccount(force: false);
 
         DateOnly today = OrderGateway.StockholmDate(now);
         SessionPlan? plan = schedule.Plan(today);
@@ -173,6 +186,7 @@ public sealed class PaperSession(
             string why = string.Join(", ", halts.Active.Select(h => h.Reason));
             output.WriteLine($"{Local(time.GetUtcNow())} decision skipped: trading is halted ({why}).");
             audit.Append("decision-skipped", new { halts = why });
+            _observer?.Decision(new DecisionTick(time.GetUtcNow(), 0, [$"skipped: trading is halted ({why})"]));
             return;
         }
 
@@ -185,10 +199,12 @@ public sealed class PaperSession(
         {
             output.WriteLine($"{Local(time.GetUtcNow())} decision failed: {ex.Message}");
             audit.Append("decision-failed", new { reason = ex.Message });
+            _observer?.Decision(new DecisionTick(time.GetUtcNow(), 0, ["failed: " + ex.Message]));
             return;
         }
 
         audit.Append("decision", new { intents = plan.Intents.Count, plan.Notes });
+        _observer?.Decision(new DecisionTick(time.GetUtcNow(), plan.Intents.Count, plan.Notes));
         output.WriteLine($"{Local(time.GetUtcNow())} decision: {plan.Intents.Count} order(s).");
         foreach (string note in plan.Notes)
         {
@@ -242,6 +258,21 @@ public sealed class PaperSession(
         int filled = gateway.Oms.All.Count(o => o.FilledVolume > 0);
         return new PaperSessionSummary(_decisions, _submitted, _accepted, _riskRejected, filled, a.AvailableCash, a.AccountValue, a.StartOfDayValue,
             book.FeesPaid, kill.IsKilled, _lastClean);
+    }
+
+    /// <summary>Tells the observer the account's value, at most every <see cref="AccountEvery"/> unless forced.</summary>
+    private void TellAccount(bool force)
+    {
+        DateTimeOffset now = time.GetUtcNow();
+        if (_observer is null || (!force && _lastAccountTick is { } last && now - last < AccountEvery))
+        {
+            return;
+        }
+
+        _lastAccountTick = now;
+        AccountSnapshot a = book.Snapshot();
+        _observer.Account(new AccountTick(now, a.AccountValue, a.AvailableCash, a.StartOfDayValue, book.FeesPaid,
+            [.. book.Positions.Select(p => new ObservedPosition(p.OrderbookId, p.Ticker, p.Quantity, p.CostBasis, a.PositionValues.GetValueOrDefault(p.OrderbookId, p.CostBasis)))]));
     }
 
     private static decimal Change(PaperSessionSummary s) => s.StartOfDayValue > 0 ? (s.AccountValue - s.StartOfDayValue) / s.StartOfDayValue : 0m;

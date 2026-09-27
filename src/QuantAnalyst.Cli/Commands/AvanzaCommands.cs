@@ -54,6 +54,12 @@ internal sealed record AvanzaCliServices(
     public Func<string, string?> GetVariable { get; init; } = Environment.GetEnvironmentVariable;
 
     /// <summary>
+    /// Gets who watches a running Paper session: null in the terminal. The Windows app draws its live charts from it
+    /// (quotes, the account's value, order changes, the decision); it can't change anything (GuardedObserver).
+    /// </summary>
+    public Trading.Observation.ISessionObserver? SessionObserver { get; init; }
+
+    /// <summary>
     /// Gets the order channel a Confirm session sends through: Avanza's. Tests pass a stand-in; whatever it is, the
     /// session sends only with the live authorization the Confirm startup checks issue for that very channel.
     /// </summary>

@@ -57,6 +57,9 @@ public sealed class QaEngine : ObservableObject
 
     public AppBankIdPrompt BankId { get; }
 
+    /// <summary>Gets the UI thread's dispatcher (for models that apply a running command's events on it).</summary>
+    internal IUiDispatcher Ui => _ui;
+
     /// <summary>Gets the title of the running command, or null when idle.</summary>
     public string? CurrentCommand
     {
@@ -74,9 +77,10 @@ public sealed class QaEngine : ObservableObject
 
     /// <summary>
     /// Runs <c>qa</c> with <paramref name="args"/> and returns when it has finished. Throws when another command is
-    /// running: the caller disables its buttons while <see cref="IsBusy"/>.
+    /// running: the caller disables its buttons while <see cref="IsBusy"/>. A Paper session reports to
+    /// <paramref name="observer"/> (the Trading page's live charts), which can't change what it does.
     /// </summary>
-    public async Task<CommandResult> RunAsync(string title, IReadOnlyList<string> args)
+    public async Task<CommandResult> RunAsync(string title, IReadOnlyList<string> args, Trading.Observation.ISessionObserver? observer = null)
     {
         ArgumentNullException.ThrowIfNull(args);
         if (IsBusy)
@@ -101,7 +105,7 @@ public sealed class QaEngine : ObservableObject
 
         var output = new LineWriter(t => Emit(t, false));
         var error = new LineWriter(t => Emit(t, true));
-        AvanzaCliServices services = _services with { Cancellation = cts.Token, BankIdPrompt = (_, _) => BankId, Input = TextReader.Null };
+        AvanzaCliServices services = _services with { Cancellation = cts.Token, BankIdPrompt = (_, _) => BankId, Input = TextReader.Null, SessionObserver = observer };
         int code;
         bool cancelled = false;
         try

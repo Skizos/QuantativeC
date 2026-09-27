@@ -36,6 +36,8 @@ public sealed class SessionViewModel : PageViewModel
     private string _killState = string.Empty;
     private bool _killActive;
     private string _resetReason = string.Empty;
+    private string _phase = "idle";
+    private string _phaseText = "Not running";
 
     public SessionViewModel(Workspace workspace, QaEngine engine, TimeProvider time, Func<string> login)
         : base(PageKind.Session, "Trading", "Today's Paper session: the saved strategy on live Avanza prices, with simulated orders. Nothing is sent to Avanza.", engine)
@@ -44,12 +46,30 @@ public sealed class SessionViewModel : PageViewModel
         _time = time;
         _login = login;
         engine.LineWritten += OnLine;
+        Live = new LiveSession(engine.Ui);
         StartCommand = new AsyncCommand(StartAsync, () => !IsBusy && !KillActive, ex => Say(ex.Message, isError: true));
         StopCommand = new RelayCommand(Engine.Cancel, () => IsRunning);
         ResetKillCommand = new AsyncCommand(ResetKillAsync, () => !IsBusy && KillActive && ResetReason.Trim().Length > 0, ex => Say(ex.Message, isError: true));
     }
 
     public ObservableCollection<string> Log { get; } = [];
+
+    /// <summary>Gets today's session as it runs: KPIs, charts, instrument tiles and orders (docs/plans/11-app-redesign.md).</summary>
+    public LiveSession Live { get; }
+
+    /// <summary>Gets the session's state word for its chip: "running", "waiting" or "idle".</summary>
+    public string Phase
+    {
+        get => _phase;
+        private set => Set(ref _phase, value);
+    }
+
+    /// <summary>Gets the state as the chip reads it, e.g. "Waiting for 09:10" or "Trading".</summary>
+    public string PhaseText
+    {
+        get => _phaseText;
+        private set => Set(ref _phaseText, value);
+    }
 
     public ObservableCollection<PositionRow> Positions { get; } = [];
 
@@ -113,6 +133,7 @@ public sealed class SessionViewModel : PageViewModel
         LoadKill();
         LoadAccount();
         LoadSchedule();
+        LoadPhase();
         return Task.CompletedTask;
     }
 
@@ -123,6 +144,7 @@ public sealed class SessionViewModel : PageViewModel
         StopCommand.Refresh();
         ResetKillCommand.Refresh();
         LoadSchedule();
+        LoadPhase();
     }
 
     private async Task StartAsync()
@@ -133,7 +155,8 @@ public sealed class SessionViewModel : PageViewModel
         CommandResult result;
         try
         {
-            result = await Engine.RunAsync(SessionTitle, CommandLines.PaperRun(_workspace, _login()));
+            Live.Reset();
+            result = await Engine.RunAsync(SessionTitle, CommandLines.PaperRun(_workspace, _login()), Live);
         }
         finally
         {
@@ -218,6 +241,20 @@ public sealed class SessionViewModel : PageViewModel
         {
             Account = $"The paper account could not be read: {ex.Message}";
         }
+    }
+
+    /// <summary>Running and before today's decision: waiting; running after it: trading; otherwise not running.</summary>
+    private void LoadPhase()
+    {
+        if (!IsRunning)
+        {
+            (Phase, PhaseText) = ("idle", KillActive ? "Stopped by the kill switch" : "Not running");
+            return;
+        }
+
+        (Phase, PhaseText) = Live.DecisionUtc is { } d && _time.GetUtcNow() < d
+            ? ("waiting", "Waiting for " + MarketTime.ToStockholm(d).ToString("HH:mm", CultureInfo.InvariantCulture))
+            : ("running", "Trading");
     }
 
     private void LoadSchedule()

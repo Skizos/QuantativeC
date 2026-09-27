@@ -72,6 +72,9 @@ internal sealed class ScriptedRunner
 
     public List<string[]> Calls { get; } = [];
 
+    /// <summary>Gets the services the last command ran with (e.g. the session observer the app passed).</summary>
+    public AvanzaCliServices? LastServices { get; private set; }
+
     public ScriptedRunner Answer(int code, string[]? output = null, string[]? errors = null)
     {
         _answers.Enqueue((code, output ?? [], errors ?? []));
@@ -83,6 +86,7 @@ internal sealed class ScriptedRunner
         lock (Calls)
         {
             Calls.Add(args);
+            LastServices = services;
         }
 
         (int code, string[] lines, string[] errors) = _answers.Count > 0 ? _answers.Dequeue() : (0, [], []);

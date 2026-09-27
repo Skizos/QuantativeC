@@ -2,69 +2,211 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls">
-    <Grid>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
-        <!-- When, Start and Stop, and the kill switch. -->
-        <Border Grid.Row="0" Style="{StaticResource Card}">
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Style="{StaticResource Primary}" Command="{Binding StartCommand}"
-                            ToolTip="Logs in (BankID or TOTP), updates the history, waits for 09:10, trades on paper until the close.">
-                        <StackPanel Orientation="Horizontal">
-                            <c:Icon Data="{StaticResource IconPlay}" Width="16" Height="16" Margin="0,0,6,0" />
-                            <TextBlock Text="Start" />
-                        </StackPanel>
-                    </Button>
-                    <Button Command="{Binding StopCommand}" Margin="0"
-                            ToolTip="Ends the session early: working orders are cancelled and the partial report is written.">
-                        <StackPanel Orientation="Horizontal">
-                            <c:Icon Data="{StaticResource IconStop}" Width="16" Height="16" Margin="0,0,6,0" />
-                            <TextBlock Text="Stop" />
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-                <StackPanel>
-                    <StackPanel Orientation="Horizontal">
-                        <c:Icon Data="{StaticResource IconClock}" Width="18" Height="18" Foreground="{StaticResource InkSecondaryBrush}" Margin="0,0,8,0" />
-                        <TextBlock Text="{Binding Schedule}" TextWrapping="Wrap" FontWeight="SemiBold" VerticalAlignment="Center" />
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+            <!-- State, when, Start/Stop and the kill switch. -->
+            <Border Style="{StaticResource Card}">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Style="{StaticResource Primary}" Command="{Binding StartCommand}"
+                                ToolTip="Logs in (BankID or TOTP), updates the history, waits for 09:10, trades on paper until the close.">
+                            <StackPanel Orientation="Horizontal">
+                                <c:Icon Data="{StaticResource IconPlay}" Width="16" Height="16" Margin="0,0,6,0" />
+                                <TextBlock Text="Start" />
+                            </StackPanel>
+                        </Button>
+                        <Button Command="{Binding StopCommand}" Margin="0"
+                                ToolTip="Ends the session early: working orders are cancelled and the partial report is written.">
+                            <StackPanel Orientation="Horizontal">
+                                <c:Icon Data="{StaticResource IconStop}" Width="16" Height="16" Margin="0,0,6,0" />
+                                <TextBlock Text="Stop" />
+                            </StackPanel>
+                        </Button>
                     </StackPanel>
-                    <TextBlock Text="{Binding KillState}" Style="{StaticResource Caption}" Margin="26,6,0,0" />
-                    <StackPanel Orientation="Horizontal" Margin="26,10,0,0" Visibility="{Binding KillActive, Converter={StaticResource Visibility}}">
-                        <TextBox Text="{Binding ResetReason, UpdateSourceTrigger=PropertyChanged}" Width="340" Margin="0,0,10,0"
-                                 ToolTip="Why may trading go on? The reason is kept in the audit log." />
-                        <Button Content="Clear the kill switch" Command="{Binding ResetKillCommand}"
-                                ToolTip="Only while no session runs. The reason is kept in the audit log." />
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Border Style="{StaticResource Chip}" Background="{Binding Phase, Converter={StaticResource MarkToSoftBrush}}" Margin="0,0,12,0">
+                                <TextBlock Text="{Binding PhaseText}" Style="{StaticResource ChipText}" Foreground="{Binding Phase, Converter={StaticResource MarkToBrush}}" />
+                            </Border>
+                            <TextBlock Text="{Binding Schedule}" TextWrapping="Wrap" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding KillState}" Style="{StaticResource Caption}" Margin="0,8,0,0" />
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0" Visibility="{Binding KillActive, Converter={StaticResource Visibility}}">
+                            <TextBox Text="{Binding ResetReason, UpdateSourceTrigger=PropertyChanged}" Width="340" Margin="0,0,10,0"
+                                     ToolTip="Why may trading go on? The reason is kept in the audit log." />
+                            <Button Content="Clear the kill switch" Command="{Binding ResetKillCommand}"
+                                    ToolTip="Only while no session runs. The reason is kept in the audit log." />
+                        </StackPanel>
                     </StackPanel>
-                </StackPanel>
-            </DockPanel>
-        </Border>
+                </DockPanel>
+            </Border>
 
-        <!-- The paper account. -->
-        <Border Grid.Row="1" Style="{StaticResource Card}">
-            <StackPanel>
-                <TextBlock Text="PAPER ACCOUNT" Style="{StaticResource Overline}" />
-                <TextBlock Text="{Binding Account}" TextWrapping="Wrap" Style="{StaticResource H3}" Margin="0,4,0,12" />
-                <DataGrid ItemsSource="{Binding Positions}" MaxHeight="200">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Header="Instrument" Binding="{Binding Ticker}" Width="*" FontWeight="SemiBold" />
-                        <DataGridTextColumn Header="Shares" Binding="{Binding Quantity}" Width="100" />
-                        <DataGridTextColumn Header="Cost" Binding="{Binding Cost}" Width="160" />
-                        <DataGridTextColumn Header="Last fill" Binding="{Binding LastFill}" Width="140" />
-                    </DataGrid.Columns>
-                </DataGrid>
+            <!-- Today, live: shown once the session has reported. -->
+            <StackPanel Visibility="{Binding Live.HasData, Converter={StaticResource Visibility}}">
+                <WrapPanel Margin="0,0,0,4">
+                    <Border Style="{StaticResource Tile}" MinWidth="230">
+                        <StackPanel>
+                            <TextBlock Text="PAPER ACCOUNT" Style="{StaticResource Overline}" />
+                            <TextBlock Text="{Binding Live.ValueText}" Style="{StaticResource KpiValue}" FontSize="24" />
+                            <TextBlock Text="{Binding Live.DayChangeText}" FontWeight="SemiBold" Margin="0,2,0,0"
+                                       Foreground="{Binding Live.DayDirection, Converter={StaticResource MarkToBrush}}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}">
+                        <StackPanel>
+                            <TextBlock Text="CASH" Style="{StaticResource Overline}" />
+                            <TextBlock Text="{Binding Live.CashText}" Style="{StaticResource KpiValue}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}">
+                        <StackPanel>
+                            <TextBlock Text="INVESTED" Style="{StaticResource Overline}" />
+                            <TextBlock Text="{Binding Live.InvestedText}" Style="{StaticResource KpiValue}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}">
+                        <StackPanel>
+                            <TextBlock Text="FEES TODAY" Style="{StaticResource Overline}" />
+                            <TextBlock Text="{Binding Live.FeesText}" Style="{StaticResource KpiValue}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}">
+                        <StackPanel>
+                            <TextBlock Text="ORDERS" Style="{StaticResource Overline}" />
+                            <TextBlock Text="{Binding Live.OrdersText}" Style="{StaticResource KpiValue}" FontSize="17" />
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource Tile}">
+                        <StackPanel>
+                            <TextBlock Text="DECISION" Style="{StaticResource Overline}" />
+                            <TextBlock Text="{Binding Live.DecisionText}" Style="{StaticResource KpiValue}" FontSize="17" />
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
+
+                <!-- The account's value today, against the start of the day. -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Right" Text="{Binding Live.Strategy}" Style="{StaticResource Caption}" VerticalAlignment="Bottom" />
+                            <TextBlock Text="Account value today" Style="{StaticResource H2}" />
+                        </DockPanel>
+                        <TextBlock Text="Green above the value at the start of the day (dashed line), red below." Style="{StaticResource Caption}" Margin="0,2,0,0" />
+                        <c:SeriesChart Data="{Binding Live.ValueChart}" Height="240" Margin="0,12,0,0" EmptyText="The value appears once the session is running" />
+                    </StackPanel>
+                </Border>
+
+                <!-- The instruments: a tile each; the selected one's price today with fills and limits. -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Text="Instruments" Style="{StaticResource H2}" Margin="0,0,0,12" />
+                        <ListBox ItemsSource="{Binding Live.Tiles}" SelectedItem="{Binding Live.SelectedTile}" BorderThickness="0" Background="Transparent"
+                                 ItemContainerStyle="{StaticResource TileItem}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel>
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="{Binding ChangeText}" FontWeight="SemiBold" FontSize="12.5"
+                                                       Foreground="{Binding Direction, Converter={StaticResource MarkToBrush}}" />
+                                            <TextBlock Text="{Binding Ticker}" Style="{StaticResource H3}" />
+                                        </DockPanel>
+                                        <TextBlock Text="{Binding Name}" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                                        <TextBlock Text="{Binding LastText}" Style="{StaticResource KpiValue}" FontSize="19" Margin="0,6,0,0" />
+                                        <c:SeriesChart Data="{Binding Spark}" Compact="True" Height="42" Margin="0,6,0,6" />
+                                        <TextBlock Text="{Binding PositionText}" Style="{StaticResource Caption}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <DockPanel Margin="0,4,0,0">
+                            <TextBlock Text="{Binding Live.SelectedTile.Ticker}" Style="{StaticResource H3}" />
+                            <TextBlock Text=" · price today: dots are your fills (green buy, red sell), dashed lines your working limits" Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <c:SeriesChart Data="{Binding Live.PriceChart}" Height="260" Margin="0,10,0,0" EmptyText="Prices appear with the first quotes" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Today's orders and the decision. -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="16" />
+                        <ColumnDefinition Width="*" MinWidth="260" />
+                    </Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Style="{StaticResource Card}" Padding="8,14,8,8">
+                        <StackPanel>
+                            <TextBlock Text="Orders today" Style="{StaticResource H2}" Margin="12,0,12,8" />
+                            <DataGrid ItemsSource="{Binding Live.Orders}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="90" />
+                                    <DataGridTextColumn Header="Side" Binding="{Binding Side}" Width="60" FontWeight="SemiBold" />
+                                    <DataGridTextColumn Header="Instrument" Binding="{Binding Ticker}" Width="*" />
+                                    <DataGridTextColumn Header="Shares" Binding="{Binding Volume}" Width="70" />
+                                    <DataGridTextColumn Header="Limit" Binding="{Binding Limit}" Width="80" />
+                                    <DataGridTemplateColumn Header="Status" Width="120">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Border Style="{StaticResource Chip}" Background="{Binding State, Converter={StaticResource MarkToSoftBrush}}">
+                                                    <TextBlock Text="{Binding StateText}" Style="{StaticResource ChipText}" Foreground="{Binding State, Converter={StaticResource MarkToBrush}}" />
+                                                </Border>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Filled" Binding="{Binding Filled}" Width="70" />
+                                    <DataGridTextColumn Header="Avg price" Binding="{Binding Average}" Width="90" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <TextBlock Text="No orders yet today." Style="{StaticResource Caption}" Margin="12,8"
+                                       Visibility="{Binding Live.Orders.Count, Converter={StaticResource NonEmptyToVisibility}, ConverterParameter=inverse}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="2" Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="The decision" Style="{StaticResource H2}" />
+                            <TextBlock Text="{Binding Live.DecisionText}" Style="{StaticResource Caption}" Margin="0,4,0,10" />
+                            <ItemsControl ItemsSource="{Binding Live.DecisionNotes}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="0,6">
+                                            <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="13" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Border>
+                </Grid>
             </StackPanel>
-        </Border>
 
-        <Border Grid.Row="2" Style="{StaticResource Card}" Padding="0" Margin="0">
-            <DockPanel>
-                <TextBlock DockPanel.Dock="Top" Text="Session log" Style="{StaticResource H3}" Margin="20,14,20,10" />
-                <ListBox x:Name="LogList" ItemsSource="{Binding Log}" Style="{StaticResource Console}" />
-            </DockPanel>
-        </Border>
-    </Grid>
+            <!-- Before a session: the paper account as last saved. -->
+            <Border Style="{StaticResource Card}" Visibility="{Binding Live.HasData, Converter={StaticResource InverseVisibility}}">
+                <StackPanel>
+                    <TextBlock Text="PAPER ACCOUNT" Style="{StaticResource Overline}" />
+                    <TextBlock Text="{Binding Account}" TextWrapping="Wrap" Style="{StaticResource H3}" Margin="0,4,0,12" />
+                    <DataGrid ItemsSource="{Binding Positions}" MaxHeight="220">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Instrument" Binding="{Binding Ticker}" Width="*" FontWeight="SemiBold" />
+                            <DataGridTextColumn Header="Shares" Binding="{Binding Quantity}" Width="100" />
+                            <DataGridTextColumn Header="Cost" Binding="{Binding Cost}" Width="160" />
+                            <DataGridTextColumn Header="Last fill" Binding="{Binding LastFill}" Width="140" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="Charts of today's value, prices and orders appear here while a session runs." Style="{StaticResource Caption}" Margin="0,12,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- Everything the session printed. -->
+            <Border Style="{StaticResource Card}" Padding="16,8">
+                <Expander Header="Session log (everything the session printed)" IsExpanded="False">
+                    <ListBox x:Name="LogList" ItemsSource="{Binding Log}" Style="{StaticResource Console}" Height="280" Margin="0,8,0,0" />
+                </Expander>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
 </UserControl>

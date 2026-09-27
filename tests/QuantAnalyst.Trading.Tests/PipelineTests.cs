@@ -212,6 +212,24 @@ public sealed class OrderManagerTests : IDisposable
         Assert.DoesNotContain(Legal, t => t.Item2 == OmsState.New);
     }
 
+    [Fact]
+    public void EveryChange_IsTold_AndAnObserverThatThrows_ChangesNothing()
+    {
+        var seen = new List<(OmsState State, long Filled)>();
+        _oms.Changed += o => seen.Add((o.State, o.FilledVolume));
+        _oms.Changed += _ => throw new InvalidOperationException("a broken observer");
+
+        OmsOrder o = Working(volume: 10);
+        _oms.ApplyFill(o.ClientOrderId, 4, 100m, 0m, "test");
+        _oms.ApplyFill(o.ClientOrderId, 6, 101m, 0m, "test");
+
+        Assert.Equal([(OmsState.New, 0L), (OmsState.Sent, 0L), (OmsState.Working, 0L), (OmsState.PartiallyFilled, 4L), (OmsState.Filled, 10L)], seen);
+        Assert.Equal((OmsState.Filled, 10L), (o.State, o.FilledVolume)); // the throwing handler stopped nothing
+        Assert.False(_halts.IsHalted);
+        Assert.True(_oms.TryTransition(NewOrder().ClientOrderId, OmsState.Sent, "test", null, OmsState.New));
+        Assert.Equal(OmsState.Sent, seen[^1].State);
+    }
+
     private OmsOrder NewOrder(long volume = 10) =>
         _oms.Create(Guid.NewGuid(), new AccountId("PAPER"), RiskEngineTests.Eric, "ERIC B", OrderSide.Buy, volume, 100m);
 

@@ -4,6 +4,8 @@ using QuantAnalyst.Avanza.Http;
 using QuantAnalyst.Cli;
 using QuantAnalyst.Cli.Commands;
 using QuantAnalyst.Trading.Audit;
+using QuantAnalyst.Trading.Observation;
+using QuantAnalyst.Trading.Oms;
 
 namespace QuantAnalyst.Avanza.Tests;
 
@@ -37,6 +39,9 @@ public sealed class PaperSpyTests : IDisposable
 
     private string Store => Path.Combine(_root, "q.duckdb");
 
+    /// <summary>The observer the next <c>qa paper run</c> reports to (the Windows app's seam); none by default, like the terminal.</summary>
+    private ISessionObserver? _observer;
+
     private string State => Path.Combine(_root, "state");
 
     private string Audit => Path.Combine(_root, "audit");
@@ -61,7 +66,7 @@ public sealed class PaperSpyTests : IDisposable
                 new AvanzaOptions { StateDirectory = options.StateDirectory, LoginMethod = options.LoginMethod, RequestsPerSecond = 10, Burst = 20 },
                 secrets, logger, redactor, time, _server, prompt),
             _ => FakeSecrets.Store())
-        { Time = time };
+        { Time = time, SessionObserver = _observer };
         var output = new StringWriter();
         var error = new StringWriter();
         int code = QaCli.Run(args, output, error, services);
@@ -107,6 +112,82 @@ public sealed class PaperSpyTests : IDisposable
 
         Assert.True(run.IsCompleted, "qa paper run did not finish");
         return await run;
+    }
+
+    [Fact]
+    public async Task AnObserver_SeesTheDayQuotesDecisionFillsAndValue_AndTheSessionIsTheSame()
+    {
+        PrepareHistoryAndUniverse();
+        var seen = new RecordingObserver();
+        _observer = seen;
+
+        (int code, string output, string error) = await RunPaper(seconds: 60);
+
+        Assert.True(code == 0, output + error);
+        Assert.True(output.Contains("Buy 7 ERIC B: Accepted (Filled, filled 7/7 @ 70.86)", StringComparison.Ordinal), output); // as without an observer
+
+        SessionStarted started = Assert.Single(seen.Of<SessionStarted>());
+        Assert.StartsWith("buy-and-hold", started.Strategy, StringComparison.Ordinal);
+        ObservedInstrument eric = Assert.Single(started.Instruments);
+        Assert.Equal(("5240", "ERIC B"), (eric.OrderbookId.Value, eric.Ticker));
+        Assert.NotNull(eric.PreviousClose); // Friday's stored close
+        Assert.NotNull(started.OpenUtc);
+
+        QuoteTick[] quotes = seen.Of<QuoteTick>();
+        Assert.NotEmpty(quotes);
+        Assert.All(quotes, q => Assert.Equal("5240", q.OrderbookId.Value));
+        Assert.All(quotes.Zip(quotes.Skip(1)), p => Assert.True(p.Second.AtUtc - p.First.AtUtc >= TimeSpan.FromSeconds(1))); // at most one a second
+
+        DecisionTick decision = Assert.Single(seen.Of<DecisionTick>());
+        Assert.Equal(1, decision.Orders);
+        Assert.Contains(seen.Of<OrderTick>(), o => o.State == OmsState.Filled && o.Filled == 7 && o.AveragePrice == 70.86m);
+
+        AccountTick[] values = seen.Of<AccountTick>();
+        Assert.True(values.Length >= 2, "the account at the start and at the end at least");
+        Assert.Contains(values, a => a.Positions.Any(p => p.Ticker == "ERIC B" && p.Quantity == 7));
+    }
+
+    [Fact]
+    public async Task AnObserverThatThrows_ChangesNothing()
+    {
+        PrepareHistoryAndUniverse();
+        _observer = new ThrowingObserver();
+
+        (int code, string output, string error) = await RunPaper(seconds: 60);
+
+        Assert.True(code == 0, output + error);
+        Assert.True(output.Contains("Buy 7 ERIC B: Accepted (Filled, filled 7/7 @ 70.86)", StringComparison.Ordinal), output);
+        Assert.Contains("Reconciliation: clean", output, StringComparison.Ordinal);
+    }
+
+    private sealed class RecordingObserver : ISessionObserver
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<object> _events = new();
+
+        public T[] Of<T>() => [.. _events.OfType<T>()];
+
+        public void Started(SessionStarted e) => _events.Enqueue(e);
+
+        public void Quote(QuoteTick e) => _events.Enqueue(e);
+
+        public void Account(AccountTick e) => _events.Enqueue(e);
+
+        public void Order(OrderTick e) => _events.Enqueue(e);
+
+        public void Decision(DecisionTick e) => _events.Enqueue(e);
+    }
+
+    private sealed class ThrowingObserver : ISessionObserver
+    {
+        public void Started(SessionStarted e) => throw new InvalidOperationException("broken");
+
+        public void Quote(QuoteTick e) => throw new InvalidOperationException("broken");
+
+        public void Account(AccountTick e) => throw new InvalidOperationException("broken");
+
+        public void Order(OrderTick e) => throw new InvalidOperationException("broken");
+
+        public void Decision(DecisionTick e) => throw new InvalidOperationException("broken");
     }
 
     [Fact]

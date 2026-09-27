@@ -141,3 +141,36 @@ now, the activity log).
 - **Found by the tests:** a narrow price range (70,1–71,3) got only two axis labels. The layout now always gives at
   least three.
 - **Tests:** 24 new (chart maths 21, instrument chart 2, paper history 1); all 1,033 managed tests pass, 1 skipped.
+
+**Step 3: the live session (done 2026-09-27).**
+- **The seam:**
+  - `Trading/Observation`: `ISessionObserver`, its events, and `GuardedObserver`, which swallows anything an observer
+    throws
+  - `OrderManager.Changed`, raised after every order change, outside its lock, with a throwing handler ignored
+  - the Paper session reports the account every 5 s (and at the start and the end), and the decision (including a
+    skipped or failed one)
+  - `qa paper run` reports the day's frame once ready: open, close, decision time, the strategy, and each instrument
+    with its last stored close, read right after the history refresh. It reports every order change and the quotes,
+    at most one a second per name.
+  - `AvanzaCliServices.SessionObserver` is null in the terminal, so the terminal is unchanged.
+- **`LiveSession`** (Desktop.Core) applies the events on the UI thread:
+  - the account value today against the start of the day (a point per 15 s; in between the last point moves)
+  - KPIs: value and today's change, cash, invested %, fees, orders, the decision
+  - a tile per instrument: last price, change against yesterday's close (else the first quote), a sparkline, the
+    holding
+  - the selected instrument's price today, with fills as dots and working limits as dashed lines
+  - today's orders with status chips ("Sending", "Working", "Partly filled", "Filled" …), and the decision's notes
+- **The Trading page:**
+  - a state chip (Not running / Waiting for 09:10 / Trading) and the schedule, Start, Stop and the kill switch
+  - the KPI tiles, the value chart, the instrument tiles and price chart, and the orders beside the decision
+  - the session log, collapsed
+  - Before a session it shows the paper account as last saved.
+- **Tests (11 new):**
+  - Paper spy with an observer: day, quotes at most one a second, decision, the 7-share fill, account ticks; the
+    session is the same as without one
+  - Paper spy with a throwing observer: nothing changes
+  - order book: every change is told, and a throwing handler stops nothing
+  - the guard, 2
+  - `LiveSession`, 5
+  - Start passes the page's observer
+  All 1,044 managed tests pass, 1 skipped.

@@ -15,8 +15,8 @@ public sealed partial class XamlResourceTests
     /// <summary>The application dictionaries, in the order they are merged (App.xaml merges the theme first).</summary>
     private static readonly string[] Dictionaries = ["Themes/Theme.xaml", "App.xaml"];
 
-    /// <summary>Paths bound on WPF elements rather than on the app's own objects (only inside control templates).</summary>
-    private static readonly string[] WpfPaths = ["ActualWidth", "ActualHeight", "IsDropDownOpen", "IsChecked", "Text"];
+    /// <summary>Paths bound on WPF elements or collections rather than on the app's own objects (e.g. a list's Count).</summary>
+    private static readonly string[] WpfPaths = ["ActualWidth", "ActualHeight", "IsDropDownOpen", "IsChecked", "Text", "Count"];
 
     private static string DesktopDir => Path.Combine(TempWorkspace.RepoRoot(), "src", "QuantAnalyst.Desktop");
 

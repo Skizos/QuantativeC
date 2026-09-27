@@ -69,16 +69,25 @@ public sealed class InverseBoolConverter : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => value is not true;
 }
 
-/// <summary>A non-empty text (or a non-empty list) is visible; empty or null is collapsed.</summary>
+/// <summary>
+/// A non-empty text (or a count above zero) is visible; empty, zero or null is collapsed. With the parameter
+/// "inverse" it is the other way round (e.g. "No orders yet" while the count is zero).
+/// </summary>
 public sealed class NonEmptyToVisibilityConverter : IValueConverter
 {
-    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture) => value switch
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        string s => s.Length > 0 ? Visibility.Visible : Visibility.Collapsed,
-        int n => n > 0 ? Visibility.Visible : Visibility.Collapsed,
-        null => Visibility.Collapsed,
-        _ => Visibility.Visible,
-    };
+        bool present = value switch
+        {
+            string s => s.Length > 0,
+            int n => n > 0,
+            null => false,
+            _ => true,
+        };
+
+        bool show = parameter as string == "inverse" ? !present : present;
+        return show ? Visibility.Visible : Visibility.Collapsed;
+    }
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => throw new NotSupportedException();
 }

@@ -17,6 +17,7 @@ using QuantAnalyst.Trading.Halts;
 using QuantAnalyst.Trading.Kill;
 using QuantAnalyst.Trading.Model;
 using QuantAnalyst.Trading.Modes;
+using QuantAnalyst.Trading.Observation;
 using QuantAnalyst.Trading.Oms;
 using QuantAnalyst.Trading.Paper;
 using QuantAnalyst.Trading.Reconciliation;
@@ -129,6 +130,12 @@ internal static partial class AvanzaCommands
 
             var reconciler = new Reconciler(oms, halts, audit, time, book.Account);
             IReadOnlyList<string> tickers = [.. specs.Select(s => s.Ticker)];
+            ISessionObserver? observer = GuardedObserver.Wrap(services.SessionObserver);
+            if (observer is not null)
+            {
+                oms.Changed += o => observer.Order(OrderTick.From(o, time.GetUtcNow()));
+            }
+
             Task<PlanResult> Decide(CancellationToken ct)
             {
                 DateTimeOffset now = time.GetUtcNow();
@@ -168,7 +175,14 @@ internal static partial class AvanzaCommands
 
             var composers = specs.Select(s => new QuoteComposer(ctx.Connection.Gateway, s.OrderbookId, new QuoteComposerOptions(), time, ctx.Logger)).ToList();
             var subscriptions = composers.Select(c => c.Quotes.Subscribe(capacity: 256)).ToList();
-            var pumps = subscriptions.Select(s => PumpQuotesAsync(s, quotes, channel)).ToList();
+            if (observer is not null)
+            {
+                SessionPlan? day = setup.Schedule.Plan(OrderGateway.StockholmDate(start));
+                observer.Started(new SessionStarted(start, day?.OpenUtc, day?.CloseUtc, day?.DecisionUtc, definition.Spec.Describe(),
+                    ObservedInstruments(storePath, specs, OrderGateway.StockholmDate(start))));
+            }
+
+            var pumps = subscriptions.Select(s => PumpQuotesAsync(s, quotes, channel, observer, time)).ToList();
             var feeds = composers.Select(c => StopAllOnFailure(c.RunAsync(stop.Token), stop)).ToList();
             string EndOfDayReport(DateOnly day)
             {
@@ -177,7 +191,7 @@ internal static partial class AvanzaCommands
                 return $"{report.Summary()} Saved to {saved}.";
             }
 
-            var session = new PaperSession(gateway, channel, book, kill, reconciler, halts, setup.Schedule, audit, time, Decide, output, EndOfDayReport);
+            var session = new PaperSession(gateway, channel, book, kill, reconciler, halts, setup.Schedule, audit, time, Decide, output, EndOfDayReport, observer);
             PaperSessionSummary summary;
             try
             {
@@ -393,20 +407,62 @@ internal static partial class AvanzaCommands
         throw new InvalidOperationException($"No trading day in the two weeks before {today:yyyy-MM-dd}; check the calendar.");
     }
 
-    private static async Task PumpQuotesAsync(Data.Live.Broadcaster<Quote>.Subscription subscription, LatestQuotes quotes, PaperOrderChannel channel)
+    private static async Task PumpQuotesAsync(
+        Data.Live.Broadcaster<Quote>.Subscription subscription, LatestQuotes quotes, PaperOrderChannel channel, ISessionObserver? observer, TimeProvider time)
     {
+        DateTimeOffset? told = null;
         try
         {
             await foreach (Quote q in subscription.Reader.ReadAllAsync().ConfigureAwait(false))
             {
                 quotes.Set(q);
                 channel.OnQuote(q);
+                DateTimeOffset now = time.GetUtcNow();
+                if (observer is not null && (told is not { } t || now - t >= ObserverQuoteEvery))
+                {
+                    told = now;
+                    observer.Quote(new QuoteTick(now, q.OrderbookId, q.Bid, q.Ask, q.Last));
+                }
             }
         }
         catch (Exception) when (subscription.Reader.Completion.IsFaulted)
         {
             // The composer's failure is reported by its run task.
         }
+    }
+
+    /// <summary>An observer gets at most one quote a second per instrument: enough for a chart, cheap for the session.</summary>
+    private static readonly TimeSpan ObserverQuoteEvery = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// The instruments for an observer, each with its last stored close before today (what "today's change" is measured
+    /// from). The store was just brought up to date; if it can't be read, the closes are left out.
+    /// </summary>
+    private static List<ObservedInstrument> ObservedInstruments(string storePath, IReadOnlyList<InstrumentSpec> specs, DateOnly today)
+    {
+        var closes = new Dictionary<OrderbookId, decimal>();
+        try
+        {
+            using HistoryStore history = DataCommands.OpenExisting(storePath);
+            string source = AvanzaChartImporter.AvanzaPriceChart.Name;
+            if (history.GetSource(source) is not null)
+            {
+                foreach (InstrumentSpec spec in specs)
+                {
+                    IReadOnlyList<StoredBar> bars = history.GetDailyBars(spec.OrderbookId, source, to: today.AddDays(-1));
+                    if (bars.Count > 0)
+                    {
+                        closes[spec.OrderbookId] = bars[^1].Bar.Close;
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or HistoryStoreException or IOException || DataCommands.IsStoreFailure(ex))
+        {
+            // Informational only: the tiles then measure today's change from the first quote.
+        }
+
+        return [.. specs.Select(s => new ObservedInstrument(s.OrderbookId, s.Ticker, s.Name, closes.TryGetValue(s.OrderbookId, out decimal c) ? c : null))];
     }
 
     /// <summary>The newest composed quote per instrument, fed by the composers.</summary>
