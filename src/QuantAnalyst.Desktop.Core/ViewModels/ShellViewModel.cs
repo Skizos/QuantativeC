@@ -9,7 +9,7 @@ using QuantAnalyst.Trading.Kill;
 namespace QuantAnalyst.Desktop.Core.ViewModels;
 
 /// <summary>
-/// The window: the five pages, the login method, the activity log of every command, the BankID overlay and the red
+/// The window: the pages, the login method, the activity log of every command, the BankID overlay and the red
 /// KILL button. KILL writes the kill flag directly (like <c>qa kill</c>), so it works even while a session runs.
 /// </summary>
 public sealed class ShellViewModel : ObservableObject
@@ -33,7 +33,7 @@ public sealed class ShellViewModel : ObservableObject
         Strategy = new StrategyViewModel(workspace, engine);
         Session = new SessionViewModel(workspace, engine, time, () => LoginMethod);
         Reports = new ReportsViewModel(workspace, engine, time);
-        Pages = [Status, Instruments, Strategy, Session, Reports];
+        Pages = [Status, Session, Instruments, Strategy, Reports];
         _selected = Status;
 
         Status.StartSessionAsked += () => Session.StartCommand.Execute(null);
@@ -79,7 +79,7 @@ public sealed class ShellViewModel : ObservableObject
     }
 
     /// <summary>Gets the banner that is always shown: what mode the app trades in.</summary>
-    public string ModeBanner { get; } = "PAPER MODE · orders are simulated on live Avanza prices · nothing is ever sent to Avanza";
+    public string ModeBanner { get; } = "PAPER · simulated orders on live prices";
 
     public IReadOnlyList<string> LoginMethods { get; } = ["bankid", "totp"];
 

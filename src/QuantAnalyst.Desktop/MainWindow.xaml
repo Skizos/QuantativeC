@@ -3,8 +3,10 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:QuantAnalyst.Desktop.Core.ViewModels;assembly=QuantAnalyst.Desktop.Core"
         xmlns:views="clr-namespace:QuantAnalyst.Desktop.Views"
-        Title="QuantAnalyst" Width="1200" Height="820" MinWidth="900" MinHeight="600"
-        WindowStartupLocation="CenterScreen" Background="{StaticResource Page}" FontSize="13">
+        xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls"
+        Title="QuantAnalyst" Width="1320" Height="880" MinWidth="1040" MinHeight="680"
+        WindowStartupLocation="CenterScreen" Background="{StaticResource PageBrush}" Foreground="{StaticResource InkBrush}"
+        FontFamily="{StaticResource UiFont}" FontSize="14" UseLayoutRounding="True">
     <Window.Resources>
         <DataTemplate DataType="{x:Type vm:StatusViewModel}"><views:StatusView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:InstrumentsViewModel}"><views:InstrumentsView /></DataTemplate>
@@ -20,91 +22,149 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Header: name, the mode banner, the login method and the KILL button. Always visible. -->
-        <Border Grid.Row="0" Background="{StaticResource Ink}" Padding="16,10">
-            <DockPanel LastChildFill="True">
-                <TextBlock DockPanel.Dock="Left" Text="QuantAnalyst" Foreground="White" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <Button DockPanel.Dock="Right" Style="{StaticResource Kill}" Content="KILL" Command="{Binding KillCommand}" Margin="12,0,0,0"
-                        ToolTip="Stop all trading now: a running session halts within a second and cancels every working order." />
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="Login" Foreground="#D1D5DB" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <ComboBox ItemsSource="{Binding LoginMethods}" SelectedItem="{Binding LoginMethod}" Width="90"
+        <!-- Header: name, the mode, the login method and KILL. Always visible. -->
+        <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="20,10">
+            <DockPanel LastChildFill="False">
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                    <Border Width="34" Height="34" CornerRadius="9" Background="{StaticResource AccentBrush}">
+                        <c:Icon Data="{StaticResource IconTrading}" Foreground="White" Width="20" Height="20" StrokeThickness="2.2" />
+                    </Border>
+                    <TextBlock Text="QuantAnalyst" Style="{StaticResource H2}" FontSize="18" Margin="12,0,0,0" VerticalAlignment="Center" />
+                    <Border Style="{StaticResource ModeChip}" Margin="18,0,0,0"
+                            ToolTip="The app trades on paper only: orders are simulated on live Avanza prices and nothing is ever sent to Avanza.">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="8" Height="8" Fill="{StaticResource WarningBrush}" VerticalAlignment="Center" Margin="0,0,7,0" />
+                            <TextBlock Text="{Binding ModeBanner}" Foreground="{StaticResource WarningBrush}" FontWeight="SemiBold" FontSize="12.5" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <Button DockPanel.Dock="Right" Style="{StaticResource Kill}" Command="{Binding KillCommand}"
+                        ToolTip="Stop all trading now: a running session halts within a second and cancels every working order.">
+                    <StackPanel Orientation="Horizontal">
+                        <c:Icon Data="{StaticResource IconPower}" Width="16" Height="16" StrokeThickness="2.4" Margin="0,0,8,0" />
+                        <TextBlock Text="KILL" />
+                    </StackPanel>
+                </Button>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="Login" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ComboBox ItemsSource="{Binding LoginMethods}" SelectedItem="{Binding LoginMethod}" Width="104"
                               IsEnabled="{Binding Engine.IsBusy, Converter={StaticResource InverseBool}}"
                               ToolTip="bankid: approve on your phone. totp: unattended, needs stored credentials (qa secrets set)." />
                 </StackPanel>
-                <Border Background="#FEF3C7" CornerRadius="4" Padding="10,4" Margin="18,0" HorizontalAlignment="Left" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding ModeBanner}" Foreground="#78350F" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                </Border>
             </DockPanel>
         </Border>
 
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200" />
+                <ColumnDefinition Width="224" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- Navigation -->
-            <ListBox Grid.Column="0" ItemsSource="{Binding Pages}" SelectedItem="{Binding SelectedPage}" BorderThickness="0,0,1,0"
-                     BorderBrush="{StaticResource Line}" Background="White" Padding="0,8">
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <TextBlock Text="{Binding Title}" FontSize="15" Padding="12,10" />
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+            <!-- Navigation rail -->
+            <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,1,0">
+                <ListBox ItemsSource="{Binding Pages}" SelectedItem="{Binding SelectedPage}" BorderThickness="0" Background="Transparent"
+                         Padding="0,12" ItemContainerStyle="{StaticResource NavItem}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <c:Icon Data="{Binding Kind, Converter={StaticResource PageIcon}}" Width="20" Height="20" />
+                                <TextBlock Text="{Binding Title}" FontSize="14.5" FontWeight="SemiBold" Margin="12,0,0,0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
 
             <!-- The selected page -->
-            <DockPanel Grid.Column="1" Margin="24,18,24,8">
-                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+            <DockPanel Grid.Column="1" Margin="32,24,32,8">
+                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
                     <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding SelectedPage.RefreshCommand}" />
-                        <TextBlock Text="{Binding SelectedPage.Title}" Style="{StaticResource PageTitle}" />
+                        <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Command="{Binding SelectedPage.RefreshCommand}" Margin="0"
+                                ToolTip="Read everything on this page again from the files the CLI uses.">
+                            <StackPanel Orientation="Horizontal">
+                                <c:Icon Data="{StaticResource IconRefresh}" Width="16" Height="16" Margin="0,0,6,0" />
+                                <TextBlock Text="Refresh" />
+                            </StackPanel>
+                        </Button>
+                        <TextBlock Text="{Binding SelectedPage.Title}" Style="{StaticResource H1}" />
                     </DockPanel>
-                    <TextBlock Text="{Binding SelectedPage.Subtitle}" Style="{StaticResource Hint}" Margin="0,2,0,0" />
-                    <TextBlock Text="{Binding SelectedPage.Message}" TextWrapping="Wrap" Margin="0,8,0,0" FontWeight="SemiBold"
-                               Foreground="{Binding SelectedPage.MessageIsError, Converter={StaticResource ErrorToBrush}}" />
+                    <TextBlock Text="{Binding SelectedPage.Subtitle}" Style="{StaticResource Hint}" Margin="0,4,0,0" />
+                    <Border CornerRadius="8" Padding="12,9" Margin="0,12,0,0">
+                        <Border.Style>
+                            <Style TargetType="Border">
+                                <Setter Property="Background" Value="{StaticResource InfoSoftBrush}" />
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedPage.MessageIsError}" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource NegativeSoftBrush}" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding SelectedPage.Message}" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+                        <DockPanel>
+                            <c:Icon DockPanel.Dock="Left" Data="{StaticResource IconInfo}" Width="18" Height="18" VerticalAlignment="Top" Margin="0,1,10,0" />
+                            <TextBlock Text="{Binding SelectedPage.Message}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                        </DockPanel>
+                    </Border>
                 </StackPanel>
                 <ContentControl Content="{Binding SelectedPage}" Focusable="False" />
             </DockPanel>
 
             <!-- BankID overlay: shown while a login waits for the phone. -->
-            <Grid Grid.ColumnSpan="2" Background="#B3111827"
+            <Grid Grid.ColumnSpan="2" Background="{StaticResource OverlayBrush}"
                   Visibility="{Binding Engine.BankId.IsWaiting, Converter={StaticResource Visibility}}">
-                <Border Background="White" CornerRadius="8" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center" Width="420">
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="32,28" HorizontalAlignment="Center" VerticalAlignment="Center" Width="440">
                     <StackPanel>
-                        <TextBlock Text="Log in to Avanza with BankID" FontSize="18" FontWeight="SemiBold" />
-                        <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,14"
+                        <TextBlock Text="Log in to Avanza with BankID" Style="{StaticResource H2}" FontSize="20" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,18"
                                    Text="Open the BankID app on your phone, choose 'Scan QR code' and scan this code. It changes every second; that is normal." />
-                        <Image Source="{Binding Engine.BankId.QrPng, Converter={StaticResource PngToImage}}" Width="300" Height="300"
-                               RenderOptions.BitmapScalingMode="NearestNeighbor" />
-                        <TextBlock Text="{Binding Engine.BankId.Status}" TextWrapping="Wrap" Margin="0,14,0,14" HorizontalAlignment="Center" />
-                        <Button Content="Cancel login" Command="{Binding CancelCommand}" HorizontalAlignment="Center" />
+                        <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="12" Padding="12" HorizontalAlignment="Center">
+                            <Image Source="{Binding Engine.BankId.QrPng, Converter={StaticResource PngToImage}}" Width="280" Height="280"
+                                   RenderOptions.BitmapScalingMode="NearestNeighbor" />
+                        </Border>
+                        <TextBlock Text="{Binding Engine.BankId.Status}" TextWrapping="Wrap" Margin="0,16,0,16" HorizontalAlignment="Center" TextAlignment="Center" />
+                        <Button Content="Cancel login" Command="{Binding CancelCommand}" HorizontalAlignment="Center" Margin="0" />
                     </StackPanel>
                 </Border>
             </Grid>
         </Grid>
 
         <!-- Bottom: what runs now, the KILL notice, and the activity log of every command. -->
-        <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Background="White">
-            <Expander Padding="12,4" IsExpanded="False">
+        <Border Grid.Row="2" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Background="{StaticResource SurfaceBrush}">
+            <Expander Padding="16,6" IsExpanded="False">
                 <Expander.Header>
                     <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,8,0">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{StaticResource PositiveBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Engine.IsBusy}" Value="True">
+                                            <Setter Property="Fill" Value="{StaticResource InfoBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
                         <TextBlock Text="{Binding BusyText}" FontWeight="SemiBold" Margin="0,0,16,0" />
-                        <TextBlock Text="{Binding Notice}" Foreground="{StaticResource Danger}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="  ·  Activity log (every command's output)" Style="{StaticResource Hint}" />
+                        <TextBlock Text="{Binding Notice}" Foreground="{StaticResource NegativeBrush}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,16,0" />
+                        <TextBlock Text="Activity log: every command's output" Style="{StaticResource Caption}" VerticalAlignment="Center" />
                     </StackPanel>
                 </Expander.Header>
-                <ListBox x:Name="ActivityList" ItemsSource="{Binding Activity}" Style="{StaticResource Console}" Height="220">
+                <ListBox x:Name="ActivityList" ItemsSource="{Binding Activity}" Style="{StaticResource Console}" Height="220" Margin="0,8,0,4">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <TextBlock Text="{Binding Text}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
-                                        <Setter Property="Foreground" Value="#E5E7EB" />
+                                        <Setter Property="Foreground" Value="{StaticResource ConsoleInkBrush}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsError}" Value="True">
-                                                <Setter Property="Foreground" Value="#FCA5A5" />
+                                                <Setter Property="Foreground" Value="{StaticResource ConsoleErrorBrush}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>

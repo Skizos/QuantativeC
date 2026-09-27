@@ -39,6 +39,9 @@ public sealed class ReportsViewModel : PageViewModel
 
     public ObservableCollection<string> GateLines { get; } = [];
 
+    /// <summary>Gets one entry per day the gate needs: true for each clean day already counted (the page's dots).</summary>
+    public ObservableCollection<bool> GateDots { get; } = [];
+
     public ReportRow? Selected
     {
         get => _selected;
@@ -89,6 +92,12 @@ public sealed class ReportsViewModel : PageViewModel
 
             CleanDays = gate?.Evidence.Count ?? 0;
             GateMet = gate?.Met ?? false;
+            GateDots.Clear();
+            for (int i = 0; i < NeededDays; i++)
+            {
+                GateDots.Add(i < CleanDays);
+            }
+
             Say(rows.Count == 0
                 ? "No session has run yet. Reports appear here after the first Paper session."
                 : GateMet ? "The Confirm gate is met. Promoting is your decision, made in the terminal (docs/guide.md §6)." : string.Empty);

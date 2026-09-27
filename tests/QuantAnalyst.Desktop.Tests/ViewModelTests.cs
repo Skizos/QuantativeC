@@ -261,18 +261,20 @@ public sealed class ViewModelTests : IDisposable
         Assert.Equal("1 of 10 clean Paper days", shell.Reports.GateProgress);
         Assert.False(shell.Reports.GateMet);
         Assert.NotEmpty(shell.Reports.GateLines);
+        Assert.Equal(10, shell.Reports.GateDots.Count); // one dot per day the gate needs
+        Assert.Equal(shell.Reports.CleanDays, shell.Reports.GateDots.Count(d => d));
         Assert.False(Directory.Exists(_ws.Workspace.ReportsDir)); // read-only: nothing saved
     }
 
     // ---- Shell ------------------------------------------------------------------------------------------------
 
     [Fact]
-    public void TheShell_HasFivePages_APaperBanner_AndAValidLoginMethod()
+    public void TheShell_HasItsPages_APaperChip_AndAValidLoginMethod()
     {
         ShellViewModel shell = Shell();
-        Assert.Equal(["Status", "Instruments", "Strategy", "Paper session", "Reports"], shell.Pages.Select(p => p.Title));
+        Assert.Equal(["Status", "Trading", "Instruments", "Strategy", "Reports"], shell.Pages.Select(p => p.Title));
         Assert.Equal(PageKind.Status, shell.SelectedPage.Kind);
-        Assert.StartsWith("PAPER MODE", shell.ModeBanner, StringComparison.Ordinal);
+        Assert.StartsWith("PAPER", shell.ModeBanner, StringComparison.Ordinal);
 
         shell.LoginMethod = "password";
         Assert.Contains(shell.LoginMethod, shell.LoginMethods);

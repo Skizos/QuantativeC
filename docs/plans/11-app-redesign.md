@@ -1,0 +1,118 @@
+# 11 — The Windows app, redesigned: readable, modern, with charts and your account
+
+- **Status:** planned 2026-09-27 at the owner's request: "Make it easily readable. Make it look modern and also let
+  me choose which account I wanna use. Make graphs and stuff alike for the current trading run. Generally make the app
+  better with inspirations from other apps, like Avanza."
+- **Builds on:** `docs/plans/10-windows-app.md` (the app as it is: five pages, in-process `qa`, Paper only).
+- **Gate:**
+  - all tests green, including new ones for the chart maths, the live session feed and the account choice
+  - a Linux test that every `{StaticResource …}` in the XAML exists and every `{Binding …}` names a real property. A
+    missing key only fails when the window opens, and I can't open it here.
+  - the architecture and app-safety tests still hold: no order route, no order channel, no preflight, no promotion,
+    no `--mode` anywhere in the app
+  - **I can't see the window (Linux container).** You run it with `.\qa-app.ps1` and tell me what looks wrong; screenshots
+    help most.
+- **Not in this plan:**
+  - Confirm in the app. Real orders stay a terminal command, typed card by card (plan 07).
+  - A dark theme (the colours are tokens, so it can come later).
+  - New Avanza endpoints. Everything shown comes from reads the CLI already makes (accounts, positions, quotes,
+    daily history), from the audit log, or from the Paper session itself.
+
+## Decisions I took (tell me if you want any changed)
+
+| Question | Decision | Why |
+|---|---|---|
+| **The look** | Light, calm, card-based, in the spirit of Avanza: white cards on a light grey page, one green accent, black numbers in a large tabular font, **green for up and red for down** with ▲/▼, small tinted chips for states. A slim navigation rail with icons on the left, the mode and KILL always in the header. | Readable at a glance; the numbers carry the page, not the chrome. It is inspired by Avanza, not a copy: no Avanza name, logo or brand colours. |
+| **Pages** | 1. **Overview** (new start page) 2. **Trading** (today's Paper session) 3. **Accounts** (new) 4. **Instruments** 5. **Strategy** 6. **Reports**. The old Status checklist lives on the Overview. | You open the app to see how things are, not a checklist. |
+| **Charts** | Our own small chart control, not a charting package. The maths is in `Desktop.Core` and tested on Linux: scaling, "nice" axis steps, time labels, the hover point and markers. The WPF part only draws. | No new third-party code to vet (plan 10's rule), and the maths is checked by the same test run as everything else. |
+| **What is charted** | **Trading:** the paper account's value today against the start of the day, green above and red below like Avanza's day chart; each instrument's price today with your fills marked (▲ buy, ▼ sell) and working limits as lines. **Instruments:** each name's daily history with ranges (1M 3M 6M 1Y 3Y All) and the strategy's moving averages. **Overview:** the paper account's value day by day, from the end-of-day reports. | The first thing a trader looks at is "how is it going", then "what did it do". |
+| **Live data from the session** | A small observer seam, `ISessionObserver`, which the Paper session calls with quotes, the paper account's value, order updates and the day's decision. The CLI passes none, so the terminal is unchanged. The app passes its own and draws from it. | Structured data straight from the running session; nothing parses printed text (plan 10's rule). |
+| **"Choose which account"** | The **Accounts** page loads your Avanza accounts with **one BankID login** per refresh: type, name, masked id (`***193`), value, buying power and holdings. Pick one to see it; the Paper account is always there too. For an account that may trade live (an ISK, tradable, not managed, no credit: R1), **"Use for live trading"** makes it the one account Confirm may use. You confirm by typing its last 3 digits. The app then sets `AVANZA__ALLOWEDACCOUNTIDS` for you (your user environment), exactly what `docs/guide.md` §7 has you type by hand today. **"Stop allowing live trading"** clears it. | One place to see and choose. The choice is the same R1 setting as before, so Confirm's startup checks are unchanged. The full account number is never shown, logged or written anywhere but that one variable. |
+| **Logins** | Still at most one login per button press (CLAUDE.md). Nothing logs in by itself; account values stay in memory while the app is open. | The safety rule and BankID's one-scan-per-login. |
+| **Numbers** | Swedish style where it helps reading: a space as the thousands separator (`5 000,00 kr`) on screen. Commands and files keep the invariant format. | It reads like your bank. |
+
+## Screens
+
+1. **Overview:**
+   - the paper account's value (large), today's change, cash and invested %
+   - a chart of its value day by day
+   - the Confirm gate as 10 dots (green clean, red not clean, amber incomplete)
+   - the next session with a countdown, and the kill switch state
+   - the setup checklist as chips, collapsed when everything is ok, with the next steps and one primary button
+2. **Trading (the Paper session):**
+   - Start/Stop and the session's state (waiting for 09:10 with a countdown, running, stopped)
+   - KPI tiles: value, today's change, cash, invested, fees, orders and fills
+   - the account-value chart
+   - one tile per instrument: last price, change today, a sparkline and your position. Click one for its price chart
+     with fills and limits.
+   - today's orders with status chips, and the strategy's decision notes
+   - the session log, collapsed by default
+3. **Accounts:**
+   - the Paper account card and your Avanza account cards
+   - the selected account's holdings (value, gain, %)
+   - the live-trading account (R1): which one, and why an account can't be it
+4. **Instruments:** the allowlist on the left. On the right, the selected name's chart with ranges, last close and
+   change, and the strategy's moving averages. Add/Remove as today.
+5. **Strategy:** the form as today. The backtest shows its key numbers as tiles (return, Sharpe, Deflated Sharpe,
+   max drawdown, costs), with the full output below.
+6. **Reports:** the gate dots, the days as a list with state chips, and the selected day's details.
+
+Always visible: the header (name, the **PAPER** mode chip, the login method, **KILL**) and the bottom bar (what runs
+now, the activity log).
+
+## Steps (each ends green, committed and pushed)
+
+1. **Design system:**
+   - `Theme.xaml`: colours, type sizes, buttons, inputs, lists and tables, cards, chips, icons
+   - the navigation rail and header
+   - all current pages restyled
+   - the XAML check test
+2. **Charts:**
+   - `Desktop.Core/Charts` (model, layout, ticks, hover) and the WPF `SeriesChart`
+   - the Instruments page chart with ranges and moving averages
+   - the paper value history for the Overview
+3. **The live session:**
+   - `ISessionObserver` in Trading, wired in `qa paper run` through `AvanzaCliServices`
+   - the Trading page with live KPIs, charts, instrument tiles and orders
+4. **Accounts and Overview:**
+   - the one-login account overview, shared by `qa accounts` and the app
+   - the live-trading choice with typed confirmation
+   - the Overview page
+   - docs (`docs/guide.md` §0) and a full test run
+
+## Test map (planned)
+
+| Area | Must show |
+|---|---|
+| XAML | every static resource key is defined (and before use inside a dictionary); every binding path names a public property of an app type |
+| Chart maths | nice steps for any range (including a flat line and one point); points map into the box; hover picks the nearest point; markers land on their time; baseline split into above/below |
+| Session feed | a Paper session over the fake Avanza server reports quotes, the decision, order updates with fills, and account values to an observer; with no observer the output is unchanged |
+| Trading page | the feed becomes the value series, the per-instrument series, fills as markers and the order list; start of day as the baseline; the change in SEK and % |
+| Accounts | one login loads accounts, holdings and R1 eligibility; ids shown masked; only an eligible account can be chosen; the typed digits must match; the variable is set to the full id and cleared on request; nothing logs the full id |
+| Overview | the gate dots from the reports; the value history from the reports' end values; the checklist and next action as before |
+| Safety | the app still has no path to orders, preflight, promotion or a mode flag |
+
+## Step notes
+
+**Step 1: the design system (done 2026-09-27).**
+- **`Themes/Theme.xaml`** holds every colour, text style, icon and control look:
+  - buttons: default, Primary, Ghost, Kill and Segment
+  - inputs, the drop-down, tooltips, tables, list rows
+  - cards, tiles, chips and the mode chip
+- **Icons** are simple line drawings of my own on a 24 × 24 grid (no icon font or package). The `Icon` control draws
+  them in the surrounding text colour, so a selected navigation item or a white button turns its icon along with it.
+- **The window:**
+  - a white header with the PAPER chip, the login method and KILL
+  - a navigation rail with icons, where Trading now comes second
+  - the page title with Refresh
+  - a message bar (blue, red for errors)
+  - a restyled BankID card and the activity log at the bottom
+- **Pages restyled** on the same view models: Status as two cards (setup chips, next steps), Instruments, Strategy
+  (form + "Paper trades now"), Trading (still the text session; step 3 makes it live), and Reports with the gate as
+  10 dots.
+- **Numbers:** `Fmt` formats Swedish style (`5 000,00 kr`, `+1,23 %`, `▲`/`▼`), and `Tone` gives each state word its
+  colour. The new pages use them from step 2.
+- **Checks:** `XamlResourceTests` finds a missing or out-of-order resource key and a misspelled binding in the XAML
+  sources, with positive controls. It checks every XAML file.
+- **Tests:** 26 new (XAML checks 7, formatting and tones 19); app tests 58; all 1,009 managed tests pass, 1 skipped
+  (Windows only).

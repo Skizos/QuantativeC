@@ -4,89 +4,19 @@
              xmlns:local="clr-namespace:QuantAnalyst.Desktop"
              ShutdownMode="OnMainWindowClose">
     <Application.Resources>
-        <local:PngToImageConverter x:Key="PngToImage" />
-        <local:MarkToBrushConverter x:Key="MarkToBrush" />
-        <local:InverseVisibilityConverter x:Key="InverseVisibility" />
-        <local:ErrorToBrushConverter x:Key="ErrorToBrush" />
-        <local:InverseBoolConverter x:Key="InverseBool" />
-        <BooleanToVisibilityConverter x:Key="Visibility" />
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/Theme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
 
-        <SolidColorBrush x:Key="Ink" Color="#1F2937" />
-        <SolidColorBrush x:Key="Muted" Color="#6B7280" />
-        <SolidColorBrush x:Key="Line" Color="#E5E7EB" />
-        <SolidColorBrush x:Key="Page" Color="#F9FAFB" />
-        <SolidColorBrush x:Key="Accent" Color="#1565C0" />
-        <SolidColorBrush x:Key="Danger" Color="#C62828" />
-        <FontFamily x:Key="Mono">Cascadia Mono, Consolas, Courier New</FontFamily>
-
-        <Style TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{StaticResource Ink}" />
-        </Style>
-
-        <Style x:Key="PageTitle" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="22" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Foreground" Value="{StaticResource Ink}" />
-        </Style>
-
-        <Style x:Key="Section" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="15" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="Margin" Value="0,18,0,6" />
-            <Setter Property="Foreground" Value="{StaticResource Ink}" />
-        </Style>
-
-        <Style x:Key="Hint" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="{StaticResource Muted}" />
-            <Setter Property="TextWrapping" Value="Wrap" />
-        </Style>
-
-        <Style TargetType="Button">
-            <Setter Property="Padding" Value="14,6" />
-            <Setter Property="Margin" Value="0,0,8,0" />
-            <Setter Property="MinHeight" Value="32" />
-            <Setter Property="Cursor" Value="Hand" />
-        </Style>
-
-        <Style x:Key="Primary" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Background" Value="{StaticResource Accent}" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="FontWeight" Value="SemiBold" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Style.Triggers>
-                <Trigger Property="IsEnabled" Value="False">
-                    <Setter Property="Opacity" Value="0.45" />
-                </Trigger>
-            </Style.Triggers>
-        </Style>
-
-        <Style x:Key="Kill" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Background" Value="{StaticResource Danger}" />
-            <Setter Property="Foreground" Value="White" />
-            <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="FontSize" Value="14" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Padding" Value="22,6" />
-        </Style>
-
-        <Style x:Key="Card" TargetType="Border">
-            <Setter Property="Background" Value="White" />
-            <Setter Property="BorderBrush" Value="{StaticResource Line}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="6" />
-            <Setter Property="Padding" Value="16" />
-            <Setter Property="Margin" Value="0,0,0,12" />
-        </Style>
-
-        <Style x:Key="Console" TargetType="ListBox">
-            <Setter Property="FontFamily" Value="{StaticResource Mono}" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="Background" Value="#111827" />
-            <Setter Property="Foreground" Value="#E5E7EB" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Padding" Value="6" />
-            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
-            <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True" />
-        </Style>
+            <local:PngToImageConverter x:Key="PngToImage" />
+            <local:MarkToBrushConverter x:Key="MarkToBrush" />
+            <local:MarkToSoftBrushConverter x:Key="MarkToSoftBrush" />
+            <local:InverseVisibilityConverter x:Key="InverseVisibility" />
+            <local:InverseBoolConverter x:Key="InverseBool" />
+            <local:NonEmptyToVisibilityConverter x:Key="NonEmptyToVisibility" />
+            <local:PageIconConverter x:Key="PageIcon" />
+            <BooleanToVisibilityConverter x:Key="Visibility" />
+        </ResourceDictionary>
     </Application.Resources>
 </Application>

@@ -3,43 +3,65 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <DockPanel>
         <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
-            <StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                    <TextBlock Text="Paper trades now: " Style="{StaticResource Hint}" />
-                    <TextBlock Text="{Binding Saved}" FontWeight="SemiBold" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="STRATEGY" Style="{StaticResource Overline}" />
+                    <ComboBox ItemsSource="{Binding Options}" SelectedItem="{Binding Selected}" Width="240" HorizontalAlignment="Left" Margin="0,6,0,6">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Name}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Text="{Binding Selected.Summary}" Style="{StaticResource Hint}" Margin="0,0,0,16" />
+
+                    <TextBlock Text="PARAMETERS" Style="{StaticResource Overline}" Margin="0,0,0,6" />
+                    <ItemsControl ItemsSource="{Binding Selected.Fields}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="110" />
+                                        <ColumnDefinition Width="120" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding Key}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <TextBox Grid.Column="1" Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" />
+                                    <StackPanel Grid.Column="2" Margin="14,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Description}" Style="{StaticResource Hint}" />
+                                        <TextBlock Text="{Binding Hint}" Style="{StaticResource Caption}" Foreground="{StaticResource InkMutedBrush}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="Backtest on my instruments" Command="{Binding BacktestCommand}"
+                                ToolTip="Replays the strategy on your instruments' history, with Avanza's costs. Every run is logged in the trial ledger." />
+                        <Button Style="{StaticResource Primary}" Content="Use for Paper" Command="{Binding SaveCommand}"
+                                ToolTip="Saves this strategy in config/paper.json; the Paper session trades it." />
+                    </StackPanel>
                 </StackPanel>
 
-                <StackPanel Orientation="Horizontal" Margin="0,6,0,4">
-                    <TextBlock Text="Strategy" Width="110" VerticalAlignment="Center" FontWeight="SemiBold" />
-                    <ComboBox ItemsSource="{Binding Options}" SelectedItem="{Binding Selected}" DisplayMemberPath="Name" Width="200" />
-                </StackPanel>
-                <TextBlock Text="{Binding Selected.Summary}" Style="{StaticResource Hint}" Margin="110,0,0,10" />
-
-                <ItemsControl ItemsSource="{Binding Selected.Fields}">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Orientation="Horizontal" Margin="0,3">
-                                <TextBlock Text="{Binding Key}" Width="110" VerticalAlignment="Center" />
-                                <TextBox Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" Width="100" Padding="6,3" VerticalContentAlignment="Center" />
-                                <TextBlock Text="{Binding Hint}" Style="{StaticResource Hint}" Width="80" Margin="10,0,0,0" VerticalAlignment="Center" />
-                                <TextBlock Text="{Binding Description}" Style="{StaticResource Hint}" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-
-                <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                    <Button Content="Backtest on my instruments" Command="{Binding BacktestCommand}"
-                            ToolTip="Replays the strategy on your instruments' history, with Avanza's costs. Every run is logged in the trial ledger." />
-                    <Button Style="{StaticResource Primary}" Content="Use for Paper" Command="{Binding SaveCommand}"
-                            ToolTip="Saves this strategy in config/paper.json; the Paper session trades it." />
-                </StackPanel>
-            </StackPanel>
+                <!-- What Paper trades now. -->
+                <Border Grid.Column="1" Background="{StaticResource SurfaceAltBrush}" CornerRadius="10" Padding="16,12" VerticalAlignment="Top" MinWidth="240" Margin="24,0,0,0">
+                    <StackPanel>
+                        <TextBlock Text="PAPER TRADES NOW" Style="{StaticResource Overline}" />
+                        <TextBlock Text="{Binding Saved}" Style="{StaticResource H3}" TextWrapping="Wrap" Margin="0,4,0,0" MaxWidth="280" />
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Border>
 
-        <Border Style="{StaticResource Card}" Padding="0">
+        <Border Style="{StaticResource Card}" Padding="0" Margin="0">
             <DockPanel>
-                <TextBlock DockPanel.Dock="Top" Text="Last backtest" FontWeight="SemiBold" Margin="16,12,16,6" />
+                <TextBlock DockPanel.Dock="Top" Text="Last backtest" Style="{StaticResource H3}" Margin="20,14,20,10" />
                 <ListBox ItemsSource="{Binding BacktestOutput}" Style="{StaticResource Console}" />
             </DockPanel>
         </Border>

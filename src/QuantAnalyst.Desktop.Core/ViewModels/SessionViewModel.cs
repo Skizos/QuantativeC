@@ -38,7 +38,7 @@ public sealed class SessionViewModel : PageViewModel
     private string _resetReason = string.Empty;
 
     public SessionViewModel(Workspace workspace, QaEngine engine, TimeProvider time, Func<string> login)
-        : base(PageKind.Session, "Paper session", "Trade the saved strategy on paper, on live Avanza prices. Nothing is sent to Avanza.", engine)
+        : base(PageKind.Session, "Trading", "Today's Paper session: the saved strategy on live Avanza prices, with simulated orders. Nothing is sent to Avanza.", engine)
     {
         _workspace = workspace;
         _time = time;

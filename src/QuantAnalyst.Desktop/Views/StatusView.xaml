@@ -2,46 +2,56 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel>
-            <Border Style="{StaticResource Card}">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="3*" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="2*" MinWidth="300" />
+            </Grid.ColumnDefinitions>
+
+            <!-- The setup, one line per thing a trading day depends on. -->
+            <Border Grid.Column="0" Style="{StaticResource Card}" VerticalAlignment="Top">
                 <StackPanel>
-                    <TextBlock Text="{Binding Heading}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10" />
+                    <TextBlock Text="{Binding Heading}" Style="{StaticResource H2}" Margin="0,0,0,12" />
                     <ItemsControl ItemsSource="{Binding Lines}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="0,3">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="56" />
-                                        <ColumnDefinition Width="130" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0" Background="{Binding Mark, Converter={StaticResource MarkToBrush}}" CornerRadius="3"
-                                            Padding="6,1" HorizontalAlignment="Left" VerticalAlignment="Top">
-                                        <TextBlock Text="{Binding Mark}" Foreground="White" FontWeight="SemiBold" FontSize="11" />
-                                    </Border>
-                                    <TextBlock Grid.Column="1" Text="{Binding Label}" FontWeight="SemiBold" />
-                                    <TextBlock Grid.Column="2" Text="{Binding Text}" TextWrapping="Wrap" />
-                                </Grid>
+                                <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="0,10">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="64" />
+                                            <ColumnDefinition Width="140" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Style="{StaticResource Chip}" VerticalAlignment="Top"
+                                                Background="{Binding Mark, Converter={StaticResource MarkToSoftBrush}}">
+                                            <TextBlock Text="{Binding Mark}" Style="{StaticResource ChipText}" Foreground="{Binding Mark, Converter={StaticResource MarkToBrush}}" />
+                                        </Border>
+                                        <TextBlock Grid.Column="1" Text="{Binding Label}" FontWeight="SemiBold" Margin="0,1,12,0" TextWrapping="Wrap" />
+                                        <TextBlock Grid.Column="2" Text="{Binding Text}" TextWrapping="Wrap" Foreground="{StaticResource InkSecondaryBrush}" Margin="0,1,0,0" />
+                                    </Grid>
+                                </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                 </StackPanel>
             </Border>
 
-            <Border Style="{StaticResource Card}">
+            <!-- What to do next, and one button for it. -->
+            <Border Grid.Column="2" Style="{StaticResource Card}" VerticalAlignment="Top">
                 <StackPanel>
-                    <TextBlock Text="Next steps" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="Next steps" Style="{StaticResource H2}" Margin="0,0,0,12" />
                     <ItemsControl ItemsSource="{Binding Steps}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,3" />
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,0,0,10" LineHeight="20" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <Button Style="{StaticResource Primary}" Content="{Binding NextActionLabel}" Command="{Binding NextActionCommand}"
-                            HorizontalAlignment="Left" Margin="0,12,0,0" />
+                            HorizontalAlignment="Stretch" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
-        </StackPanel>
+        </Grid>
     </ScrollViewer>
 </UserControl>
