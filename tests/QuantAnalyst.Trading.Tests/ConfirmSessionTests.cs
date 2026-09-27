@@ -81,7 +81,7 @@ public sealed class ConfirmSessionTests : IDisposable
             Confirmation = _confirm,
         };
         _gateway = new OrderGateway(_channel, env, new PreTradeRiskEngine(RiskLimits.AdrDefaults), oms, _halts, _audit, _time);
-        _kill = new KillSwitch(_gateway, _halts, _audit, _time, _dir.File("KILL"), _dir.File("state"), _account, 0.02m, watch: false);
+        _kill = new KillSwitch(_gateway, _halts, _audit, _time, _dir.File("KILL"), _dir.File("state"), _account, RiskLimits.AdrDefaults, watch: false);
         _session = new ConfirmSession(_gateway, _account, _kill, new Reconciler(oms, _halts, _audit, _time, Isk), _broker, _halts,
             new TradingSchedule(calendar, RiskLimits.AdrDefaults, new TimeOnly(9, 10)), _audit, _time, Plan, _output);
         Quotes();

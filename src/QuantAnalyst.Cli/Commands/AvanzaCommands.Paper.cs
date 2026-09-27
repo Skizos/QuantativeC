@@ -119,7 +119,7 @@ internal static partial class AvanzaCommands
                 CourtageVerified = setup.Costs.Verified,
             };
             using var gateway = new OrderGateway(channel, env, risk, oms, halts, audit, time);
-            using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(killFile)!, stateDir, book, setup.Limits.DailyLossStopPct);
+            using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(killFile)!, stateDir, book, setup.Limits);
             kill.Alerted += message => output.WriteLine("ALERT: " + message);
             if (kill.IsKilled)
             {
@@ -142,7 +142,7 @@ internal static partial class AvanzaCommands
                 }
 
                 double[] targets = StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
-                return Task.FromResult(DailyPlanner.Plan(targets, specs, book.Snapshot(), quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now));
+                return Task.FromResult(DailyPlanner.Plan(targets, specs, book.Snapshot(), gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now));
             }
 
             DateTimeOffset start = time.GetUtcNow();

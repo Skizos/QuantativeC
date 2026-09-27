@@ -266,9 +266,11 @@ internal static class StatusCommand
         if (limits is not null)
         {
             decimal value = book is null ? paper.Cash : book.Cash + book.Positions.Sum(p => p.CostBasis);
-            decimal perOrder = Math.Min(limits.MaxOrderValueSek, limits.MaxOrderValuePctOfAccount * value);
+            decimal sized = limits.SizingValue(value);
+            decimal perOrder = Math.Min(limits.MaxOrderValueSek, limits.MaxOrderValuePctOfAccount * sized);
+            string capped = limits.Capped(value) ? string.Create(c, $" (sized on the {limits.MaxAccountValueSek:N0} SEK account cap)") : string.Empty;
             r.Add(Mark.Ok, "Risk limits", string.Create(c,
-                $"for {value:N0} SEK: orders up to {perOrder:N0} SEK, {limits.MaxPositionPctOfAccount * value:N0} SEK per name, loss stop at -{limits.DailyLossStopPct * value:N0} SEK a day (qa risk-limits)"));
+                $"for {value:N0} SEK{capped}: orders up to {perOrder:N0} SEK, {limits.MaxPositionPctOfAccount * sized:N0} SEK per name, loss stop at -{limits.DailyLossLimitSek(value):N0} SEK a day (qa risk-limits)"));
         }
     }
 

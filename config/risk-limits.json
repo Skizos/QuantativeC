@@ -1,6 +1,6 @@
 {
   "format": "qa-risk-limits/1",
-  "note": "Pre-trade limits, ADR 0003 section 4 defaults. Every field is required. R1's allowed accounts come from the AVANZA__ALLOWEDACCOUNTIDS environment variable (never committed); R2's instruments from config/universe.json.",
+  "note": "Pre-trade limits, ADR 0003 section 4 defaults. Every field is required. R1's allowed accounts come from the AVANZA__ALLOWEDACCOUNTIDS environment variable (never committed); R2's instruments from config/universe.json. max_account_value_sek is the account cap: R6-R8, R19 and the plan are sized on the account's value, but never on more than this, so money added to the account does not raise the limits (ADR 0003 section 4, Changes 2026-09-27).",
   "max_order_value_sek": 25000,
   "max_order_value_pct_of_account": 0.10,
   "max_position_pct_of_account": 0.20,
@@ -12,5 +12,6 @@
   "price_collar_pct": 0.02,
   "max_quote_age_seconds": 10,
   "trading_window": { "open": "09:05", "close": "17:20", "half_day_close": "12:50" },
-  "daily_loss_stop_pct": 0.02
+  "daily_loss_stop_pct": 0.02,
+  "max_account_value_sek": 5000
 }

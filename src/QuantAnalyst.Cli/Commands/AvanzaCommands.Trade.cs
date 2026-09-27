@@ -213,7 +213,7 @@ internal static partial class AvanzaCommands
             Live = live,
         };
         using var gateway = new OrderGateway(channel, env, risk, oms, halts, audit, time);
-        using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(o.KillFile)!, stateDir, account, setup.Limits.DailyLossStopPct);
+        using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(o.KillFile)!, stateDir, account, setup.Limits);
         kill.Alerted += message => output.WriteLine("ALERT: " + message);
         var reconciler = new Reconciler(oms, halts, audit, time, live.Account);
         IReadOnlyList<string> tickers = [.. specs.Select(s => s.Ticker)];
@@ -223,7 +223,7 @@ internal static partial class AvanzaCommands
             DateTimeOffset now = time.GetUtcNow();
             double[] targets = TargetsAtLastBar(storePath, tickers, setup, definition, now);
             AccountSnapshot snapshot = await account.GetAsync(ct).ConfigureAwait(false);
-            return DailyPlanner.Plan(targets, specs, snapshot, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
+            return DailyPlanner.Plan(targets, specs, snapshot, gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
         }
 
         DateTimeOffset start = time.GetUtcNow();
@@ -327,8 +327,8 @@ internal static partial class AvanzaCommands
         AccountSnapshot snapshot = await account.GetAsync(ctx.Ct).ConfigureAwait(false);
         DateTimeOffset now = time.GetUtcNow();
         var risk = new PreTradeRiskEngine(setup.Limits);
-        PlanResult plan = DailyPlanner.Plan(
-            TargetsAtLastBar(storePath, [.. specs.Select(s => s.Ticker)], setup, definition, now), specs, snapshot, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
+        PlanResult plan = DailyPlanner.Plan( // plan only: no session, so nothing of ours is working
+            TargetsAtLastBar(storePath, [.. specs.Select(s => s.Ticker)], setup, definition, now), specs, snapshot, [], quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
 
         output.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"Rebalance plan for {tradingAccount.Id.Masked} ({definition.Spec.Describe()}): value {snapshot.AccountValue:N2} SEK, available {snapshot.AvailableCash:N2}."));

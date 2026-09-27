@@ -69,10 +69,10 @@ public sealed class KillSwitchTests : IDisposable
 
     private string StateDir => _dir.File("state");
 
-    private KillSwitch Kill(bool watch = false)
+    private KillSwitch Kill(bool watch = false, RiskLimits? limits = null)
     {
         _kill?.Dispose();
-        _kill = new KillSwitch(_gateway, _halts, _audit, _time, KillFile, StateDir, _account, 0.02m, watch);
+        _kill = new KillSwitch(_gateway, _halts, _audit, _time, KillFile, StateDir, _account, limits ?? RiskLimits.AdrDefaults, watch);
         _kill.Alerted += _alerts.Add;
         return _kill;
     }
@@ -214,6 +214,22 @@ public sealed class KillSwitchTests : IDisposable
         Assert.Equal(fires, kill.IsKilled);
     }
 
+    [Theory]
+    [InlineData(99_901, false)]
+    [InlineData(99_900, true)] // 100 SEK lost: 2 % of the 5,000 SEK cap, although the 100,000 SEK account lost 0.1 %
+    public async Task TheDailyLossStop_IsSizedOnTheAccountCap(int value, bool fires)
+    {
+        KillSwitch kill = Kill(limits: RiskLimits.AdrDefaults with { MaxAccountValueSek = 5_000m });
+        _account.Snapshot = _account.Snapshot with { AccountValue = value };
+        await kill.TickAsync(CancellationToken.None);
+        Assert.Equal(fires, kill.IsKilled);
+        if (fires)
+        {
+            Assert.Contains(_alerts, a => a.Contains("daily loss stop: 99,900 SEK vs 100,000", StringComparison.Ordinal)
+                                          && a.Contains("of the 5,000 SEK account cap, 100 SEK", StringComparison.Ordinal));
+        }
+    }
+
     [Fact]
     public async Task RefusedCancels_AreRetriedEveryTenSeconds_WithAnAlert()
     {
@@ -276,14 +292,14 @@ public sealed class KillSwitchTests : IDisposable
     {
         Kill().Trigger("test", "before the restart");
         var halts = new HaltController(_audit, _time);
-        using var restarted = new KillSwitch(_gateway, halts, _audit, _time, KillFile, StateDir, null, 0.02m, watch: false);
+        using var restarted = new KillSwitch(_gateway, halts, _audit, _time, KillFile, StateDir, null, RiskLimits.AdrDefaults, watch: false);
         Assert.True(restarted.IsKilled);
         Assert.Equal("before the restart", restarted.Record!.Reason);
         Assert.True(halts.IsActive(HaltReason.KillSwitch));
 
         File.WriteAllText(Path.Combine(StateDir, KillSwitch.StateFileName), "garbage");
         var halts2 = new HaltController(_audit, _time);
-        using var damaged = new KillSwitch(_gateway, halts2, _audit, _time, KillFile, StateDir, null, 0.02m, watch: false);
+        using var damaged = new KillSwitch(_gateway, halts2, _audit, _time, KillFile, StateDir, null, RiskLimits.AdrDefaults, watch: false);
         Assert.True(damaged.IsKilled); // unreadable still means killed
         Assert.True(halts2.IsActive(HaltReason.KillSwitch));
     }

@@ -10,6 +10,10 @@ public sealed class TradingConfigException(string message, Exception? inner = nu
 /// Pre-trade limits (ADR 0003 §4), from <c>config/risk-limits.json</c>. Every field is required (no implicit defaults,
 /// which ADR 0003 demands for Auto), and each is range-checked at load.
 /// </summary>
+/// <param name="MaxAccountValueSek">
+/// The account cap (ADR 0003 §4, Changes 2026-09-27): R6, R7, R8, R19 and the plan are sized on the account's value, but
+/// never on more than this, so money added to the account does not raise the limits.
+/// </param>
 public sealed record RiskLimits(
     decimal MaxOrderValueSek,
     decimal MaxOrderValuePctOfAccount,
@@ -24,14 +28,37 @@ public sealed record RiskLimits(
     TimeOnly WindowOpen,
     TimeOnly WindowClose,
     TimeOnly HalfDayWindowClose,
-    decimal DailyLossStopPct)
+    decimal DailyLossStopPct,
+    decimal MaxAccountValueSek)
 {
     public const string FileName = "risk-limits.json";
 
-    /// <summary>ADR 0003 §4 as written (used by tests; the committed file carries the same values).</summary>
+    /// <summary>
+    /// ADR 0003 §4 as first written, used by tests: sized on the whole account (no account cap). The committed file
+    /// carries the same values plus the account cap.
+    /// </summary>
     public static RiskLimits AdrDefaults { get; } = new(
         25_000m, 0.10m, 0.20m, 1.00m, 20, 5, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(60), 0.02m, TimeSpan.FromSeconds(10),
-        new TimeOnly(9, 5), new TimeOnly(17, 20), new TimeOnly(12, 50), 0.02m);
+        new TimeOnly(9, 5), new TimeOnly(17, 20), new TimeOnly(12, 50), 0.02m, decimal.MaxValue);
+
+    /// <summary>Gets a value indicating whether the account cap is set (false only for <see cref="AdrDefaults"/>-like limits).</summary>
+    public bool HasAccountCap => MaxAccountValueSek < decimal.MaxValue;
+
+    /// <summary>The value the limits are sized on (R6–R8, R19) and the plan invests: the account's value, at most the cap.</summary>
+    public decimal SizingValue(decimal accountValue) => Math.Min(accountValue, MaxAccountValueSek);
+
+    /// <summary>Whether the account cap lowers the sizing of an account of this value.</summary>
+    public bool Capped(decimal accountValue) => accountValue > MaxAccountValueSek;
+
+    /// <summary>R19: the most the account may lose in a day, in SEK (the loss-stop share of the capped start-of-day value).</summary>
+    public decimal DailyLossLimitSek(decimal startOfDayValue) => DailyLossStopPct * SizingValue(startOfDayValue);
+
+    /// <summary>
+    /// R19, shared by the risk engine and the kill switch: whether the day's loss has reached the limit. An unknown start
+    /// (0 or less) is never "hit"; the risk engine fails R19 on it separately.
+    /// </summary>
+    public bool DailyLossStopHit(decimal startOfDayValue, decimal accountValue) =>
+        startOfDayValue > 0 && startOfDayValue - accountValue >= DailyLossLimitSek(startOfDayValue);
 
     public static RiskLimits Load(string path)
     {
@@ -64,7 +91,8 @@ public sealed record RiskLimits(
                 Time(w, "open"),
                 Time(w, "close"),
                 Time(w, "half_day_close"),
-                r.GetProperty("daily_loss_stop_pct").GetDecimal());
+                r.GetProperty("daily_loss_stop_pct").GetDecimal(),
+                r.GetProperty("max_account_value_sek").GetDecimal());
             limits.Validate(path);
             return limits;
         }
@@ -93,6 +121,7 @@ public sealed record RiskLimits(
             : MaxQuoteAge <= TimeSpan.Zero ? "max_quote_age_seconds must be > 0"
             : WindowOpen >= WindowClose || WindowOpen >= HalfDayWindowClose ? "trading_window: open must be before close and half_day_close"
             : DailyLossStopPct is <= 0 or > 0.5m ? "daily_loss_stop_pct must be in (0, 0.5]"
+            : MaxAccountValueSek <= 0 ? "max_account_value_sek must be > 0"
             : null;
         if (problem is not null)
         {

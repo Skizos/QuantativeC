@@ -70,6 +70,9 @@ or Auto, or promote the mode: those are your commands.
    - **With 5,000 SEK the limits are small:** at most 500 SEK per order and 1,000 SEK (20 %) per name (`.\qa risk-limits`).
      - A share priced above 500 SEK can't be bought at all.
      - With one name, at most 20 % of the account is ever invested. With five names, up to all of it.
+     - **They never grow past that:** the limits are sized on the account's value, but never on more than the
+       **account cap**, 5,000 SEK (`max_account_value_sek` in `config/risk-limits.json`). Money added to the account
+       doesn't raise them. You may lower the cap; raising it needs a note in ADR 0003's Changes.
 4. **Choose a strategy.** First see how it did on your names' history. Without `--tickers`, the backtest uses your allowlist:
    ```powershell
    .\qa backtest run --strategy ma-cross --param fast=20 --param slow=100
@@ -154,7 +157,7 @@ On an exchange holiday the command simply says there is no session today.
 
 - **The limits** (ADR 0003 §4, `config/risk-limits.json`): every order must pass R1–R21. The rejection message names the check, e.g. "R6 order value 620 SEK > 500 SEK".
   - A rejected order is not an error. The next day's decision tries again, and a large target is reached over several days.
-- **Daily loss stop (R19):** if the account falls 2 % below its start-of-day value (100 SEK at 5,000 SEK), the kill switch fires and nothing more trades that day.
+- **Daily loss stop (R19):** if the account falls 2 % below its start-of-day value (100 SEK at 5,000 SEK), the kill switch fires and nothing more trades that day. Like the other limits it is sized on at most the 5,000 SEK account cap, so it is never more than 100 SEK a day.
 - **Fills:**
   - An order at or through the best price fills at once, up to the displayed volume.
   - A resting order fills only when a later trade prints *through* its limit, and then for at most 10 % of that trade's volume. This is deliberately pessimistic.
@@ -222,6 +225,10 @@ The number never appears in any output, log or file; everything shows `***` and 
 Avanza server. The last startup check refuses the Avanza order channel until your capture (O4, O5) finalises its
 format (plan 07 step 7). Until then, `.\qa trade run --mode confirm` prints its checks and stops before any login.
 `.\qa status` shows what is still open under "Confirm checks".
+
+**Before your first real day, go through `docs/handover-confirm.md`.** It is the checklist for O9: every prerequisite
+with its evidence, what to set the evening before (small orders, no open orders on the ISK, no scheduled Paper run),
+what you will see, what to send Claude, and when to step back. It is a draft until your capture is in (plan 07 step 7).
 
 **Your day:** almost the same as Paper, but you must be at the computer at the decision time.
 

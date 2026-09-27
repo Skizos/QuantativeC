@@ -192,6 +192,12 @@ public sealed class OrderGateway : IDisposable
 
     public OrderManager Oms => _oms;
 
+    /// <summary>
+    /// Gets the orders the OMS considers open, as the risk checks see them (R4, R7, R8, R13, R18). The plan takes the same
+    /// list, so it clips to the room the checks will find.
+    /// </summary>
+    public IReadOnlyList<OpenOrderView> OpenOrders => [.. _oms.Open.Select(o => o.View())];
+
     /// <summary>Runs one intent through the whole pipeline. Orders are processed one at a time.</summary>
     public async Task<SubmitResult> SubmitAsync(OrderIntent intent, CancellationToken ct)
     {
@@ -668,7 +674,7 @@ public sealed class OrderGateway : IDisposable
                 AvailableCash = account.AvailableCash,
                 Positions = account.Positions,
                 PositionValues = account.PositionValues,
-                OpenOrders = [.. _oms.Open.Select(o => o.View())],
+                OpenOrders = OpenOrders,
                 Quote = _env.Quotes.Latest(order.OrderbookId),
                 OrdersPlacedToday = _placementsToday,
                 RecentActionsUtc = [.. _actions],

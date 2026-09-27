@@ -50,7 +50,7 @@ public sealed class EodReportTests : IDisposable
             Fees = (p, s) => channel.EstimateFees(p.Value, s.Currency),
             CourtageVerified = false,
         }, new PreTradeRiskEngine(RiskLimits.AdrDefaults), oms, halts, audit, _time);
-        using var kill = new KillSwitch(gateway, halts, audit, _time, _dir.File("KILL"), _dir.File("state"), book, 0.02m, watch: false);
+        using var kill = new KillSwitch(gateway, halts, audit, _time, _dir.File("KILL"), _dir.File("state"), book, RiskLimits.AdrDefaults, watch: false);
         var reports = new List<EodReport>();
         var session = new PaperSession(gateway, channel, book, kill, new Reconciler(oms, halts, audit, _time, book.Account), halts,
             new TradingSchedule(calendar, RiskLimits.AdrDefaults, new TimeOnly(9, 10)), audit, _time, Decide, new StringWriter(), day =>

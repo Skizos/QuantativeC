@@ -163,12 +163,15 @@ internal static partial class TradingCommands
             string dir = ResolveConfigDir(parse.GetValue(configDir));
             RiskLimits l = RiskLimits.Load(Path.Combine(dir, RiskLimits.FileName));
             decimal value = parse.GetValue(account) ?? PaperConfig.Load(Path.Combine(dir, PaperConfig.FileName)).Cash;
-            decimal perOrder = Math.Min(l.MaxOrderValueSek, l.MaxOrderValuePctOfAccount * value);
+            decimal sized = l.SizingValue(value);
+            decimal perOrder = Math.Min(l.MaxOrderValueSek, l.MaxOrderValuePctOfAccount * sized);
             CultureInfo c = CultureInfo.InvariantCulture;
             var table = new TextTable(("check", false), ("limit", false), ("for this account", false));
+            table.Add("account cap", l.HasAccountCap ? string.Create(c, $"sized on at most {l.MaxAccountValueSek:N0} SEK") : "none (sized on the whole account)",
+                l.Capped(value) ? string.Create(c, $"sized on {sized:N0} SEK, not {value:N0}") : string.Create(c, $"sized on {sized:N0} SEK"));
             table.Add("R6 order value", string.Create(c, $"min({l.MaxOrderValueSek:N0} SEK, {l.MaxOrderValuePctOfAccount:P0} of account)"), string.Create(c, $"{perOrder:N0} SEK per order"));
-            table.Add("R7 position", string.Create(c, $"{l.MaxPositionPctOfAccount:P0} of account"), string.Create(c, $"{l.MaxPositionPctOfAccount * value:N0} SEK per instrument"));
-            table.Add("R8 gross exposure", string.Create(c, $"{l.MaxGrossExposurePct:P0} of account"), string.Create(c, $"{l.MaxGrossExposurePct * value:N0} SEK"));
+            table.Add("R7 position", string.Create(c, $"{l.MaxPositionPctOfAccount:P0} of account"), string.Create(c, $"{l.MaxPositionPctOfAccount * sized:N0} SEK per instrument"));
+            table.Add("R8 gross exposure", string.Create(c, $"{l.MaxGrossExposurePct:P0} of account"), string.Create(c, $"{l.MaxGrossExposurePct * sized:N0} SEK"));
             table.Add("R10 orders per day", l.MaxOrdersPerDay.ToString(c), string.Empty);
             table.Add("R11 actions per minute", l.MaxActionsPerMinute.ToString(c), string.Empty);
             table.Add("R12 same instrument", string.Create(c, $"{l.MinIntervalSameInstrument.TotalSeconds:0} s apart"), string.Empty);
@@ -176,9 +179,10 @@ internal static partial class TradingCommands
             table.Add("R5 price collar", string.Create(c, $"±{l.PriceCollarPct:P1} of the live reference"), string.Empty);
             table.Add("R15 quote age", string.Create(c, $"≤ {l.MaxQuoteAge.TotalSeconds:0} s"), string.Empty);
             table.Add("R16 window", string.Create(c, $"{l.WindowOpen:HH\\:mm}–{l.WindowClose:HH\\:mm} (half days to {l.HalfDayWindowClose:HH\\:mm})"), "Stockholm time");
-            table.Add("R19 daily loss stop", string.Create(c, $"-{l.DailyLossStopPct:P1} (kill switch)"), string.Create(c, $"{l.DailyLossStopPct * value:N0} SEK"));
+            table.Add("R19 daily loss stop", string.Create(c, $"-{l.DailyLossStopPct:P1} (kill switch)"), string.Create(c, $"{l.DailyLossLimitSek(value):N0} SEK"));
             table.Write(w);
-            w.WriteLine(string.Create(c, $"Sized for an account of {value:N0} SEK. Always on: R1 account allowlist, R2 instrument allowlist, R3 limit orders only, R4 no short selling, R9 cash, R13 no opposite working order, R17 halts, R18 unknown orders, R20/R21 verified constants and preflight (live only)."));
+            string capped = l.Capped(value) ? string.Create(c, $", sized on the {l.MaxAccountValueSek:N0} SEK account cap (max_account_value_sek)") : string.Empty;
+            w.WriteLine(string.Create(c, $"Sized for an account of {value:N0} SEK{capped}. Always on: R1 account allowlist, R2 instrument allowlist, R3 limit orders only, R4 no short selling, R9 cash, R13 no opposite working order, R17 halts, R18 unknown orders, R20/R21 verified constants and preflight (live only)."));
             return 0;
         }));
         return command;

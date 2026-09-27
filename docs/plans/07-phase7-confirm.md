@@ -2,7 +2,8 @@
 
 - **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–6 done** (2026-09-26 and
   2026-09-27, see Step notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
-  automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5).
+  automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5). Step 8's handover checklist for O9
+  is drafted in `docs/handover-confirm.md` and is finalised after step 7.
 - **Scope:** master plan §4 Phase 7; ADR 0003 §2 (BrokerPreflight), §3 (startup HMAC check), §5 (Confirm UX), §6
   (live reconciliation); ADR 0002 (fail-safe gateway); CLAUDE.md "Absolute safety rules".
 - **Gate:**
@@ -46,7 +47,7 @@ Owner's part (**O**) and Claude's part (**C**). Confirm is usable when every lin
 | O4 | you | **Capture one real web-app buy and one sell** (1 share is enough) with the browser's DevTools open: copy each order call's request payload and response body into text files (never cookies or headers). This finalises the order format, including the unresolved `profit` field on sells (Qluxzz #156). | – | files handed to C7 |
 | O5 | you | **Record one real deal**: after the O4 buy has filled, run `qa probe` once and sanitize the recording (`qa recordings sanitize …`); commit the fixture | O4 | a `deals` fixture with one fill |
 | O6 | you | **Name the one account that may trade** (R1): set the user environment variable `AVANZA__ALLOWEDACCOUNTIDS` to your ISK's account id (`docs/guide.md` §7) | – | `qa accounts` ends with "Live trading account (R1 …): ***123 … OK" |
-| O7 | you | **Review the live limits** in `config/risk-limits.json` for 5,000 SEK: 500 SEK per order, 1,000 SEK per name, and a 100 SEK loss stop. Keep or lower them; raising them needs a note in ADR 0003's log | – | – |
+| O7 | you | **Review the live limits** in `config/risk-limits.json` for 5,000 SEK: 500 SEK per order, 1,000 SEK per name, and a 100 SEK loss stop. The account cap (5,000 SEK) keeps them there however much the ISK holds. Keep or lower them; raising them needs a note in ADR 0003's Changes | – | `.\qa risk-limits` |
 | O8 | you | **Promote:** `qa promote --init-key` (once), then `qa promote --to Confirm` | O1 | `qa promote --verify` OK |
 | C1 | Claude | Pre-trade calls: `validate` and `preliminaryfee` | – | step 1 green |
 | C2 | Claude | Live account state for the limits, and R1 from `AVANZA__ALLOWEDACCOUNTIDS` | – | step 2 green |
@@ -56,7 +57,7 @@ Owner's part (**O**) and Claude's part (**C**). Confirm is usable when every lin
 | C6 | Claude | The live end-of-day execution-quality report and the Auto gate's numbers | C5 | step 6 green |
 | C7 | Claude | Final order DTOs and deals mapper from O4/O5; removes the "provisional" flag | O4, O5 | step 7 green |
 | C8 | Claude | Docs, a gate run, and the handover checklist | C1–C7 | step 8 |
-| O9 | you | **First real orders:** `qa trade run --mode confirm`, minimal size, watching the cards | everything above | your first live end-of-day report |
+| O9 | you | **First real orders:** `qa trade run --mode confirm`, minimal size, watching the cards; the checklist is `docs/handover-confirm.md` | everything above | your first live end-of-day report |
 
 ## Research re-check (before step 1, per CLAUDE.md)
 
@@ -366,6 +367,48 @@ Nothing is taken from memory.
   - 1 through the real gateway and the OMS: a confirmed order and its reconciled fill in the report
   - 2 CLI: `qa report eod` and `qa report gate`, and the `qa status` count
   - The Confirm spy now also checks the live line of the session's own report.
+
+**Step 8, drafted early: the handover checklist (2026-09-27).** It is in `docs/handover-confirm.md`: the prerequisites with
+their evidence, the evening before, the morning, each card, the day, after the close, what to send Claude, and when to
+step back. Lines that step 7 can change are marked. Reading the code for it turned up four things for the owner. None of
+them is a defect; the checklist covers each:
+- **The limits scale with the whole ISK.** R6, R7 and R19 are shares of the allowed account's whole value (every holding
+  plus cash), not of 5,000 SEK. The strategy also counts every share of an allowlisted name in that ISK as its own, so it
+  may propose selling one you hold for another reason. Recommended: a dedicated ISK funded with the amount to trade.
+  Otherwise, lower `max_order_value_sek` (the plan clips to it, so a lower cap makes smaller cards, not rejections).
+  **Closed by the account cap below:** the limits no longer grow with the ISK. The dedicated ISK stays recommended,
+  because other holdings still count towards R8 and the loss stop.
+- **Orders placed by hand on that ISK halt the session.** Reconciliation treats an open order it did not place as a
+  mismatch, and the kill switch fires after 60 s. This includes a crashed session's leftover order on a same-day restart.
+- **A scheduled Paper task conflicts.** It would hold the session lock, and Confirm refuses to start ("one session").
+- **Don't lower `max_orders_per_day` for a small first day.** The plan does not know R10, so the extra orders would be
+  rejections, and three in a row fire the kill switch. To keep the day small, skip cards and lower the order cap instead.
+
+## Addition: the account cap (2026-09-27, at the owner's request)
+
+The owner asked for the first finding above to be closed in code: money added to the ISK must not raise the limits.
+
+| Question | Decision | Why |
+|---|---|---|
+| **The setting** | `max_account_value_sek` in `config/risk-limits.json`. It is required like every other field and must be > 0. The committed value is **5,000 SEK**, the size O7's limits were reviewed for. | "Every field is required" (ADR 0003 §4) |
+| **What it caps** | The value that R6, R7, R8 and R19 are sized on, and the value the plan invests, is min(the account's value, the cap). Below the cap nothing changes. | One number that the limits and the plan share, so they can't disagree |
+| **R19** | The day's loss limit in SEK is 2 % of min(the start-of-day value, the cap): at most 100 SEK however large the ISK. The risk engine and the kill switch use the same rule (`RiskLimits.DailyLossStopHit`). | The loss stop is the limit that must not grow with a deposit |
+| **R8** | Every holding in the account counts against 100 % of the capped value. On an ISK whose other holdings exceed the cap, no buy passes. | Fail-safe. The handover checklist says to use a dedicated ISK. |
+| **The plan** | Buys are also clipped to R8's room, after counting the buys already planned in the same decision. A small cap then gives smaller cards or none, instead of rejections that add up to the three-in-a-row kill. **R7 and R8 room also counts the buys still working** (added the same day, at the owner's request). The plan gets the gateway's own open-order list (`OrderGateway.OpenOrders`, which the checks read too), so an unfilled buy from an earlier card uses room in both. | The plan already clips to R6 and R7 for the same reason |
+| **Paper** | Paper uses the same file, so it is sized on at most 5,000 SEK too. It starts at 5,000 SEK, so nothing changes until it gains. | One set of limits for Paper and Confirm |
+| **`RiskLimits.AdrDefaults`** | No cap (`decimal.MaxValue`): ADR 0003 §4 as first written. The tests size on 100,000 SEK accounts. | The committed file carries the cap. A test fails if it is ever committed above 5,000. |
+| **Shown** | `qa risk-limits` gets a row and sizes on the capped value. So does the `qa status` "Risk limits" line. An order card's R6, R7, R8 and R19 limits say when the cap applies. | You see what the cap does |
+| **Changing it** | Lowering it is yours at any time. Raising it needs a line in ADR 0003's Changes, like any other limit. | ADR 0003 |
+
+**Tests:**
+- loader: the field is required and must be > 0, and the committed value is at most 5,000
+- engine: R6, R7, R8 and R19, each passing below the cap and failing above it
+- the plan: clipped by the cap and by R8's room, including buys planned earlier in the same decision
+- the plan with working buys: R7 and R8 room reduced by them, and a property test. For 45 mixes of holdings and working
+  buys, every order the plan proposes passes R7 and R8 on the same numbers, with the earlier orders of the plan
+  working. Both tests fail when the planner ignores working buys.
+- kill switch: the loss stop sized on the cap
+- CLI: `qa risk-limits` sized on the cap
 
 ## Test map (planned)
 

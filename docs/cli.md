@@ -222,7 +222,7 @@ only. Confirm and Auto cannot start in Phase 6.
 | Verb | What it does |
 |---|---|
 | `qa universe list` / `qa universe add ERIC-B [VOLV-B …]` / `qa universe remove ERIC-B` | The instrument allowlist (risk check R2), `config/universe.json`, by orderbook id. It starts **empty**, so every order is rejected until you add names. `add` looks the ticker up offline in the instrument master (`qa history import` first). SEK instruments only. |
-| `qa risk-limits [--account-value 100000]` | Every limit with its R number, sized for the paper cash (5,000 SEK allows **500 SEK per order** and **1,000 SEK per instrument**) or the value you give. |
+| `qa risk-limits [--account-value 100000]` | Every limit with its R number, sized for the paper cash (5,000 SEK allows **500 SEK per order** and **1,000 SEK per instrument**) or the value you give. The first row is the **account cap** (`max_account_value_sek`, 5,000 SEK): the limits are sized on the account's value, but never on more than this, so `--account-value 100000` still gives 500 SEK per order. |
 | `qa paper strategy ma-cross --param fast=20 --param slow=100` | Saves the strategy Paper trades in `config/paper.json`, after checking its name and parameters. Without a name it shows the saved one; `--clear` removes it. It notes when the trial ledger has no backtest of exactly that strategy on imported history. |
 | `qa paper run [--strategy … --param …] [--duration 3600]` | One Paper session, with the saved strategy unless you give `--strategy`. Before any login it checks the promotion state, the limits, `config/paper.json`, the strategy, the allowlist (1–5 names, each is streamed) and the courtage class. Then: one read-only login, tick tables from Avanza, and **each name's daily history brought up to the last trading day** (read-only chart calls, a year back when there is none; if that fails it warns, and the decision refuses history that doesn't reach yesterday). It streams live quotes, and at the decision time (09:10 by default) the strategy decides on bars through **yesterday** and places day limit orders, paced 13 s apart. Started after 09:10, it decides at once. Orders fill on the live quotes by the ADR 0003 §8 model and expire at the close. The session runs until two minutes after the close, or `--duration` seconds; Ctrl+C stops early and cancels everything. |
 | `qa paper status` | The paper book (`state/paper/book.json`): cash, positions at cost, realised P&L, fees; and whether a session is running. |
@@ -250,6 +250,7 @@ only. Confirm and Auto cannot start in Phase 6.
 - **Resting:** fills only when a later trade prints **through** the limit, at the limit, taking at most 10 % of the traded volume (shared by your resting orders, oldest first). A touch is not a fill.
 - **Courtage** comes from the courtage class, charged per order (the minimum once), plus the class's FX fee for non-SEK instruments (none on Start while you are under its limit).
 - **With 5,000 SEK:** R6 allows 500 SEK per order and R7 1,000 SEK per instrument, so a share priced above 500 SEK cannot be bought at all, and a larger target is built over several days. The limits are ADR 0003's, in `config/risk-limits.json`.
+- **The account cap** (`max_account_value_sek`, 5,000 SEK) sizes R6, R7, R8 and R19 and the plan on the account's value, but never on more than the cap. A larger account doesn't raise any limit, and the loss stop never exceeds 100 SEK a day. The plan also clips buys to R7's and R8's room, counting the buys still working, so a full account gets no order rather than a rejection.
 
 **Safety:**
 - **Unknown outcomes:** a submit with an unknown outcome is never retried, and it blocks its instrument (R18) until reconciliation resolves it.
@@ -297,7 +298,8 @@ Promoting to Confirm does **not** start Confirm mode. Every Confirm session runs
 ## Confirm mode (Phase 7): real orders, each typed by you
 
 **You** start these, in your own terminal. Claude Code can't: the hook blocks them, and the program refuses to start
-Confirm when Claude Code started it.
+Confirm when Claude Code started it. Before the first real session, go through the checklist in
+`docs/handover-confirm.md`.
 
 | Command | What it does |
 |---|---|
