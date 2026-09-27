@@ -1,6 +1,6 @@
 # ADR 0003 — Execution modes, promotion gates and pre-trade risk limits
 
-- **Status:** Accepted by the owner (2026-09-26); proposed 2026-09-25. Phase 6 implements it for Backtest and Paper. Where the implementation made a choice the text leaves open, `docs/plans/06-phase6-trading-core.md` records it; for example, Paper fills pay the configured courtage class (Start) rather than Small.
+- **Status:** Accepted by the owner (2026-09-26); proposed 2026-09-25; amended 2026-09-27 (the account cap, see Changes). Phase 6 implements it for Backtest and Paper. Where the implementation made a choice the text leaves open, `docs/plans/06-phase6-trading-core.md` records it; for example, Paper fills pay the configured courtage class (Start) rather than Small.
 - **Related:** `docs/prompts/master-prompt.md` `<risk_limits>` and Part D; ADR 0002; `docs/research/market-rules.md`
 
 ## Context
@@ -96,6 +96,14 @@ All limits are in `config/risk-limits.json`, validated at startup. **Auto refuse
 | R20 | Verified constants | courtage, calendar and tick-table sources have `verified_on` | Confirm/Auto only |
 | R21 | Broker preflight | Avanza `validate` all `valid:true` | Confirm/Auto only; Paper logs it without blocking |
 
+**The account cap (`max_account_value_sek`, added 2026-09-27, see Changes).** R6, R7, R8 and R19, and the plan's
+investable equity, are sized on min(the account value, the cap). The committed file sets it to 5,000 SEK. Money added to
+the account therefore never raises a limit:
+- R6 is at most 10 % of the cap.
+- R7 is at most 20 % of the cap.
+- R8 is at most 100 % of the cap, counting every holding in the account.
+- R19's loss limit is at most 2 % of the cap in SEK.
+
 Each check has one **pass** and one **fail** unit test (Phase 6). Reduced-limit profiles (`config/risk-limits.auto-first-2-weeks.json`) are required for the first two weeks of Auto (Part D, Phase 8).
 
 ### 5. Confirm mode UX (CLI)
@@ -161,3 +169,12 @@ Each check has one **pass** and one **fail** unit test (Phase 6). Reduced-limit 
 - **Promotion takes calendar time:** at least 10 paper days plus 20 confirmed orders before Auto. That is intended.
 - **Some legitimate orders will be rejected** (stale quote during quiet periods, the 5 s same-instrument spacing). Rejections are logged and visible in EOD reports so limits can be tuned deliberately.
 - **Every limit is testable in isolation** with a pass and a fail test, and the Confirm card doubles as a human-readable test of the risk engine.
+
+## Changes
+
+Every change to a limit is logged here. Lowering a limit in `config/risk-limits.json` needs no entry. Raising one above
+the value in this ADR or its latest entry needs an entry first, written by the owner.
+
+| Date | Change | Why | Where |
+|---|---|---|---|
+| 2026-09-27 | **Added the account cap** `max_account_value_sek`, committed at **5,000 SEK**. R6–R8, R19 and the plan are sized on min(account value, cap). R19's loss limit becomes 2 % of min(start-of-day value, cap) in SEK. The plan also clips buys to R8's room. | The owner asked for it after the handover checklist found that the limits grew with the whole ISK: a deposit would have raised the order, position and loss limits without anyone deciding it. | `docs/plans/07-phase7-confirm.md` "Addition: the account cap" |

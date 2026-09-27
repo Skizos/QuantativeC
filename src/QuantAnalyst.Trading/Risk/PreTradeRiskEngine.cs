@@ -92,9 +92,9 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
 
     private RiskCheckResult R6(PreparedOrder o, RiskContext c)
     {
-        decimal cap = Math.Min(Limits.MaxOrderValueSek, Limits.MaxOrderValuePctOfAccount * c.AccountValue);
+        decimal cap = Math.Min(Limits.MaxOrderValueSek, Limits.MaxOrderValuePctOfAccount * Limits.SizingValue(c.AccountValue));
         return Check("R6", "max order value", o.Value <= cap, Sek(o.Value),
-            $"{Sek(cap)} = min({Sek(Limits.MaxOrderValueSek)}, {Pct(Limits.MaxOrderValuePctOfAccount)} of {Sek(c.AccountValue)})",
+            $"{Sek(cap)} = min({Sek(Limits.MaxOrderValueSek)}, {Pct(Limits.MaxOrderValuePctOfAccount)} of {Sek(Limits.SizingValue(c.AccountValue))}){CapNote(c.AccountValue)}",
             "the order is too large");
     }
 
@@ -106,8 +106,8 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
         }
 
         decimal after = c.PositionValues.GetValueOrDefault(o.OrderbookId) + WorkingBuys(c, o.OrderbookId) + o.Value;
-        decimal cap = Limits.MaxPositionPctOfAccount * c.AccountValue;
-        return Check("R7", "max position per instrument", after <= cap, $"{Sek(after)} after the order (incl. working buys)", Sek(cap),
+        decimal cap = Limits.MaxPositionPctOfAccount * Limits.SizingValue(c.AccountValue);
+        return Check("R7", "max position per instrument", after <= cap, $"{Sek(after)} after the order (incl. working buys)", Sek(cap) + CapNote(c.AccountValue),
             "the position would be too large a share of the account");
     }
 
@@ -115,8 +115,9 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
     {
         decimal after = c.PositionValues.Values.Sum() + c.OpenOrders.Where(w => w.Side == OrderSide.Buy).Sum(w => w.RemainingVolume * w.LimitPrice)
             + (o.Side == OrderSide.Buy ? o.Value : 0m);
-        decimal cap = Limits.MaxGrossExposurePct * c.AccountValue;
-        return Check("R8", "max gross exposure", after <= cap, $"{Sek(after)} after the order", Sek(cap), "gross exposure would exceed the limit (no leverage)");
+        decimal cap = Limits.MaxGrossExposurePct * Limits.SizingValue(c.AccountValue);
+        return Check("R8", "max gross exposure", after <= cap, $"{Sek(after)} after the order", Sek(cap) + CapNote(c.AccountValue),
+            "gross exposure would exceed the limit (no leverage)");
     }
 
     private static RiskCheckResult R9(PreparedOrder o, RiskContext c)
@@ -217,9 +218,18 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
         }
 
         decimal change = (c.AccountValue - c.StartOfDayValue) / c.StartOfDayValue;
-        return Check("R19", "daily loss stop", change > -Limits.DailyLossStopPct, $"{Pct(change)} today", $"> -{Pct(Limits.DailyLossStopPct)}",
-            "the daily loss stop is hit (the kill switch fires)");
+        bool hit = Limits.DailyLossStopHit(c.StartOfDayValue, c.AccountValue);
+        return Limits.Capped(c.StartOfDayValue)
+            ? Check("R19", "daily loss stop", !hit, $"{Pct(change)} today ({Sek(c.AccountValue - c.StartOfDayValue)})",
+                $"a loss below {Sek(Limits.DailyLossLimitSek(c.StartOfDayValue))} = {Pct(Limits.DailyLossStopPct)} of {Sek(Limits.MaxAccountValueSek)}, the account cap",
+                "the daily loss stop is hit (the kill switch fires)")
+            : Check("R19", "daily loss stop", !hit, $"{Pct(change)} today", $"> -{Pct(Limits.DailyLossStopPct)}",
+                "the daily loss stop is hit (the kill switch fires)");
     }
+
+    /// <summary>Said on a limit that the account cap lowered, so the card shows why it is smaller than the account suggests.</summary>
+    private string CapNote(decimal accountValue) =>
+        Limits.Capped(accountValue) ? $" (sized on the {Sek(Limits.MaxAccountValueSek)} account cap, not the account's {Sek(accountValue)})" : string.Empty;
 
     private static RiskCheckResult R20(RiskContext c)
     {

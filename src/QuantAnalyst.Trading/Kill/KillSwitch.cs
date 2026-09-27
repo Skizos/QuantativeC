@@ -4,6 +4,7 @@ using QuantAnalyst.Trading.Audit;
 using QuantAnalyst.Trading.Halts;
 using QuantAnalyst.Trading.Model;
 using QuantAnalyst.Trading.Oms;
+using QuantAnalyst.Trading.Risk;
 
 namespace QuantAnalyst.Trading.Kill;
 
@@ -38,7 +39,7 @@ public sealed class KillSwitch : IDisposable
     private readonly AuditLog _audit;
     private readonly TimeProvider _time;
     private readonly IAccountState? _account;
-    private readonly decimal _dailyLossStop;
+    private readonly RiskLimits _limits;
     private readonly string _killFile;
     private readonly string _stateFile;
     private readonly FileSystemWatcher? _watcher;
@@ -50,8 +51,8 @@ public sealed class KillSwitch : IDisposable
     /// <param name="killFile">The <c>./KILL</c> flag file (absolute path).</param>
     /// <param name="stateDirectory">Where <c>killed.json</c> lives (<c>state/</c>).</param>
     /// <param name="account">For the daily loss stop; null disables that trigger (R19 still rejects new orders).</param>
-    /// <param name="dailyLossStopPct">The R19 limit, e.g. 0.02.</param>
-    public KillSwitch(OrderGateway gateway, HaltController halts, AuditLog audit, TimeProvider time, string killFile, string stateDirectory, IAccountState? account, decimal dailyLossStopPct, bool watch = true)
+    /// <param name="limits">For the daily loss stop (R19: its share, sized like the other limits on the account cap).</param>
+    public KillSwitch(OrderGateway gateway, HaltController halts, AuditLog audit, TimeProvider time, string killFile, string stateDirectory, IAccountState? account, RiskLimits limits, bool watch = true)
     {
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
         _halts = halts ?? throw new ArgumentNullException(nameof(halts));
@@ -60,7 +61,7 @@ public sealed class KillSwitch : IDisposable
         _killFile = Path.GetFullPath(killFile);
         _stateFile = Path.Combine(Path.GetFullPath(stateDirectory), StateFileName);
         _account = account;
-        _dailyLossStop = dailyLossStopPct;
+        _limits = limits ?? throw new ArgumentNullException(nameof(limits));
 
         // Killed before a restart stays killed.
         if (File.Exists(_stateFile))
@@ -333,9 +334,11 @@ public sealed class KillSwitch : IDisposable
                 return;
             }
 
-            if (a.StartOfDayValue > 0 && (a.AccountValue - a.StartOfDayValue) / a.StartOfDayValue <= -_dailyLossStop)
+            if (_limits.DailyLossStopHit(a.StartOfDayValue, a.AccountValue))
             {
-                Trigger("automatic", string.Create(CultureInfo.InvariantCulture, $"daily loss stop: {a.AccountValue:N0} SEK vs {a.StartOfDayValue:N0} at the start of the day (limit -{_dailyLossStop:P1})"));
+                string cap = _limits.Capped(a.StartOfDayValue) ? string.Create(CultureInfo.InvariantCulture, $" of the {_limits.MaxAccountValueSek:N0} SEK account cap") : string.Empty;
+                Trigger("automatic", string.Create(CultureInfo.InvariantCulture,
+                    $"daily loss stop: {a.AccountValue:N0} SEK vs {a.StartOfDayValue:N0} at the start of the day (limit -{_limits.DailyLossStopPct:P1}{cap}, {_limits.DailyLossLimitSek(a.StartOfDayValue):N0} SEK)"));
             }
         }
     }

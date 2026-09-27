@@ -27,14 +27,22 @@
 
 ## B. The evening before
 
-- [ ] **Know what the limits mean on your ISK.** They are shares of the ISK's *whole* value (every holding at its price,
-      plus cash), not of 5,000 SEK. The per-order cap is min(25,000 SEK, 10 %), the per-name cap is 20 %, and the loss
-      stop is 2 % of the start-of-day value. If the ISK holds 100,000 SEK, one order may be up to 10,000 SEK.
-      - **Recommended: a dedicated ISK** holding only what this program trades, funded in Avanza's app with the amount
-        you mean it to trade. The limits then match the plan: 500 SEK per order, 1,000 SEK per name, and a 100 SEK loss
-        stop at 5,000 SEK. (The program never moves money; you do that in Avanza's app.)
-      - **The strategy treats every share of an allowlisted name in that ISK as its own.** If you hold one of your
-        names there for another reason, it may propose selling it. Such a card is a SELL card, which you can skip.
+- [ ] **Know what the limits are sized on.** They are shares of the ISK's value (every holding at its price, plus
+      cash), but never of more than the **account cap**, `max_account_value_sek` = 5,000 SEK (ADR 0003, Changes
+      2026-09-27). So however much the ISK holds, the limits are at most:
+      - 500 SEK per order
+      - 1,000 SEK per name
+      - 5,000 SEK of shares in total (R8)
+      - a 100 SEK loss stop
+
+      `.\qa risk-limits --account-value <your ISK's value>` shows it.
+      - **Still recommended: a dedicated ISK** holding only what this program trades, funded in Avanza's app. (The
+        program never moves money; you do that.) On an ISK with other holdings:
+        - Those holdings count towards R8's 5,000 SEK. Once they are worth more, no buy is proposed at all ("R8 gross
+          exposure leaves no room").
+        - Their daily moves count towards the 100 SEK loss stop, so an ordinary market day can fire the kill switch.
+        - The strategy treats every share of an allowlisted name there as its own. If you hold one of your names there
+          for another reason, it may propose selling it. Such a card is a SELL card, which you can skip.
 - [ ] **For the first day, set the orders small** (recommended). In `config/risk-limits.json`, lower
       `max_order_value_sek` to about 1.5 × the highest share price among your names, so each card is one or two shares.
       The plan clips every order to this cap, so a lower cap makes smaller cards, not rejections. A name priced above the

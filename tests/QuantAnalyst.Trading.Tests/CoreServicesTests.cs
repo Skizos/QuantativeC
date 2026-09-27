@@ -164,6 +164,28 @@ public sealed class TradingConfigTests
     }
 
     [Fact]
+    public void TheAccountCap_IsRequired_Positive_AndNotRaisedInTheCommittedFile()
+    {
+        // ADR 0003 §4, Changes 2026-09-27: the owner may lower it; raising it above 5,000 SEK needs a note in the ADR.
+        RiskLimits committed = RiskLimits.Load(Path.Combine(RepoConfig(), RiskLimits.FileName));
+        Assert.InRange(committed.MaxAccountValueSek, 1m, 5_000m);
+        Assert.True(committed.HasAccountCap);
+        Assert.False(RiskLimits.AdrDefaults.HasAccountCap);
+        Assert.Equal(123m, RiskLimits.AdrDefaults.SizingValue(123m));
+        Assert.Equal(committed.MaxAccountValueSek, committed.SizingValue(1_000_000m));
+
+        using var dir = new TempDir();
+        string path = dir.File("risk-limits.json");
+        string good = File.ReadAllText(Path.Combine(RepoConfig(), RiskLimits.FileName));
+        string field = $"\"max_account_value_sek\": {committed.MaxAccountValueSek.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        Assert.Contains(field, good, StringComparison.Ordinal);
+        File.WriteAllText(path, good.Replace(field, "\"max_account_value\": 5000", StringComparison.Ordinal));
+        Assert.Throws<TradingConfigException>(() => RiskLimits.Load(path)); // required
+        File.WriteAllText(path, good.Replace(field, "\"max_account_value_sek\": 0", StringComparison.Ordinal));
+        Assert.Contains("max_account_value_sek must be > 0", Assert.Throws<TradingConfigException>(() => RiskLimits.Load(path)).Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Universe_RoundTrips_RejectsDuplicates_AndMissingMeansEmpty()
     {
         using var dir = new TempDir();

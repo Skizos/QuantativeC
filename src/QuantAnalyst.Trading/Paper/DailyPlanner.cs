@@ -16,9 +16,12 @@ public sealed record PlanResult(IReadOnlyList<OrderIntent> Intents, IReadOnlyLis
 /// if fresh, else the mid). Two deliberate differences, stated in the Paper report:
 /// <list type="bullet">
 /// <item>the limit is anchored on the live reference, not yesterday's close (R5's ±2 % collar would reject most gaps);</item>
-/// <item>orders are clipped to what R6 (value per order) and R7 (position size) allow, so the plan does not produce
-/// orders the risk engine would reject; the target is then reached over several days.</item>
+/// <item>orders are clipped to what R6 (value per order), R7 (position size) and R8 (gross exposure, counting the buys
+/// already planned in this decision) allow, so the plan does not produce orders the risk engine would reject; the target
+/// is then reached over several days.</item>
 /// </list>
+/// The equity it invests is the account's value, but at most the limits' account cap (<see cref="RiskLimits.SizingValue"/>),
+/// the same value the limits are sized on.
 /// </summary>
 public static class DailyPlanner
 {
@@ -45,11 +48,17 @@ public static class DailyPlanner
 
         RiskLimits limits = risk.Limits;
         CultureInfo c = CultureInfo.InvariantCulture;
-        decimal investable = Math.Max(0m, account.AccountValue) * (1m - (decimal)execution.CashBuffer);
-        decimal perOrder = Math.Min(limits.MaxOrderValueSek, limits.MaxOrderValuePctOfAccount * account.AccountValue);
+        decimal sizing = limits.SizingValue(Math.Max(0m, account.AccountValue));
+        decimal investable = sizing * (1m - (decimal)execution.CashBuffer);
+        decimal perOrder = Math.Min(limits.MaxOrderValueSek, limits.MaxOrderValuePctOfAccount * sizing);
+        decimal grossRoom = limits.MaxGrossExposurePct * sizing - account.PositionValues.Values.Sum();
         decimal offset = (decimal)execution.LimitOffsetBps / 10_000m;
         var intents = new List<OrderIntent>();
         var notes = new List<string>();
+        if (limits.Capped(account.AccountValue))
+        {
+            notes.Add(string.Create(c, $"sized on the {limits.MaxAccountValueSek:N0} SEK account cap, not the account's {account.AccountValue:N0} SEK"));
+        }
 
         for (int i = 0; i < targets.Count; i++)
         {
@@ -90,23 +99,21 @@ public static class DailyPlanner
             OrderSide side = delta > 0 ? OrderSide.Buy : OrderSide.Sell;
             decimal limit = reference * (side == OrderSide.Buy ? 1 + offset : 1 - offset);
             decimal cap = perOrder;
-            string? clippedBy = null;
+            string clippedBy = "R6 order value";
             if (side == OrderSide.Buy)
             {
-                decimal headroom = limits.MaxPositionPctOfAccount * account.AccountValue - account.PositionValues.GetValueOrDefault(spec.OrderbookId);
+                decimal headroom = limits.MaxPositionPctOfAccount * sizing - account.PositionValues.GetValueOrDefault(spec.OrderbookId);
                 if (headroom < cap)
                 {
                     cap = headroom;
                     clippedBy = "R7 position";
                 }
-                else
+
+                if (grossRoom < cap)
                 {
-                    clippedBy = "R6 order value";
+                    cap = grossRoom;
+                    clippedBy = "R8 gross exposure";
                 }
-            }
-            else
-            {
-                clippedBy = "R6 order value";
             }
 
             long wanted = Math.Abs(delta);
@@ -121,6 +128,11 @@ public static class DailyPlanner
             string clip = quantity < wanted ? string.Create(c, $"; clipped from {wanted} by {clippedBy}") : string.Empty;
             string reason = string.Create(c, $"{strategyId}: target {w:P1} = {target} sh, holding {current}{clip}");
             intents.Add(new OrderIntent(spec.OrderbookId, spec.Ticker, side, quantity, limit, reason, reference, nowUtc, strategyId));
+            if (side == OrderSide.Buy)
+            {
+                grossRoom -= quantity * limit;
+            }
+
             notes.Add(string.Create(c, $"{spec.Ticker}: {side} {quantity} @ ~{limit:0.###} ({reason})"));
         }
 

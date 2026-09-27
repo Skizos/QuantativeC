@@ -119,6 +119,70 @@ public sealed class RiskEngineTests
         Assert.True(report.Passed, string.Join("; ", report.Failures.Select(f => $"{f.Id}: {f.Message}")));
     }
 
+    // ---- The account cap (ADR 0003 §4, Changes 2026-09-27): a 100,000 SEK account sized on 5,000 SEK -------------
+
+    private static readonly PreTradeRiskEngine CappedEngine = new(RiskLimits.AdrDefaults with { MaxAccountValueSek = 5_000m });
+
+    private static RiskContext SmallBook(decimal ericValue = 400m, decimal otherValue = 0m) => Baseline() with
+    {
+        Positions = new Dictionary<OrderbookId, long> { [Eric] = (long)(ericValue / 100m) },
+        PositionValues = new Dictionary<OrderbookId, decimal> { [Eric] = ericValue, [Other] = otherValue },
+    };
+
+    [Theory]
+    [InlineData(5, true)] // 500 SEK: 10 % of the 5,000 SEK cap, not of the 100,000 SEK account
+    [InlineData(6, false)]
+    public void R6_IsSizedOnTheAccountCap(long volume, bool passes)
+    {
+        RiskCheckResult r6 = CappedEngine.Evaluate(Buy(volume), SmallBook())["R6"];
+        Assert.Equal(passes, r6.Passed);
+        Assert.Equal("500.00 SEK = min(25,000.00 SEK, 10 % of 5,000.00 SEK) (sized on the 5,000.00 SEK account cap, not the account's 100,000.00 SEK)", r6.Limit);
+    }
+
+    [Theory]
+    [InlineData(6, true)] // 400 held + 600 = 1,000 SEK: 20 % of the cap
+    [InlineData(7, false)]
+    public void R7_IsSizedOnTheAccountCap(long volume, bool passes)
+    {
+        RiskCheckResult r7 = CappedEngine.Evaluate(Buy(volume), SmallBook())["R7"];
+        Assert.Equal(passes, r7.Passed);
+        Assert.StartsWith("1,000.00 SEK (sized on the 5,000.00 SEK account cap", r7.Limit, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(3, true)] // 4,700 in other shares + 300 = 5,000 SEK: 100 % of the cap
+    [InlineData(4, false)]
+    public void R8_IsSizedOnTheAccountCap_CountingEveryHolding(long volume, bool passes)
+    {
+        RiskCheckResult r8 = CappedEngine.Evaluate(Buy(volume), SmallBook(ericValue: 0m, otherValue: 4_700m))["R8"];
+        Assert.Equal(passes, r8.Passed);
+        Assert.StartsWith("5,000.00 SEK (sized on the 5,000.00 SEK account cap", r8.Limit, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(99_901, true)] // 99 SEK lost
+    [InlineData(99_900, false)] // 100 SEK: 2 % of the cap, although the account lost only 0.1 %
+    public void R19_IsSizedOnTheAccountCap(int value, bool passes)
+    {
+        RiskCheckResult r19 = CappedEngine.Evaluate(Buy(1), SmallBook() with { AccountValue = value })["R19"];
+        Assert.Equal(passes, r19.Passed);
+        Assert.Equal("a loss below 100.00 SEK = 2 % of 5,000.00 SEK, the account cap", r19.Limit);
+        Assert.EndsWith(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"today ({value - 100_000:N2} SEK)"), r19.Observed, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(3_921, true)] // 79 SEK lost
+    [InlineData(3_920, false)] // exactly -2 %
+    public void BelowTheCap_TheAccountItselfIsTheSize(int value, bool passes)
+    {
+        RiskContext small = SmallBook() with { AccountValue = 4_000m, StartOfDayValue = 4_000m };
+        RiskReport report = CappedEngine.Evaluate(Buy(4), small with { AccountValue = value });
+        Assert.Equal(passes, report["R19"].Passed);
+        Assert.Equal("> -2 %", report["R19"].Limit);
+        Assert.Equal("400.00 SEK = min(25,000.00 SEK, 10 % of 4,000.00 SEK)", CappedEngine.Evaluate(Buy(4), small)["R6"].Limit);
+        Assert.DoesNotContain(report.Checks, c => c.Limit.Contains("account cap", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void AllChecksAreReported_EvenWhenSeveralFail()
     {

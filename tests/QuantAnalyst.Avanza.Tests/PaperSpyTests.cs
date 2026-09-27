@@ -120,7 +120,8 @@ public sealed class PaperSpyTests : IDisposable
         Assert.True(code == 0, output + error);
         Assert.DoesNotContain("History:", output, StringComparison.Ordinal); // imported through Friday already
         Assert.Contains("decision: 1 order(s)", output, StringComparison.Ordinal);
-        Assert.True(output.Contains("Buy 63 ERIC B: Accepted (Filled, filled 63/63 @ 70.86)", StringComparison.Ordinal), output); // R6: 4,500 SEK
+        Assert.Contains("sized on the 5,000 SEK account cap, not the account's 45,000 SEK", output, StringComparison.Ordinal);
+        Assert.True(output.Contains("Buy 7 ERIC B: Accepted (Filled, filled 7/7 @ 70.86)", StringComparison.Ordinal), output); // R6: 500 SEK, 10 % of the cap
         Assert.Contains("Reconciliation: clean", output, StringComparison.Ordinal);
         Assert.Contains("Report (partial day): 2026-09-28 INCOMPLETE: 1 sent, 1 accepted", output, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(_root, "reports", "2026-09-28.json")));
@@ -132,7 +133,7 @@ public sealed class PaperSpyTests : IDisposable
         Assert.All(session.Where(r => r.Method != "GET"), r => Assert.Contains(r.PathAndQuery, new[] { AvanzaRoutes.UserCredentials.Path(), AvanzaRoutes.Totp.Path() }));
 
         using JsonDocument book = JsonDocument.Parse(File.ReadAllText(Path.Combine(State, "paper", "book.json")));
-        Assert.Equal(63, book.RootElement.GetProperty("positions")[0].GetProperty("quantity").GetInt64());
+        Assert.Equal(7, book.RootElement.GetProperty("positions")[0].GetProperty("quantity").GetInt64());
         Assert.True(AuditLog.Verify(Audit).Valid);
         Assert.False(File.Exists(Path.Combine(State, "session.lock"))); // released
     }

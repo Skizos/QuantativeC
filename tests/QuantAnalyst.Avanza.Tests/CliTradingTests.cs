@@ -93,12 +93,22 @@ public sealed class CliTradingTests : IDisposable
     {
         (int code, string output, string error) = Qa("risk-limits", "--config-dir", Config);
         Assert.True(code == 0, error);
-        Assert.Contains("4,500 SEK per order", output, StringComparison.Ordinal); // min(25,000, 10 % of 45,000)
-        Assert.Contains("9,000 SEK per instrument", output, StringComparison.Ordinal);
+        // The paper account has 45,000 SEK, but the committed account cap sizes every limit on 5,000 SEK.
+        Assert.Contains("sized on at most 5,000 SEK", output, StringComparison.Ordinal);
+        Assert.Contains("sized on 5,000 SEK, not 45,000", output, StringComparison.Ordinal);
+        Assert.Contains("500 SEK per order", output, StringComparison.Ordinal); // min(25,000, 10 % of 5,000)
+        Assert.Contains("1,000 SEK per instrument", output, StringComparison.Ordinal);
+        Assert.Contains("Sized for an account of 45,000 SEK, sized on the 5,000 SEK account cap", output, StringComparison.Ordinal);
         Assert.Contains("09:05–17:20", output, StringComparison.Ordinal);
 
         (_, output, _) = Qa("risk-limits", "--config-dir", Config, "--account-value", "1000000");
-        Assert.Contains("25,000 SEK per order", output, StringComparison.Ordinal);
+        Assert.Contains("500 SEK per order", output, StringComparison.Ordinal); // a large account doesn't raise them
+        Assert.Contains("100 SEK", output, StringComparison.Ordinal); // R19: 2 % of the cap
+
+        (_, output, _) = Qa("risk-limits", "--config-dir", Config, "--account-value", "3000");
+        Assert.Contains("300 SEK per order", output, StringComparison.Ordinal); // below the cap: the account itself
+        Assert.Contains("sized on 3,000 SEK", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("account cap (max_account_value_sek)", output, StringComparison.Ordinal);
     }
 
     [Fact]

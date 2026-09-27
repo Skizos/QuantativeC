@@ -119,7 +119,7 @@ internal static partial class AvanzaCommands
                 CourtageVerified = setup.Costs.Verified,
             };
             using var gateway = new OrderGateway(channel, env, risk, oms, halts, audit, time);
-            using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(killFile)!, stateDir, book, setup.Limits.DailyLossStopPct);
+            using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(killFile)!, stateDir, book, setup.Limits);
             kill.Alerted += message => output.WriteLine("ALERT: " + message);
             if (kill.IsKilled)
             {

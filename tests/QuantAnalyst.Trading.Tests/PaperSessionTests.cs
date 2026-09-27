@@ -62,6 +62,50 @@ public sealed class DailyPlannerTests
     }
 
     [Fact]
+    public void TheAccountCap_SizesThePlan_NotTheWholeAccount()
+    {
+        // ADR 0003 §4 (Changes 2026-09-27): a 100,000 SEK account with a 5,000 SEK cap is planned as 5,000 SEK.
+        Price(Eric, 99.9m, 100.1m);
+        var capped = new PreTradeRiskEngine(RiskLimits.AdrDefaults with { MaxAccountValueSek = 5_000m });
+        PlanResult p = DailyPlanner.Plan([0.2, double.NaN], Specs, Account(), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
+
+        OrderIntent i = Assert.Single(p.Intents);
+        Assert.Equal(4, i.Quantity); // 20 % of 4,950 = 9 shares, clipped to R6's 500 SEK (10 % of the cap) at a 100.5 limit
+        Assert.Contains("target 20.0 % = 9 sh", i.Reason, StringComparison.Ordinal);
+        Assert.Contains("clipped from 9 by R6 order value", i.Reason, StringComparison.Ordinal);
+        Assert.Contains(p.Notes, n => n.Contains("sized on the 5,000 SEK account cap, not the account's 100,000 SEK", StringComparison.Ordinal));
+
+        // Below the cap the account itself is the size, and nothing is noted.
+        PlanResult small = DailyPlanner.Plan([0.2, double.NaN], Specs, Account(4_000m), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
+        Assert.Equal(3, Assert.Single(small.Intents).Quantity); // R6: 400 SEK
+        Assert.DoesNotContain(small.Notes, n => n.Contains("account cap", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Buys_AreClippedToR8sRoom_CountingEarlierBuysInTheSamePlan()
+    {
+        // Other holdings fill most of the capped exposure (R8: 100 % of 5,000 SEK), as on an ISK that holds other shares.
+        Price(Eric, 99.9m, 100.1m);
+        Price(Test, 99.9m, 100.1m);
+        var capped = new PreTradeRiskEngine(RiskLimits.AdrDefaults with { MaxAccountValueSek = 5_000m });
+        AccountSnapshot Holding(decimal other) => new(new AccountId(PaperConfig.AccountId), 100_000m, 50_000m, new Dictionary<OrderbookId, long> { [Eric] = 0 },
+            new Dictionary<OrderbookId, decimal> { [Eric] = 0m, [RiskEngineTests.Other] = other }, 100_000m);
+
+        OrderIntent one = Assert.Single(DailyPlanner.Plan([0.2, double.NaN], Specs, Holding(4_800m), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow()).Intents);
+        Assert.Equal(1, one.Quantity); // 200 SEK of room
+        Assert.Contains("clipped from 9 by R8 gross exposure", one.Reason, StringComparison.Ordinal);
+
+        PlanResult two = DailyPlanner.Plan([0.2, 0.2], Specs, Holding(4_500m), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
+        OrderIntent first = Assert.Single(two.Intents);
+        Assert.Equal((Eric, 4L), (first.OrderbookId, first.Quantity)); // 402 SEK of the 500 SEK room
+        Assert.Contains(two.Notes, n => n.Contains("TEST B: Buy 9 wanted, but R8 gross exposure leaves no room", StringComparison.Ordinal));
+
+        PlanResult none = DailyPlanner.Plan([0.2, double.NaN], Specs, Holding(95_000m), _quotes, capped, new ExecutionOptions(), "test", _time.GetUtcNow());
+        Assert.Empty(none.Intents); // no card that R8 would reject
+        Assert.Contains(none.Notes, n => n.Contains("R8 gross exposure leaves no room", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void AZeroTarget_SellsThePosition_AndSellsNeverExceedIt()
     {
         Price(Eric, 99.9m, 100.1m);
@@ -157,7 +201,7 @@ public sealed class PaperSessionTests : IDisposable
             Fees = (p, s) => _channel.EstimateFees(p.Value, s.Currency),
             CourtageVerified = false,
         }, new PreTradeRiskEngine(RiskLimits.AdrDefaults), _oms, _halts, _audit, _time);
-        _kill = new KillSwitch(_gateway, _halts, _audit, _time, _dir.File("KILL"), _dir.File("state"), _book, 0.02m, watch: false);
+        _kill = new KillSwitch(_gateway, _halts, _audit, _time, _dir.File("KILL"), _dir.File("state"), _book, RiskLimits.AdrDefaults, watch: false);
         var schedule = new TradingSchedule(calendar, RiskLimits.AdrDefaults, new TimeOnly(9, 10));
         var reconciler = new Reconciler(_oms, _halts, _audit, _time, _book.Account);
         _session = new PaperSession(_gateway, _channel, _book, _kill, reconciler, _halts, schedule, _audit, _time, Decide, _output);

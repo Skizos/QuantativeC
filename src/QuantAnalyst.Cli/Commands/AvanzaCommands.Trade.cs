@@ -213,7 +213,7 @@ internal static partial class AvanzaCommands
             Live = live,
         };
         using var gateway = new OrderGateway(channel, env, risk, oms, halts, audit, time);
-        using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(o.KillFile)!, stateDir, account, setup.Limits.DailyLossStopPct);
+        using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(o.KillFile)!, stateDir, account, setup.Limits);
         kill.Alerted += message => output.WriteLine("ALERT: " + message);
         var reconciler = new Reconciler(oms, halts, audit, time, live.Account);
         IReadOnlyList<string> tickers = [.. specs.Select(s => s.Ticker)];
