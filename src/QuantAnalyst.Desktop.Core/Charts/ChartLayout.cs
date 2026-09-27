@@ -158,14 +158,22 @@ public sealed class ChartLayout
         IEnumerable<double> values = data.Main.Select(p => p.Value)
             .Concat(data.Overlays.SelectMany(o => o.Points).Select(p => p.Value))
             .Concat(data.Markers.Select(m => m.Value))
-            .Concat(data.Levels.Select(l => l.Value))
-            .Where(v => !double.IsNaN(v) && !double.IsInfinity(v));
+            .Concat(data.Levels.Select(l => l.Value));
         if (data.Baseline is { } b)
         {
             values = values.Append(b);
         }
 
-        double[] all = [.. values];
+        return ValueScale(values);
+    }
+
+    /// <summary>
+    /// The value axis for <paramref name="values"/>: their range with 8 % air on both sides (a flat line gets ±1 %), and a
+    /// nice step that gives at least three labelled lines. Shared by the line and the candle chart.
+    /// </summary>
+    internal static (double Min, double Max, double Step) ValueScale(IEnumerable<double> values)
+    {
+        double[] all = [.. values.Where(v => !double.IsNaN(v) && !double.IsInfinity(v))];
         if (all.Length == 0)
         {
             return (0, 1, 0.25);

@@ -1,8 +1,10 @@
+using System.Globalization;
 using QuantAnalyst.Core;
 using QuantAnalyst.Core.Market;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Store;
 using QuantAnalyst.Desktop.Core.Engine;
+using QuantAnalyst.Desktop.Core.Presentation;
 using QuantAnalyst.Trading.Paper;
 using QuantAnalyst.Trading.Reports;
 
@@ -37,6 +39,58 @@ public static class ChartSources
         }
 
         return [.. store.GetDailyBars(id, source).Select(b => new ChartPoint(CloseOf(b.Bar.Date), (double)b.Bar.Close))];
+    }
+
+    /// <summary>
+    /// The stored daily candles (open, high, low, close, volume) of one instrument, oldest first; empty when the store or
+    /// the instrument's history does not exist yet. Throws the store's own exceptions when it can't be opened.
+    /// </summary>
+    public static IReadOnlyList<Candle> DailyCandles(string storePath, OrderbookId id)
+    {
+        if (!File.Exists(storePath))
+        {
+            return [];
+        }
+
+        using HistoryStore store = HistoryStore.Open(storePath);
+        string source = AvanzaChartImporter.AvanzaPriceChart.Name;
+        return store.GetSource(source) is null ? [] : Candles.FromDaily(store.GetDailyBars(id, source).Select(b => b.Bar));
+    }
+
+    /// <summary>
+    /// Your trades in <paramref name="ticker"/> from the end-of-day reports, as chart markers at their fill price on
+    /// their day (noon Stockholm; the reports keep the day, not the minute): Paper fills, and the fills of real orders
+    /// sent in Confirm. Oldest first.
+    /// </summary>
+    public static IReadOnlyList<ChartMarker> TradeMarkers(IReadOnlyList<EodReport> reports, string ticker)
+    {
+        ArgumentNullException.ThrowIfNull(reports);
+        var markers = new List<ChartMarker>();
+        foreach (EodReport r in reports.OrderBy(r => r.Date))
+        {
+            DateTimeOffset noon = MarketTime.TryStockholmToUtc(r.Date.ToDateTime(new TimeOnly(12, 0)), out DateTimeOffset utc)
+                ? utc
+                : new DateTimeOffset(r.Date.ToDateTime(new TimeOnly(10, 0)), TimeSpan.Zero);
+            string day = r.Date.ToString("ddd d MMM yyyy", CultureInfo.InvariantCulture);
+            foreach (EodFill f in r.Fills.Where(f => f.Ticker == ticker))
+            {
+                markers.Add(Marker(noon, f.Side, f.Volume, f.Price, "Paper", day));
+            }
+
+            foreach (EodLiveOrder o in (r.Live?.Orders ?? []).Where(o => o.Ticker == ticker && !o.Simulated && o.Filled > 0 && o.AverageFillPrice is not null))
+            {
+                markers.Add(Marker(noon, o.Side, o.Filled, o.AverageFillPrice!.Value, "Real order", day));
+            }
+        }
+
+        return markers;
+    }
+
+    private static ChartMarker Marker(DateTimeOffset at, string side, long volume, decimal price, string what, string day)
+    {
+        bool buy = side == "Buy";
+        return new ChartMarker(at, (double)price, buy ? MarkerKind.Buy : MarkerKind.Sell,
+            string.Create(CultureInfo.InvariantCulture, $"{what}: {(buy ? "bought" : "sold")} {Fmt.Count(volume)} @ {Fmt.Price(price)} · {day}"));
     }
 
     /// <summary>
