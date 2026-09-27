@@ -209,7 +209,7 @@ internal static partial class TradingCommands
                 : "The record was written but does not verify: " + string.Join("; ", after.Problems));
             if (after.Valid && target == TradingMode.Confirm)
             {
-                w.WriteLine("Confirm mode itself arrives in Phase 7; until then every session still runs in Paper.");
+                w.WriteLine("Every Confirm session still runs the startup checks first (the signed promotion, verified constants, kill switch, account, order format) and refuses to start if any fails.");
             }
 
             return after.Valid ? 0 : 1;

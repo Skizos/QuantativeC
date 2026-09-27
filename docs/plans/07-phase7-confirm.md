@@ -1,6 +1,6 @@
 # 07 — Phase 7: Confirm mode (real orders, each one typed by you)
 
-- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–3 done** (2026-09-26 and
+- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–4 done** (2026-09-26 and
   2026-09-27, see Step notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
   automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5).
 - **Scope:** master plan §4 Phase 7; ADR 0003 §2 (BrokerPreflight), §3 (startup HMAC check), §5 (Confirm UX), §6
@@ -233,6 +233,52 @@ Nothing is taken from memory.
     not a reject in the end-of-day report, a price move and an Avanza refusal at the re-check, a halt or a stop during
     the card, Avanza asked only after our checks, R21, R9 on Avanza's fee, the fee flag, a preflight fault halts, no
     ISIN, account failures and their halts, fills invalidate the account, constructor rules, Paper never asks Avanza)
+
+**Step 4: startup gate and locks (done 2026-09-27).**
+- **`ConfirmStartup`** (Trading/Modes) runs nine checks. None of them stops the others, so the terminal gets the
+  whole list:
+  1. **not started from Claude Code:** `CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT` set ⇒ refused. Claude Code sets both in
+     every shell it starts; the variables are read through the CLI's environment seam, so tests can check both
+     answers.
+  2. **promotion:** your key is present, `Promotion.Verify` passes (HMAC, mode chain, evidence unchanged), and the
+     state allows Confirm.
+  3. **R20:** this year's calendar and the courtage class have `verified_on`.
+  4. **kill switch** off.
+  5. **trading not disabled:** no `state/trading-disabled.json` (ADR 0002 §5; the Phase 9 canary writes it).
+  6. **one session:** this session holds `state/session.lock`.
+  7. **audit chain** intact.
+  8. **R1:** the step 2 allowlist.
+  9. **order channel:** real, and ready.
+- **Where "ready" comes from:** the order port gained `NotReadyReason` (null by default). The Avanza channel returns
+  one until step 7, when O4 and O5 finalise the order format. **So Confirm cannot start against Avanza before
+  step 7**, whatever else passes.
+- **`LiveAuthorization`:** only `ConfirmStartup` creates one. Its constructor is internal, and an IL-scanning
+  architecture test (with a positive control) checks the creator.
+  - It names the mode, the account, the exact channel instance, when it was issued, and the checks.
+  - `OrderGateway` accepts a channel that is not simulated only in Confirm, only with an authorization for that
+    instance, and only when R1's allowed accounts are exactly the authorized one.
+  - `gateway-start` records the authorization (masked account and every check line).
+  - A simulated channel with an authorization is refused too. Auto is refused until Phase 8.
+- **`PromotionState.HighestImplemented` is Confirm.** A promotion to Confirm now allows Confirm, but only through the
+  startup checks. `qa promote --to Confirm` now says so instead of "arrives in Phase 7".
+- **Hook rule 7** blocks `qa trade` with any flags and `qa rebalance … --execute`, in every launcher spelling
+  (`qa`, `./qa`, `.\qa.ps1`, `qa.exe`, `qa.dll`, `dotnet run … --`). Plain `qa rebalance` stays allowed, because
+  it sends nothing. The self-test grew from 51 to 78 cases; `docs/setup.md` §4 lists every rule and the binary's own
+  refusal.
+- **ADR 0004** ("recorded" in ADR 0003 §1) was accepted on 2026-09-25. There is nothing to check for it at runtime.
+- **Tests (25 new):**
+  - 18 for the startup gate: all pass ⇒ an authorization, and each of 16 failures alone refuses, with the whole
+    list shown and ids masked. Several failures are all listed.
+  - 3 for the gateway with a real channel: an authorized confirmed card sends exactly once, a declined one sends
+    nothing, and six ways of holding the wrong authorization are refused.
+  - 2 architecture: only `ConfirmStartup` creates an authorization, and the Avanza channel says it is not ready.
+  - 2 more mode-ceiling rows.
+  - Hook self-test: 78 of 78.
+- **For step 5:**
+  - the CLI composes the checks after one login: R1 from the trading accounts, the lock, the channel from
+    `CreateOrderChannel` (then no longer "nothing asks for it")
+  - `qa status` shows the same list
+  - live fills come through reconciliation, which must also invalidate the account state
 
 ## Test map (planned)
 

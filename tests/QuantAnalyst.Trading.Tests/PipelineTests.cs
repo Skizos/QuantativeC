@@ -151,7 +151,9 @@ public sealed class PromotionStateTests
     [InlineData(TradingMode.Paper, TradingMode.Paper, true, null)]
     [InlineData(TradingMode.Backtest, TradingMode.Paper, false, "above the promotion state")]
     [InlineData(TradingMode.Paper, TradingMode.Confirm, false, "above the promotion state")]
-    [InlineData(TradingMode.Auto, TradingMode.Confirm, false, "Phase 7")]
+    [InlineData(TradingMode.Confirm, TradingMode.Confirm, true, null)]
+    [InlineData(TradingMode.Auto, TradingMode.Confirm, true, null)]
+    [InlineData(TradingMode.Confirm, TradingMode.Auto, false, "above the promotion state")]
     [InlineData(TradingMode.Auto, TradingMode.Auto, false, "Phase 8")]
     public void Effective_IsTheRequestedMode_OrAnError_NeverADowngrade(TradingMode max, TradingMode requested, bool allowed, string? error)
     {

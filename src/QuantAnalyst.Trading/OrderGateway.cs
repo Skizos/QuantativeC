@@ -68,19 +68,26 @@ public sealed record GatewayEnvironment
 
     /// <summary>Gets the Confirm mode gate: the order card and the typed answer. Required in Confirm.</summary>
     public IOrderConfirmation? Confirmation { get; init; }
+
+    /// <summary>
+    /// Gets the proof that the Confirm startup checks passed (<see cref="Modes.ConfirmStartup"/>). Required for a channel
+    /// that is not simulated, and only valid for the channel, mode and account it was issued for.
+    /// </summary>
+    public Modes.LiveAuthorization? Live { get; init; }
 }
 
 /// <summary>
 /// The only way to trade (ADR 0002/0003): runs preparation (lots, tick), the risk engine (R1–R21), the mode gate, the
 /// OMS and the order channel, auditing every step. It is the only creator of <see cref="ApprovedOrder"/> and the only
-/// caller of <see cref="IBrokerOrderChannel"/> (an IL-scanning architecture test checks both). It accepts only
-/// simulated channels. Confirm mode (Phase 7) adds Avanza's pre-trade checks, the order card and the re-check after the
-/// typed answer; until the Confirm startup checks exist (Phase 7 step 4), it runs only as a rehearsal on a simulated
-/// channel.
+/// caller of <see cref="IBrokerOrderChannel"/> (an IL-scanning architecture test checks both). Backtest and Paper accept
+/// only simulated channels. Confirm (Phase 7) adds Avanza's pre-trade checks, the order card and the re-check after the
+/// typed answer; it accepts the real channel only with the <see cref="Modes.LiveAuthorization"/> the Confirm startup
+/// checks issued for it, and runs as a rehearsal on a simulated channel otherwise. Auto is refused (Phase 8).
 /// </summary>
 public sealed class OrderGateway : IDisposable
 {
-    private readonly ISimulatedOrderChannel _channel;
+    private readonly IBrokerOrderChannel _channel;
+    private readonly ISimulatedOrderChannel? _simulatedChannel;
     private readonly bool _simulated;
     private readonly GatewayEnvironment _env;
     private readonly PreTradeRiskEngine _risk;
@@ -112,24 +119,67 @@ public sealed class OrderGateway : IDisposable
             throw new Modes.ModeNotAllowedException("Confirm mode needs the order card with its typed confirmation and Avanza's pre-trade checks.");
         }
 
-        if (channel is not ISimulatedOrderChannel simulated)
+        ISimulatedOrderChannel? simulated = channel as ISimulatedOrderChannel;
+        if (simulated is null)
         {
-            throw new Modes.ModeNotAllowedException(env.Mode == TradingMode.Confirm
-                ? $"The '{channel.Name}' channel is not simulated; real orders need the Confirm startup checks (Phase 7 step 4), which don't exist yet."
-                : $"The '{channel.Name}' channel is not simulated; {env.Mode} mode accepts only the Paper or Backtest channel.");
+            CheckLiveAuthorization(channel, env);
+        }
+        else if (env.Live is not null)
+        {
+            throw new Modes.ModeNotAllowedException($"The live authorization is for the '{env.Live.Channel.Name}' channel, not the simulated '{channel.Name}'.");
         }
 
-        _channel = simulated;
-        _simulated = true;
+        _channel = channel;
+        _simulatedChannel = simulated;
+        _simulated = simulated is not null;
         _env = env;
         _risk = risk ?? throw new ArgumentNullException(nameof(risk));
         _oms = oms ?? throw new ArgumentNullException(nameof(oms));
         _halts = halts ?? throw new ArgumentNullException(nameof(halts));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
         _time = time ?? throw new ArgumentNullException(nameof(time));
-        simulated.Filled += OnFill;
-        simulated.Ended += OnEnded;
-        audit.Append("gateway-start", new { mode = env.Mode.ToString(), channel = channel.Name, universe = env.Universe.Entries.Count });
+        if (simulated is not null)
+        {
+            simulated.Filled += OnFill;
+            simulated.Ended += OnEnded;
+        }
+
+        audit.Append("gateway-start", new
+        {
+            mode = env.Mode.ToString(),
+            channel = channel.Name,
+            universe = env.Universe.Entries.Count,
+            live = env.Live is { } live ? new { issuedUtc = live.IssuedUtc, account = live.Account.Masked, checks = live.Checks.Select(c => c.ToString()) } : null,
+        });
+    }
+
+    // A real channel: only Confirm, only with the authorization the startup checks issued for this channel and account.
+    private static void CheckLiveAuthorization(IBrokerOrderChannel channel, GatewayEnvironment env)
+    {
+        if (env.Mode != TradingMode.Confirm)
+        {
+            throw new Modes.ModeNotAllowedException($"The '{channel.Name}' channel is not simulated; {env.Mode} mode accepts only the Paper or Backtest channel.");
+        }
+
+        if (env.Live is not { } live)
+        {
+            throw new Modes.ModeNotAllowedException($"The '{channel.Name}' channel sends real orders; it needs the live authorization that only the Confirm startup checks issue.");
+        }
+
+        if (!ReferenceEquals(live.Channel, channel))
+        {
+            throw new Modes.ModeNotAllowedException($"The live authorization was issued for another channel instance ('{live.Channel.Name}').");
+        }
+
+        if (live.Mode != env.Mode)
+        {
+            throw new Modes.ModeNotAllowedException($"The live authorization is for {live.Mode}, not {env.Mode}.");
+        }
+
+        if (env.AllowedAccountIds.Count != 1 || !env.AllowedAccountIds.Contains(live.Account.Value))
+        {
+            throw new Modes.ModeNotAllowedException($"The allowed accounts (R1) must be exactly the authorized account {live.Account.Masked}.");
+        }
     }
 
     /// <summary>Raised on every broker rejection with the number of consecutive ones (the kill switch fires at 3).</summary>
@@ -686,8 +736,12 @@ public sealed class OrderGateway : IDisposable
         }
 
         _disposed = true;
-        _channel.Filled -= OnFill;
-        _channel.Ended -= OnEnded;
+        if (_simulatedChannel is not null)
+        {
+            _simulatedChannel.Filled -= OnFill;
+            _simulatedChannel.Ended -= OnEnded;
+        }
+
         _serial.Dispose();
     }
 

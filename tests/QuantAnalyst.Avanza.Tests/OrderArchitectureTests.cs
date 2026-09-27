@@ -99,6 +99,23 @@ public sealed class OrderArchitectureTests
     }
 
     [Fact]
+    public void OnlyTheConfirmStartupChecks_CreateALiveAuthorization()
+    {
+        IlReference[] created = [.. All.Value.Where(r => r.Target is ConstructorInfo c && c.DeclaringType == typeof(Trading.Modes.LiveAuthorization))];
+        Assert.Equal([typeof(Trading.Modes.ConfirmStartup)], created.Select(c => c.Owner).Distinct()); // positive control: it is created there
+        Assert.Empty(typeof(Trading.Modes.LiveAuthorization).GetConstructors()); // no public constructor
+    }
+
+    [Fact]
+    public void TheAvanzaOrderChannel_SaysItIsNotReady_UntilTheOwnersCapture()
+    {
+        using var rig = new TestRig();
+        AvanzaOrderChannel channel = rig.Connection.CreateOrderChannel();
+        Assert.Equal(AvanzaOrderChannel.Provisional, channel.NotReadyReason);
+        Assert.Contains("(O4)", channel.NotReadyReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheAvanzaOrderChannel_IsBuiltOnlyByTheConnection_AndNothingAsksForItInPhase6()
     {
         IlReference[] built = [.. All.Value.Where(r => r.Target is ConstructorInfo c && c.DeclaringType == typeof(AvanzaOrderChannel))];

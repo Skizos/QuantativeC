@@ -409,12 +409,72 @@ public sealed class ConfirmGatewayTests : IDisposable
     }
 
     [Fact]
-    public void Confirm_NeedsItsCardAndPreflight_AndTheRealChannelWaitsForStep4()
+    public void Confirm_NeedsItsCardAndPreflight_AndTheRealChannelItsAuthorization()
     {
         Assert.Contains("needs the order card", Assert.Throws<ModeNotAllowedException>(() => New(_channel, TradingMode.Confirm, e => e with { Confirmation = null })).Message, StringComparison.Ordinal);
         Assert.Contains("Avanza's pre-trade checks", Assert.Throws<ModeNotAllowedException>(() => New(_channel, TradingMode.Confirm, e => e with { Preflight = null })).Message, StringComparison.Ordinal);
-        Assert.Contains("Confirm startup checks (Phase 7 step 4)", Assert.Throws<ModeNotAllowedException>(() => New(new FakeLiveChannel(), TradingMode.Confirm)).Message, StringComparison.Ordinal);
+        Assert.Contains("needs the live authorization", Assert.Throws<ModeNotAllowedException>(() => New(new FakeLiveChannel(), TradingMode.Confirm)).Message, StringComparison.Ordinal);
         Assert.Contains("Phase 8", Assert.Throws<ModeNotAllowedException>(() => New(_channel, TradingMode.Auto)).Message, StringComparison.Ordinal);
+    }
+
+    // ---- Phase 7 step 4: the real channel, only with the startup checks' authorization -----------------------------
+
+    [Fact]
+    public async Task WithItsAuthorization_TheRealChannel_SendsAConfirmedCard_ExactlyOnce()
+    {
+        using var rig = new StartupRig(_time);
+        var live = new RecordingLiveChannel();
+        _gateway = New(live, TradingMode.Confirm, e => e with { Live = rig.Authorize(live) });
+
+        SubmitResult r = await Submit();
+
+        Assert.Equal(SubmitStatus.Accepted, r.Status);
+        Assert.Equal((Isk, 10L, 100.3m), (Assert.Single(live.Placed).Account, live.Placed[0].Volume, live.Placed[0].LimitPrice));
+        OrderCard card = Assert.Single(_confirm.Cards);
+        Assert.False(card.Simulated);
+        Assert.Equal(" CONFIRM MODE · a real order on your Avanza account", card.Render()[1]);
+        Assert.Equal("Sent: order AVZ-1, Working.", _confirm.Told[^1]);
+
+        System.Text.Json.JsonElement start = Directory.GetFiles(_dir.Path).SelectMany(AuditLog.Read).First(e => e.GetProperty("kind").GetString() == "gateway-start");
+        System.Text.Json.JsonElement recorded = start.GetProperty("data").GetProperty("live");
+        Assert.Equal("***001", recorded.GetProperty("account").GetString());
+        Assert.Equal(9, recorded.GetProperty("checks").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task WithTheRealChannel_ADeclinedCard_SendsNothing()
+    {
+        using var rig = new StartupRig(_time);
+        var live = new RecordingLiveChannel();
+        _gateway = New(live, TradingMode.Confirm, e => e with { Live = rig.Authorize(live) });
+        _confirm.Answer = (_, _) => Task.FromResult(new ConfirmationAnswer(ConfirmationVerdict.Declined, "JA without the ticker", TimeSpan.FromSeconds(3)));
+
+        Assert.Equal(SubmitStatus.Skipped, (await Submit()).Status);
+        Assert.Empty(live.Placed);
+    }
+
+    [Fact]
+    public void TheRealChannel_IsRefused_WithoutTheRightAuthorization()
+    {
+        using var rig = new StartupRig(_time);
+        var live = new RecordingLiveChannel();
+        var other = new RecordingLiveChannel();
+        LiveAuthorization forOther = rig.Authorize(other);
+
+        string Refusal(IBrokerOrderChannel channel, TradingMode mode, Func<GatewayEnvironment, GatewayEnvironment> change) =>
+            Assert.Throws<ModeNotAllowedException>(() => New(channel, mode, change)).Message;
+
+        Assert.Contains("needs the live authorization that only the Confirm startup checks issue", Refusal(live, TradingMode.Confirm, e => e), StringComparison.Ordinal);
+        Assert.Contains("issued for another channel instance", Refusal(live, TradingMode.Confirm, e => e with { Live = forOther }), StringComparison.Ordinal);
+        Assert.Contains("accepts only the Paper or Backtest channel", Refusal(other, TradingMode.Paper, e => e with { Live = forOther }), StringComparison.Ordinal);
+        Assert.Contains("must be exactly the authorized account ***001", Refusal(other, TradingMode.Confirm, e => e with
+        {
+            Live = forOther,
+            AllowedAccountIds = new HashSet<string>(StringComparer.Ordinal) { Isk.Value, "9990002" },
+        }), StringComparison.Ordinal);
+        Assert.Contains("not the simulated 'fake-sim'", Refusal(_channel, TradingMode.Confirm, e => e with { Live = forOther }), StringComparison.Ordinal);
+        Assert.Contains("Phase 8", Refusal(other, TradingMode.Auto, e => e with { Live = forOther }), StringComparison.Ordinal);
+        Assert.Empty(other.Placed);
     }
 
     [Fact]

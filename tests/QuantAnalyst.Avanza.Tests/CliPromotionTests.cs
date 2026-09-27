@@ -161,7 +161,7 @@ public sealed class CliPromotionTests : IDisposable
         Assert.True(code == 0, output + error);
         Assert.Contains("[ok] clean Paper trading days in a row: 10 (need 10), 2026-09-28 to 2026-10-09", output, StringComparison.Ordinal);
         Assert.Contains("Done: the highest allowed mode is now Confirm (1 signed record(s)", output, StringComparison.Ordinal);
-        Assert.Contains("Confirm mode itself arrives in Phase 7", output, StringComparison.Ordinal);
+        Assert.Contains("Every Confirm session still runs the startup checks first", output, StringComparison.Ordinal);
 
         using (JsonDocument doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(PromotionDir, PromotionState.StateFile))))
         {

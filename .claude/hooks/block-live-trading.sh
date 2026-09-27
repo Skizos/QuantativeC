@@ -56,4 +56,16 @@ if printf '%s' "$input" | grep -Eiq -- "promotion/state\.json" \
   deny "command would change promotion/state.json (the owner's promotion record, ADR 0003 §3)."
 fi
 
+# 7) Live sessions (Phase 7): 'qa trade' runs a live trading session, whatever its flags, and 'qa rebalance --execute'
+#    sends the rebalance orders. Both are the owner's to start. Plain 'qa rebalance' (a plan that sends nothing) and
+#    'qa paper run' stay allowed.
+live_verb='(^|[^A-Za-z0-9_-])(qa(\.ps1|\.exe|\.dll)?|--)[[:space:]]+'
+if printf '%s' "$input" | grep -Eiq -- "${live_verb}trade([^A-Za-z0-9_-]|$)"; then
+  deny "command runs 'qa trade' (a live trading session is the owner's to start, plan 07)."
+fi
+if printf '%s' "$input" | grep -Eiq -- "${live_verb}rebalance([^A-Za-z0-9_-]|$)" \
+   && printf '%s' "$input" | grep -Eiq -- "--execute([^A-Za-z0-9_-]|$)"; then
+  deny "command runs 'qa rebalance --execute' (sending rebalance orders is the owner's to start, plan 07)."
+fi
+
 exit 0
