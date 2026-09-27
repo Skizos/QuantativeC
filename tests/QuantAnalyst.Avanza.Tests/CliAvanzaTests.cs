@@ -4,6 +4,7 @@ using QuantAnalyst.Avanza.Credentials;
 using QuantAnalyst.Avanza.Http;
 using QuantAnalyst.Cli;
 using QuantAnalyst.Cli.Commands;
+using QuantAnalyst.Trading.Accounts;
 
 namespace QuantAnalyst.Avanza.Tests;
 
@@ -12,6 +13,7 @@ public sealed class CliAvanzaTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "qa-cli-tests", Guid.NewGuid().ToString("N"));
     private readonly FakeAvanza _server = new();
+    private readonly Dictionary<string, string> _variables = new(StringComparer.Ordinal);
 
     public void Dispose()
     {
@@ -38,7 +40,10 @@ public sealed class CliAvanzaTests : IDisposable
                     Burst = 20,
                 },
                 secrets, logger, redactor, TimeProvider.System, _server, prompt),
-            _ => FakeSecrets.Store());
+            _ => FakeSecrets.Store())
+        {
+            GetVariable = name => _variables.GetValueOrDefault(name),
+        };
         var output = new StringWriter();
         var error = new StringWriter();
         string[] full = args[0] == "recordings" || args[0] == "--help"
@@ -110,6 +115,32 @@ public sealed class CliAvanzaTests : IDisposable
         using JsonDocument doc = JsonDocument.Parse(output);
         Assert.Equal("***002", doc.RootElement[1].GetProperty("account").GetString());
         Assert.Equal(12345.67m, doc.RootElement[0].GetProperty("availableForPurchase").GetDecimal());
+    }
+
+    [Fact]
+    public void Accounts_SayWhetherTheAllowlistedAccountMayTradeLive_Masked()
+    {
+        (int code, string output, string error) = Qa("accounts");
+        Assert.True(code == 0, error);
+        Assert.Contains("Live trading account (R1, AVANZA__ALLOWEDACCOUNTIDS): refused. AVANZA__ALLOWEDACCOUNTIDS is not set.", output, StringComparison.Ordinal);
+
+        _variables[AccountAllowlist.Variable] = "9990001";
+        (code, output, error) = Qa("accounts");
+        Assert.True(code == 0, error);
+        Assert.Contains("Live trading account (R1, AVANZA__ALLOWEDACCOUNTIDS): ***001, ISK, tradable, not managed, no credit: OK.", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa("accounts", "--json");
+        Assert.Equal(0, code);
+        using (JsonDocument doc = JsonDocument.Parse(output))
+        {
+            Assert.True(doc.RootElement[0].GetProperty("allowedForLiveTrading").GetBoolean());
+            Assert.False(doc.RootElement[1].GetProperty("allowedForLiveTrading").GetBoolean());
+        }
+
+        _variables[AccountAllowlist.Variable] = "9990002"; // in the overview, but not a trading account in the fixtures
+        (code, output, _) = Qa("accounts");
+        Assert.Equal(0, code);
+        Assert.Contains("refused. account ***002 from AVANZA__ALLOWEDACCOUNTIDS is not among your trading accounts (***001).", output, StringComparison.Ordinal);
     }
 
     [Fact]

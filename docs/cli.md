@@ -132,7 +132,7 @@ These verbs talk to Avanza. Each invocation is **one trigger**: at most **one lo
 | `qa secrets set` / `qa secrets check` | Store the credentials (prompts, no echo) / show which exist |
 | `qa login` | One login (BankID QR by default) plus a session health check. Prints the method and where the security token came from, never the token. |
 | `qa login --clear-lock` | Clear a persisted login lock after checking with BankID. No login is attempted. |
-| `qa accounts [--json]` | Accounts, total value, buying power, available for purchase (ids masked `***123`) |
+| `qa accounts [--json]` | Accounts, total value, buying power, available for purchase (ids masked `***123`). The last line says whether `AVANZA__ALLOWEDACCOUNTIDS` names an account that may trade live (R1: exactly one tradable ISK, not managed, no credit); `--json` gives `allowedForLiveTrading` per account. |
 | `qa positions [--account 123] [--json]` | Holdings and cash; `--account` matches the end of the id |
 | `qa orders [--json]` | Open orders |
 | `qa quote ERIC-B` / `qa quote --id 5240` | Bid/ask/last, depth, tick size at the last price, lot size. Times are shown in Europe/Stockholm. |

@@ -1,7 +1,7 @@
 # 07 — Phase 7: Confirm mode (real orders, each one typed by you)
 
-- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Step 1 done 2026-09-26** (see Step
-  notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
+- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–2 done** (2026-09-26 and
+  2026-09-27, see Step notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
   automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5).
 - **Scope:** master plan §4 Phase 7; ADR 0003 §2 (BrokerPreflight), §3 (startup HMAC check), §5 (Confirm UX), §6
   (live reconciliation); ADR 0002 (fail-safe gateway); CLAUDE.md "Absolute safety rules".
@@ -45,7 +45,7 @@ Owner's part (**O**) and Claude's part (**C**). Confirm is usable when every lin
 | O3 | you | **Verify the courtage file** of your class (`config/costs.avanza-start.json`, `verified_on`) against Avanza's price list (R20). Also answer: is the minimum courtage charged once per order when an order fills in parts? | – | `qa status`: Paper account `ok` |
 | O4 | you | **Capture one real web-app buy and one sell** (1 share is enough) with the browser's DevTools open: copy each order call's request payload and response body into text files (never cookies or headers). This finalises the order format, including the unresolved `profit` field on sells (Qluxzz #156). | – | files handed to C7 |
 | O5 | you | **Record one real deal**: after the O4 buy has filled, run `qa probe` once and sanitize the recording (`qa recordings sanitize …`); commit the fixture | O4 | a `deals` fixture with one fill |
-| O6 | you | **Name the one account that may trade** (R1): set the user environment variable `AVANZA__ALLOWEDACCOUNTIDS` to your ISK's account id | – | the Confirm startup check passes R1 |
+| O6 | you | **Name the one account that may trade** (R1): set the user environment variable `AVANZA__ALLOWEDACCOUNTIDS` to your ISK's account id (`docs/guide.md` §7) | – | `qa accounts` ends with "Live trading account (R1 …): ***123 … OK" |
 | O7 | you | **Review the live limits** in `config/risk-limits.json` for 5,000 SEK: 500 SEK per order, 1,000 SEK per name, and a 100 SEK loss stop. Keep or lower them; raising them needs a note in ADR 0003's log | – | – |
 | O8 | you | **Promote:** `qa promote --init-key` (once), then `qa promote --to Confirm` | O1 | `qa promote --verify` OK |
 | C1 | Claude | Pre-trade calls: `validate` and `preliminaryfee` | – | step 1 green |
@@ -98,7 +98,7 @@ Nothing is taken from memory.
    - an `IBrokerPreflight` port
    - tests: strict deserialization, drift ⇒ halt, and `valid:false` ⇒ R21 fails
 2. **Live account state and R1:**
-   - an `AvanzaAccountState : IAccountState` from the positions and trading-accounts reads
+   - a live `IAccountState` from the positions and trading-accounts reads
    - an R1 allowlist from the environment
    - tests on the Phase 3 fixtures: values, masking, and every refusal case
 3. **Order card and confirmation:**
@@ -154,6 +154,44 @@ Nothing is taken from memory.
 - **Tests:**
   - Avanza: 22 preflight, 3 architecture and 1 CLI.
   - Trading: 6 R21 and fee tests.
+
+**Step 2: live account state and R1 (done 2026-09-27).**
+- **No new endpoint:** only the trading-accounts and positions reads from Phase 3. The one new field in the domain
+  type is `availableForPurchaseWithoutCredit`, which the DTO already had (pinned Go SDK source).
+- **R1, `AccountAllowlist` (Trading):** reads `AVANZA__ALLOWEDACCOUNTIDS` and refuses with a masked reason when:
+  - it is unset or blank
+  - it names more than one id (comma, semicolon or space separated; the same id twice counts as two)
+  - the id is not among your trading accounts
+  - the account is not tradable, not an ISK (`INVESTERINGSSPARKONTO`), discretionary, or Avanza didn't say whether it
+    is discretionary (unknown counts as managed)
+  - the account has credit (R8: no leverage). This and "discretionary" are stricter than the plan's table: both follow
+    from ADR 0003 (no leverage; this program never trades a managed account).
+  - Every problem of the account is listed, not just the first. The result gives R1's input (the one allowed id).
+- **`GatewayAccountState` (Trading), the live `IAccountState`.** The plan said `AvanzaAccountState`. It lives in
+  Trading and reads through the Core `IBrokerGateway`, like `GatewayBrokerState`, because Avanza does not reference
+  Trading and must not.
+  - **Cash (R9):** `availableForPurchase`, which Avanza already reduces for working buys, capped at the credit-free
+    figure.
+  - **Positions (R4):** whole-share holdings with an orderbook id. Funds (fractional) and holdings without an orderbook
+    count towards the value only.
+  - **Value:** each holding at the composed quote (last, else mid) plus the account's cash position. A holding without
+    a quote, or not in SEK, keeps the broker's SEK value. Cash in another currency is refused (Phase 7 is SEK only).
+  - **Start of the day (R19):** the first snapshot of a Stockholm day, kept in `state/live-start-of-day.json` (masked
+    account, date, value), so a restart can't reset the loss stop. An unreadable file refuses rather than forgetting
+    the day's loss. Another account's record is ignored.
+  - **Refresh:** the broker is read again when the holdings are 30 s old (the reconciliation interval) or after
+    `Invalidate()`, which step 3 calls after every order, fill and reject. Every read checks the R1 conditions again.
+    An account that changed throws `AccountStateException` (masked). Broker failures (session expired, drift)
+    propagate. The gateway turns both into a halt in step 3, where the live path is wired.
+- **`qa accounts`** now ends with one line saying whether `AVANZA__ALLOWEDACCOUNTIDS` names an account that may trade
+  (`allowedForLiveTrading` in `--json`). You can check O6 now, before Confirm exists.
+- **Tests:**
+  - Trading: 35, covering every refusal case, masking, values, marks, funds, the credit cap, refresh and re-check,
+    the start-of-day record across a restart and a new day, and R1 in the risk engine.
+  - Avanza: your 2026-09-25 recording through the real read pipeline. R1 allows the ISK `***193` and refuses the
+    other two accounts (not an ISK; not tradable). The state gives 3.45 SEK available, 435 shares worth 461.334 SEK,
+    and a value of 466.6299 SEK.
+  - CLI: the `qa accounts` line and JSON field, masked.
 
 ## Test map (planned)
 

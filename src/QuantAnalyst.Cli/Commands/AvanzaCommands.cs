@@ -17,6 +17,7 @@ using QuantAnalyst.Core.Orders;
 using QuantAnalyst.Data.Calendar;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Store;
+using QuantAnalyst.Trading.Accounts;
 
 namespace QuantAnalyst.Cli.Commands;
 
@@ -45,6 +46,9 @@ internal sealed record AvanzaCliServices(
     /// terminal is interactive. The Windows app shows it as an image.
     /// </summary>
     public Func<TextWriter, bool, IBankIdPrompt>? BankIdPrompt { get; init; }
+
+    /// <summary>Gets how environment variables are read (the R1 account allowlist); tests pass their own.</summary>
+    public Func<string, string?> GetVariable { get; init; } = Environment.GetEnvironmentVariable;
 
     public static AvanzaCliServices Default { get; } = new(
         (options, secrets, prompt, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor, prompt),
@@ -169,6 +173,7 @@ internal static partial class AvanzaCommands
             await ctx.Connection.Authenticator.LoginAsync(ctx.Ct).ConfigureAwait(false);
             IReadOnlyList<Account> accounts = await ctx.Connection.Gateway.GetAccountsAsync(ctx.Ct).ConfigureAwait(false);
             IReadOnlyList<TradingAccount> trading = await ctx.Connection.Gateway.GetTradingAccountsAsync(ctx.Ct).ConfigureAwait(false);
+            AllowlistResult allowlist = AccountAllowlist.FromEnvironment(trading, services.GetVariable);
             var rows = accounts.Select(a =>
             {
                 TradingAccount? t = trading.FirstOrDefault(x => x.Id == a.Id);
@@ -183,6 +188,7 @@ internal static partial class AvanzaCommands
                     a.BuyingPower,
                     AvailableForPurchase = t?.AvailableForPurchase,
                     Tradable = t?.IsTradable,
+                    AllowedForLiveTrading = allowlist.Allowed && allowlist.Account!.Id == a.Id,
                 };
             }).ToList();
 
@@ -201,6 +207,8 @@ internal static partial class AvanzaCommands
             }
 
             table.Write(output);
+            output.WriteLine();
+            output.WriteLine(allowlist.Describe());
             return 0;
         }));
         return command;

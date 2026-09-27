@@ -192,12 +192,27 @@ The exact list, with who does what, is in `docs/plans/07-phase7-confirm.md` §"R
   - name the one account that may trade
   - create the key and promote
 - **Claude** (tested on recordings, never run live):
-  - Avanza's pre-trade `validate` and fee calls
-  - the live account and positions feeding the limits
+  - Avanza's pre-trade `validate` and fee calls (done)
+  - the live account and positions feeding the limits, and the one-account check (done)
   - the order card with typed confirmation
   - startup checks of the signed promotion
   - the live end-of-day execution report
 - **Then you** place the first minimal-size orders yourself.
+
+**Naming the account that may trade (you can do this now):**
+1. Find your ISK's full account number in Avanza (`qa accounts` shows only the last 3 digits).
+2. Store it as a user environment variable, in PowerShell:
+   `[Environment]::SetEnvironmentVariable('AVANZA__ALLOWEDACCOUNTIDS', '<account number>', 'User')`
+3. Open a new terminal and run `.\qa accounts`. The last line must end with `OK`. If it says `refused`, it says why:
+   - not set
+   - more than one id
+   - not one of your accounts
+   - not an ISK
+   - not tradable
+   - a managed account
+   - an account with credit
+
+The number never appears in any output, log or file; everything shows `***` and the last 3 digits.
 
 ## 8. How Confirm will work (Phase 7, planned)
 
