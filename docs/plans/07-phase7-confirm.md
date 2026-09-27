@@ -1,7 +1,7 @@
 # 07 — Phase 7: Confirm mode (real orders, each one typed by you)
 
-- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Step 1 done 2026-09-26** (see Step
-  notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
+- **Status:** planned 2026-09-26 at the owner's request ("start on phase 7"). **Steps 1–6 done** (2026-09-26 and
+  2026-09-27, see Step notes). Phase 6 is complete; the usability work that comes with this plan (`qa status`, `qa paper strategy`,
   automatic history refresh) is done. Steps 7–8 wait on the owner's capture (O4, O5).
 - **Scope:** master plan §4 Phase 7; ADR 0003 §2 (BrokerPreflight), §3 (startup HMAC check), §5 (Confirm UX), §6
   (live reconciliation); ADR 0002 (fail-safe gateway); CLAUDE.md "Absolute safety rules".
@@ -45,7 +45,7 @@ Owner's part (**O**) and Claude's part (**C**). Confirm is usable when every lin
 | O3 | you | **Verify the courtage file** of your class (`config/costs.avanza-start.json`, `verified_on`) against Avanza's price list (R20). Also answer: is the minimum courtage charged once per order when an order fills in parts? | – | `qa status`: Paper account `ok` |
 | O4 | you | **Capture one real web-app buy and one sell** (1 share is enough) with the browser's DevTools open: copy each order call's request payload and response body into text files (never cookies or headers). This finalises the order format, including the unresolved `profit` field on sells (Qluxzz #156). | – | files handed to C7 |
 | O5 | you | **Record one real deal**: after the O4 buy has filled, run `qa probe` once and sanitize the recording (`qa recordings sanitize …`); commit the fixture | O4 | a `deals` fixture with one fill |
-| O6 | you | **Name the one account that may trade** (R1): set the user environment variable `AVANZA__ALLOWEDACCOUNTIDS` to your ISK's account id | – | the Confirm startup check passes R1 |
+| O6 | you | **Name the one account that may trade** (R1): set the user environment variable `AVANZA__ALLOWEDACCOUNTIDS` to your ISK's account id (`docs/guide.md` §7) | – | `qa accounts` ends with "Live trading account (R1 …): ***123 … OK" |
 | O7 | you | **Review the live limits** in `config/risk-limits.json` for 5,000 SEK: 500 SEK per order, 1,000 SEK per name, and a 100 SEK loss stop. Keep or lower them; raising them needs a note in ADR 0003's log | – | – |
 | O8 | you | **Promote:** `qa promote --init-key` (once), then `qa promote --to Confirm` | O1 | `qa promote --verify` OK |
 | C1 | Claude | Pre-trade calls: `validate` and `preliminaryfee` | – | step 1 green |
@@ -77,8 +77,8 @@ Nothing is taken from memory.
 |---|---|---|
 | **The commands** | `qa trade run --mode confirm` runs the daily session with a card per order. `qa rebalance` lists what the strategy would trade now and sends nothing. `qa rebalance --mode confirm --execute` runs the cards now instead of at 09:10. `qa paper run` stays as it is (it equals `qa trade run --mode paper`). | Every live start carries `--mode confirm`, which the hook's rule 1 already blocks for Claude. You get one familiar session command. |
 | **The confirmation text** | The ticker plus `JA`: `ERIC-B JA`, `ERIC B JA` or `eric-b ja`. The hyphen/space and case are normalised as everywhere else in qa. `JA` alone, `y`, Enter or another ticker **skips** that order. | ADR 0003 §5. Typing the ticker proves you read which order it is. |
-| **30 s expiry** | Measured from the card's render with the injected clock, and checked again after the input line arrives. A correct answer after 30 s is a skip. | ADR 0003 §5. The clock is testable. |
-| **Re-check after JA** | All of R1–R21, including a **fresh `validate`**, on a fresh quote, before sending. Anything now failing ⇒ skip, with the failing checks on the card. | ADR 0003 §5; prices move while you read. |
+| **30 s expiry** | Measured from the card's render with the injected clock, and checked again after the input line arrives. A correct answer after 30 s is a skip. An answer within the first **1 s** is a skip too (added in step 3), and a line typed while no card was shown never counts. | ADR 0003 §5. The clock is testable. Nobody reads a card in under a second: a faster answer was typed ahead or meant for the card before. |
+| **Re-check after JA** | All of R1–R21, including a **fresh `validate`**, on a fresh quote and a fresh account read, before sending. Anything now failing ⇒ skip, with the failing checks on the card. | ADR 0003 §5; prices move while you read. |
 | **A skip** | An audited `confirm-skip` event, **not** a reject: it doesn't count towards "3 rejects in a row" and doesn't spoil a clean day. The next card is re-planned. | Declining is the human doing their job. |
 | **Fee on the card** | Avanza's `preliminaryfee` next to the model's courtage. A difference of more than 1 SEK is flagged on the card, and R9 uses Avanza's figure. | ADR 0003 R9/R21. The class need not be trusted blindly. |
 | **Account (R1)** | Exactly one account id in `AVANZA__ALLOWEDACCOUNTIDS`, and it must be an ISK in your accounts overview. It is unset, more than one, not found or not an ISK ⇒ Confirm refuses to start. Masked `***123` everywhere. | ADR 0003 R1: one ISK expected. |
@@ -98,7 +98,7 @@ Nothing is taken from memory.
    - an `IBrokerPreflight` port
    - tests: strict deserialization, drift ⇒ halt, and `valid:false` ⇒ R21 fails
 2. **Live account state and R1:**
-   - an `AvanzaAccountState : IAccountState` from the positions and trading-accounts reads
+   - a live `IAccountState` from the positions and trading-accounts reads
    - an R1 allowlist from the environment
    - tests on the Phase 3 fixtures: values, masking, and every refusal case
 3. **Order card and confirmation:**
@@ -154,6 +154,218 @@ Nothing is taken from memory.
 - **Tests:**
   - Avanza: 22 preflight, 3 architecture and 1 CLI.
   - Trading: 6 R21 and fee tests.
+
+**Step 2: live account state and R1 (done 2026-09-27).**
+- **No new endpoint:** only the trading-accounts and positions reads from Phase 3. The one new field in the domain
+  type is `availableForPurchaseWithoutCredit`, which the DTO already had (pinned Go SDK source).
+- **R1, `AccountAllowlist` (Trading):** reads `AVANZA__ALLOWEDACCOUNTIDS` and refuses with a masked reason when:
+  - it is unset or blank
+  - it names more than one id (comma, semicolon or space separated; the same id twice counts as two)
+  - the id is not among your trading accounts
+  - the account is not tradable, not an ISK (`INVESTERINGSSPARKONTO`), discretionary, or Avanza didn't say whether it
+    is discretionary (unknown counts as managed)
+  - the account has credit (R8: no leverage). This and "discretionary" are stricter than the plan's table: both follow
+    from ADR 0003 (no leverage; this program never trades a managed account).
+  - Every problem of the account is listed, not just the first. The result gives R1's input (the one allowed id).
+- **`GatewayAccountState` (Trading), the live `IAccountState`.** The plan said `AvanzaAccountState`. It lives in
+  Trading and reads through the Core `IBrokerGateway`, like `GatewayBrokerState`, because Avanza does not reference
+  Trading and must not.
+  - **Cash (R9):** `availableForPurchase`, which Avanza already reduces for working buys, capped at the credit-free
+    figure.
+  - **Positions (R4):** whole-share holdings with an orderbook id. Funds (fractional) and holdings without an orderbook
+    count towards the value only.
+  - **Value:** each holding at the composed quote (last, else mid) plus the account's cash position. A holding without
+    a quote, or not in SEK, keeps the broker's SEK value. Cash in another currency is refused (Phase 7 is SEK only).
+  - **Start of the day (R19):** the first snapshot of a Stockholm day, kept in `state/live-start-of-day.json` (masked
+    account, date, value), so a restart can't reset the loss stop. An unreadable file refuses rather than forgetting
+    the day's loss. Another account's record is ignored.
+  - **Refresh:** the broker is read again when the holdings are 30 s old (the reconciliation interval) or after
+    `Invalidate()`, which step 3 calls after every order, fill and reject. Every read checks the R1 conditions again.
+    An account that changed throws `AccountStateException` (masked). Broker failures (session expired, drift)
+    propagate. The gateway turns both into a halt in step 3, where the live path is wired.
+- **`qa accounts`** now ends with one line saying whether `AVANZA__ALLOWEDACCOUNTIDS` names an account that may trade
+  (`allowedForLiveTrading` in `--json`). You can check O6 now, before Confirm exists.
+- **Tests:**
+  - Trading: 35, covering every refusal case, masking, values, marks, funds, the credit cap, refresh and re-check,
+    the start-of-day record across a restart and a new day, and R1 in the risk engine.
+  - Avanza: your 2026-09-25 recording through the real read pipeline. R1 allows the ISK `***193` and refuses the
+    other two accounts (not an ISK; not tradable). The state gives 3.45 SEK available, 435 shares worth 461.334 SEK,
+    and a value of 466.6299 SEK.
+  - CLI: the `qa accounts` line and JSON field, masked.
+
+**Step 3: order card and confirmation (done 2026-09-27).**
+- **`OrderCard`** (Trading/Confirm) has every ADR 0003 §5 field and all 21 checks with observed against limit, and
+  ends with exactly what to type. The real rendering is in `docs/guide.md` §8.
+- **`ConfirmationPrompt`** reads the input on one background thread; a console read can't be cancelled, so a card can
+  expire while the terminal still waits for a line. Each line is stamped with the injected clock when it arrives.
+  - Confirms: the ticker plus `JA`, normalised (case, hyphen, underscore, spaces), between 1 s and 30 s after the card
+    appeared.
+  - Skips: everything else. The reason never repeats what was typed, so a password typed by mistake can't reach the
+    audit log.
+  - Lines typed before the card appeared are discarded. A closed input skips every card.
+  - **`ConsoleOrderConfirmation`** prints the card, the `>` prompt and the verdict. The CLI uses it from step 5.
+- **The gateway's Confirm path** (`OrderGateway`, the only sender):
+  1. Our checks first. Avanza's `validate` + `preliminaryfee` are asked only when every other check passes; then R21
+     judges the validation and R9 counts Avanza's fee. A preflight fault raises its halt.
+  2. The card, through `IOrderConfirmation`. A halt while it is shown (the kill switch included) ends the wait as a
+     skip. Stopping the session cancels it and sends nothing.
+  3. After `JA`: the account is re-read, the quote is the latest, Avanza is asked again, and all 21 checks run again.
+     Anything failing ⇒ skip.
+  4. Only then the gate (`decision: confirmed`) and the send. The account state is invalidated after every send and
+     every fill.
+  - **New statuses:** `Skipped` (declined, expired, too fast, no input, halted, or the re-check failed) and `Blocked`
+    (the account couldn't be read).
+  - **A new halt, `Account`:** the live account changed and may no longer trade. Session expiry, drift and a gone
+    endpoint on the account reads raise their usual halts; a timeout only blocks that order.
+- **Audit records:** `preflight`, `confirm-card`, `confirm-answer`, `recheck`, `confirm-skip`, `account-unavailable`.
+  The end-of-day report treats a failed re-check as a skip, not a risk rejection. Skips are listed as events and
+  don't spoil the day.
+- **Where it can run now:** only as a rehearsal on a simulated channel, and only in tests. Nothing composes Confirm
+  yet: `PromotionState.HighestImplemented` is still Paper, and the real channel is refused until step 4's startup
+  checks exist. `InstrumentSpec` gained the ISIN and market place, which `qa paper run` now fills from the orderbook.
+- **For step 5:** the session must not show a card again for an instrument whose card was skipped in the same run.
+  Together with the 1 s rule, this means a late `JA` can never confirm a different card.
+- **Tests (57):**
+  - prompt: 31 (normalised answers, every kind of refusal, the 1 s and 30 s boundaries, type-ahead, a late answer
+    meant for the card before, end of input, cancellation, the console card)
+  - card: 2
+  - gateway: 24 (one send per confirmed card after the re-check, audit order, every non-`JA` answer as a skip that is
+    not a reject in the end-of-day report, a price move and an Avanza refusal at the re-check, a halt or a stop during
+    the card, Avanza asked only after our checks, R21, R9 on Avanza's fee, the fee flag, a preflight fault halts, no
+    ISIN, account failures and their halts, fills invalidate the account, constructor rules, Paper never asks Avanza)
+
+**Step 4: startup gate and locks (done 2026-09-27).**
+- **`ConfirmStartup`** (Trading/Modes) runs nine checks. None of them stops the others, so the terminal gets the
+  whole list:
+  1. **not started from Claude Code:** `CLAUDECODE` or `CLAUDE_CODE_ENTRYPOINT` set ⇒ refused. Claude Code sets both in
+     every shell it starts; the variables are read through the CLI's environment seam, so tests can check both
+     answers.
+  2. **promotion:** your key is present, `Promotion.Verify` passes (HMAC, mode chain, evidence unchanged), and the
+     state allows Confirm.
+  3. **R20:** this year's calendar and the courtage class have `verified_on`.
+  4. **kill switch** off.
+  5. **trading not disabled:** no `state/trading-disabled.json` (ADR 0002 §5; the Phase 9 canary writes it).
+  6. **one session:** this session holds `state/session.lock`.
+  7. **audit chain** intact.
+  8. **R1:** the step 2 allowlist.
+  9. **order channel:** real, and ready.
+- **Where "ready" comes from:** the order port gained `NotReadyReason` (null by default). The Avanza channel returns
+  one until step 7, when O4 and O5 finalise the order format. **So Confirm cannot start against Avanza before
+  step 7**, whatever else passes.
+- **`LiveAuthorization`:** only `ConfirmStartup` creates one. Its constructor is internal, and an IL-scanning
+  architecture test (with a positive control) checks the creator.
+  - It names the mode, the account, the exact channel instance, when it was issued, and the checks.
+  - `OrderGateway` accepts a channel that is not simulated only in Confirm, only with an authorization for that
+    instance, and only when R1's allowed accounts are exactly the authorized one.
+  - `gateway-start` records the authorization (masked account and every check line).
+  - A simulated channel with an authorization is refused too. Auto is refused until Phase 8.
+- **`PromotionState.HighestImplemented` is Confirm.** A promotion to Confirm now allows Confirm, but only through the
+  startup checks. `qa promote --to Confirm` now says so instead of "arrives in Phase 7".
+- **Hook rule 7** blocks `qa trade` with any flags and `qa rebalance … --execute`, in every launcher spelling
+  (`qa`, `./qa`, `.\qa.ps1`, `qa.exe`, `qa.dll`, `dotnet run … --`). Plain `qa rebalance` stays allowed, because
+  it sends nothing. The self-test grew from 51 to 78 cases; `docs/setup.md` §4 lists every rule and the binary's own
+  refusal.
+- **ADR 0004** ("recorded" in ADR 0003 §1) was accepted on 2026-09-25. There is nothing to check for it at runtime.
+- **Tests (25 new):**
+  - 18 for the startup gate: all pass ⇒ an authorization, and each of 16 failures alone refuses, with the whole
+    list shown and ids masked. Several failures are all listed.
+  - 3 for the gateway with a real channel: an authorized confirmed card sends exactly once, a declined one sends
+    nothing, and six ways of holding the wrong authorization are refused.
+  - 2 architecture: only `ConfirmStartup` creates an authorization, and the Avanza channel says it is not ready.
+  - 2 more mode-ceiling rows.
+  - Hook self-test: 78 of 78.
+- **For step 5:**
+  - the CLI composes the checks after one login: R1 from the trading accounts, the lock, the channel from
+    `CreateOrderChannel` (then no longer "nothing asks for it")
+  - `qa status` shows the same list
+  - live fills come through reconciliation, which must also invalidate the account state
+
+**Step 5: the CLI and the Confirm spy (done 2026-09-27).**
+- **`qa trade run --mode confirm`** and **`qa rebalance --mode confirm --execute`** (`AvanzaCommands.Trade.cs`). `--mode` is
+  required; `paper` points to `qa paper run`, and `auto` and anything else are refused.
+  1. The startup checks run **before any login**, with the channel but without the account. When one fails, the whole list
+     is printed and nothing is logged in to. This is why every real start stops before BankID today: the Avanza channel
+     is not ready.
+  2. One login, then R1 from the trading accounts, then the full checks. Only a passing run yields the authorization.
+     Both runs are audited (`confirm-startup`).
+  3. The instruments (with ISIN and market place), the history refresh, the live account state, the quote stream, the
+     preflight and the console cards. Then the gateway with the authorization, the kill switch on the live account, and
+     live reconciliation (`GatewayBrokerState`).
+- **`ConfirmSession`** (Trading/Live) is the Paper session's day with cards:
+  - **It re-plans before every card** on the current account and quotes. Cards are at least 13 s apart (R11).
+  - **One card per instrument a day:** skipped, rejected and sent all count. This is the step 3 promise: a late `JA`
+    can never confirm a different card.
+  - Reconciliation every 30 s marks the account state stale. A read it can't do raises its halt:
+    - drift, or deals not modelled yet (the first real fill before O5) ⇒ `SchemaDrift` ⇒ the kill switch
+    - session expired ⇒ `Session`
+    - a timeout is audited and tried again
+  - **Stopping cancels its working orders** through the gateway, like Paper. **Found and fixed while testing:** a stop
+    between `JA` and the send now sends nothing (the gateway checks the stop signal after the re-check, and audits a
+    skip).
+- **`qa rebalance`** without `--execute`:
+  - one login, R1, the live account and a polled quote per instrument, then the plan
+  - read-only, and it needs no mode
+  - it does fix the day's start value for R19 if it is the day's first account read (the first snapshot of a Stockholm
+    day is the start of the day, whoever reads it)
+- **Shared halt mapping** (`BrokerHalts`) for the gateway, the kill switch and the session. The kill switch's loss stop no
+  longer throws on a failed account read: it halts when the failure means it, and otherwise tries again.
+- **`qa status`**, once promoted to Confirm, shows a "Confirm checks" line: every check that runs offline, plus the Avanza
+  order format (`AvanzaOrderChannel.FormatNotFinal`), with a next step for each open one.
+- **Access:** `CreateOrderChannel` and `CreatePreflight` are public now. The IL architecture tests pin their callers: only
+  the CLI services' channel factory asks for the channel, and only the CLI's Confirm composition asks for the preflight.
+  The command-tree test allows `trade` and `rebalance`; the order and transfer verbs stay forbidden.
+- **Tests (26 new):**
+  - **Confirm spy, 19,** whole CLI runs over the fake server, fake clock and scripted keyboard. The channel stand-in sends
+    the real channel's requests but says it is ready, as step 7 will:
+    - `ERIC-B JA` ⇒ exactly one place POST (account, orderbook, side checked) after two `validate` + fee pairs, a masked
+      account in all output, an intact audit and the lock released
+    - `VOLV-B JA`, `JA`, or no answer ⇒ zero order-route requests and one card only
+    - a re-check refusal from Avanza ⇒ none
+    - `rebalance --execute` ⇒ one
+    - five refusals before any request: Claude Code, the provisional format, the kill switch, no promotion, calendar not
+      verified
+    - an R1 refusal after the login ⇒ no order or preflight request
+    - the mode rules; `rebalance` plan-only sends only login POSTs
+    - status lists the open checks
+  - **Session, 6:** re-plan and one card per instrument, the 13 s pace, halting read failures, a passing one, stop cancels.
+  - **Gateway, 1:** a stop after `JA`.
+  - **Hook self-test still 78/78.** I never ran any of these commands in a shell: the tests call the command code
+    in-process against the fake server.
+
+**Step 6: reports (done 2026-09-27).**
+- **What the gateway records:** a confirmed order's `gate` record now carries what it is measured against:
+  - the decision price
+  - the bid, ask, mid and last when it was sent (the re-check's quote)
+  - Avanza's quoted fee (the re-check's preliminary fee) and the model's
+- **What the session records:** the Confirm session's `session-start` records the backtest's cost assumption: half-spread
+  + slippage from the courtage file (10 bps for Start today).
+- **The end-of-day report** (`EodReport.Live`), still built from the audit log alone:
+  - every confirmed order, with its average fill (partial fills weighted by value) against the decision price and
+    against the arrival mid, in bps, signed so positive is a cost; Avanza's quoted fee against the model's; and the fees
+    booked with the fills (0 until step 7 models the real deals)
+  - the day's value-weighted mean slippage, compared with the assumption
+  - the count of fees more than 1 SEK from the model
+  - `UnknownAtEnd`, the orders still Unknown when the day's audit ends
+  - rehearsals on a simulated channel are marked and never count
+- **The Auto gate** (`PromotionGate.Auto`), over every Confirm day:
+  - ≥ 20 confirmed live orders
+  - no order Unknown at the end of a day
+  - the value-weighted mean slippage vs the arrival mid ≤ the strictest recorded assumption
+  - **no violations on Confirm days**: stricter than ADR 0003's list, because a live day with a violation is no evidence
+  - an intact audit chain
+  - the fees quoted and modelled are shown for information
+  - It is shown by `qa report gate` (under the Confirm gate) and counted in `qa status`. The promotion command still
+    refuses Auto: Auto is Phase 8.
+- **Fixed while building it (step 5 bug):** the Confirm session's close record has no paper cash or fees, and rebuilding
+  that day's report would have thrown. The report now takes whatever values the record has. The session also records
+  the available cash.
+- **Tests (14 new):**
+  - 11 on audit fixtures: the slippage maths with partial fills, a sell and an unfilled order; a mean above the
+    assumption; the Confirm close record; Unknown at the end; the Auto gate met at 20 and not met at 19, above the
+    assumption, with rehearsals only, without an assumption, with an Unknown or a violation, and on Paper days only
+  - 1 through the real gateway and the OMS: a confirmed order and its reconciled fill in the report
+  - 2 CLI: `qa report eod` and `qa report gate`, and the `qa status` count
+  - The Confirm spy now also checks the live line of the session's own report.
 
 ## Test map (planned)
 

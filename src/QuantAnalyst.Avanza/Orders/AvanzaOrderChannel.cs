@@ -43,7 +43,19 @@ public sealed class AvanzaOrderChannel : IBrokerOrderChannel
         _timeout = timeout;
     }
 
+    /// <summary>
+    /// Why real orders wait (plan 07 step 7): the order bodies and answers are provisional until the owner captures a
+    /// real web-app buy and sell (O4) and a recorded deal (O5) confirms the deals mapper.
+    /// </summary>
+    internal const string Provisional =
+        "the Avanza order format is provisional until your web-app capture of one buy and one sell (O4) and a recorded deal (O5) finalise it (plan 07 step 7)";
+
     public string Name => ChannelName;
+
+    /// <summary>Gets why no channel of this build may send real orders yet (for <c>qa status</c>), or null once the format is final.</summary>
+    public static string? FormatNotFinal => Provisional;
+
+    public string? NotReadyReason => FormatNotFinal;
 
     public Task<OrderSubmitResult> PlaceAsync(ApprovedOrder order, CancellationToken ct)
     {

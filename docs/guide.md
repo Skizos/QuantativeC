@@ -192,14 +192,36 @@ The exact list, with who does what, is in `docs/plans/07-phase7-confirm.md` §"R
   - name the one account that may trade
   - create the key and promote
 - **Claude** (tested on recordings, never run live):
-  - Avanza's pre-trade `validate` and fee calls
-  - the live account and positions feeding the limits
-  - the order card with typed confirmation
-  - startup checks of the signed promotion
-  - the live end-of-day execution report
+  - Avanza's pre-trade `validate` and fee calls (done)
+  - the live account and positions feeding the limits, and the one-account check (done)
+  - the order card with typed confirmation (done)
+  - startup checks of the signed promotion (done)
+  - the Confirm session: `qa trade run --mode confirm` and `qa rebalance` (done)
+  - the live end-of-day execution report and the Auto gate (done)
+  - the final order format from your capture
 - **Then you** place the first minimal-size orders yourself.
 
-## 8. How Confirm will work (Phase 7, planned)
+**Naming the account that may trade (you can do this now):**
+1. Find your ISK's full account number in Avanza (`qa accounts` shows only the last 3 digits).
+2. Store it as a user environment variable, in PowerShell:
+   `[Environment]::SetEnvironmentVariable('AVANZA__ALLOWEDACCOUNTIDS', '<account number>', 'User')`
+3. Open a new terminal and run `.\qa accounts`. The last line must end with `OK`. If it says `refused`, it says why:
+   - not set
+   - more than one id
+   - not one of your accounts
+   - not an ISK
+   - not tradable
+   - a managed account
+   - an account with credit
+
+The number never appears in any output, log or file; everything shows `***` and the last 3 digits.
+
+## 8. How Confirm works (Phase 7)
+
+**Built, but it can't start yet.** The session, the cards and the startup checks exist and are tested against a fake
+Avanza server. The last startup check refuses the Avanza order channel until your capture (O4, O5) finalises its
+format (plan 07 step 7). Until then, `.\qa trade run --mode confirm` prints its checks and stops before any login.
+`.\qa status` shows what is still open under "Confirm checks".
 
 **Your day:** almost the same as Paper, but you must be at the computer at the decision time.
 
@@ -207,45 +229,73 @@ The exact list, with who does what, is in `docs/plans/07-phase7-confirm.md` §"R
 .\qa trade run --mode confirm       # instead of: .\qa paper run
 ```
 
-At 09:10 every order the strategy wants is shown as a card, one at a time:
+At 09:10 every order the strategy wants is shown as a card, one at a time. This is the real card (built in step 3;
+the numbers are an example):
 
 ```
 ──────────────────────────────────────────────────────────────────────
- ORDER 1 of 2 · CONFIRM MODE · a real order on your Avanza account
+ ORDER 1 · CONFIRM MODE · a real order on your Avanza account
 ──────────────────────────────────────────────────────────────────────
- Account     ISK ***123
+ Account     ***123
  Instrument  Ericsson B   ERIC B · orderbook 5240 · SE0000108656
  Side        BUY
  Volume      6
  Limit       70.84 SEK    (rounded down from 70.857 to the 0.02 tick)
  Value       425.04 SEK
- Fee         Avanza 0.00 SEK · model 0.00 SEK (Start class)
+ Fee         Avanza 0.00 SEK · model 0.00 SEK
  Reason      ma-cross(fast=20, slow=100): target 20 % of the account in ERIC B
- Decided     09:10:00 at 70.62 (close 2026-09-25: 70.40)
+ Decided     09:10:00 at 70.62
  Market      bid 70.84 × 1,200 · ask 70.86 × 950 · last 70.86 · 2 s old
 
  Risk checks: 21 of 21 pass
-   R1  account          ***123 is allowed                         ok
-   R5  price collar     −0.03 % from 70.86 (max ±2 %)             ok
-   R6  order value      425 SEK (max 500)                         ok
-   R7  position after   425 SEK (max 1,000)                       ok
-   R9  cash             425 SEK of 4,210 available                ok
-   …
-   R21 Avanza validate  valid                                     ok
+   R1  account allowlist             ***123  (limit 1 allowed account(s))  ok
+   R2  instrument allowlist          ERIC B (5240)  (limit 1 instrument(s))  ok
+   R3  order type                    Limit, condition NORMAL, limit 70.84  (limit LIMIT, NORMAL)  ok
+   R4  no short selling              buy  (limit sells <= position)  ok
+   R5  price collar                  limit 70.84 is 0.03 % from 70.86  (limit ±2 %)  ok
+   R6  max order value               425.04 SEK  (limit 500.00 SEK = min(25,000.00 SEK, 10 % of 5,000.00 SEK))  ok
+   R7  max position per instrument   425.04 SEK after the order (incl. working buys)  (limit 1,000.00 SEK)  ok
+   R8  max gross exposure            425.04 SEK after the order  (limit 5,000.00 SEK)  ok
+   R9  available cash                425.04 SEK incl. fees 0.00 SEK  (limit 4,210.00 SEK)  ok
+   R10 max orders per day            1 with this one  (limit 20)  ok
+   R11 max order actions per minute  1 in the last minute with this one  (limit 5)  ok
+   R12 min interval same instrument  no earlier action  (limit 5 s)  ok
+   R13 no opposite working order     0 opposite working order(s)  (limit 0)  ok
+   R14 duplicate intent              0 identical intent(s) in the window  (limit 0 within 60 s)  ok
+   R15 fresh market data             age 2 s  (limit <= 10 s, stream connected)  ok
+   R16 trading window                09:10:02 Stockholm (Full day)  (limit 09:05–17:20)  ok
+   R17 no halt                       none  (limit none)  ok
+   R18 no unknown orders             0 unknown order(s) in the instrument  (limit 0)  ok
+   R19 daily loss stop               0 % today  (limit > -2 %)  ok
+   R20 verified constants            courtage verified, calendar verified, tick table verified  (limit all verified)  ok
+   R21 broker preflight              all valid  (limit all valid)  ok
 
  Type  ERIC-B JA  within 30 s to send. Anything else skips this order.
  > ERIC-B JA
- Re-checked: 21 of 21 pass (quote 1 s old). Sent: Avanza order ***456, Working.
- 09:10:21 filled 6 @ 70.84, fee 0.00 SEK.
-──────────────────────────────────────────────────────────────────────
+ Confirmed. Re-checking before sending …
+ Re-checked: 21 of 21 pass (quote 1 s old). Sending.
+ Sent: order 123456789, Working.
 ```
 
 - **The confirmation** is the ticker plus `JA`: `ERIC-B JA` (a space instead of the hyphen and lower case also work). `y`, `JA` alone, Enter or anything else **skips** the order. Nothing is sent.
 - **30 seconds** from when the card appears. A late answer is a skip, even a correct one.
+- **Not in the first second:** an answer that arrives within 1 s of the card appearing was typed ahead (or meant for the card before), so it skips. A line typed while no card was shown never counts.
+- **A card only for an order that passes everything:** all 21 checks, including Avanza's own validation. Avanza is asked only about orders that pass our checks first.
 - **Re-checked before sending:** if anything changed to fail after you typed (the price moved outside the collar, the quote went stale, the kill switch fired), the order is skipped and the card says why.
-- **One order per confirmation.** After each fill or skip, the next card is re-planned with the new state.
+- **One order per confirmation.** Before every card the plan is made again on the current account and prices.
+- **One card per instrument a day:** a skipped, rejected or sent one is not proposed again that day, so a late `JA` can never confirm a different card.
 - **Ad hoc:** `.\qa rebalance` shows what the strategy would trade right now, sending nothing. `.\qa rebalance --mode confirm --execute` runs the same cards now instead of waiting for 09:10.
-- **The kill switch, the loss stop and the end-of-day report** work exactly as in Paper. The report adds each fill's slippage against the decision and arrival prices, and Avanza's fee against the model's.
+- **Stopping** (Ctrl+C, `.\qa kill`) cancels the session's working orders at Avanza, so nothing it placed is left unwatched. A stop between your `JA` and the send sends nothing.
+- **The kill switch and the loss stop** work exactly as in Paper, on your live account's values.
+- **The end-of-day report** has a live section for every confirmed order:
+  - its fills against the decision price and against the mid when it was sent, in bps (positive is a cost)
+  - Avanza's quoted fee against the model's
+  - the day's value-weighted mean slippage against the backtest's cost assumption (half-spread + slippage)
 
-After at least 20 confirmed live orders with no unresolved unknown states and slippage within the backtest's
-assumption, `.\qa report gate` will show the Auto gate (Phase 8).
+**Towards Auto (Phase 8):** `.\qa report gate` shows the Auto gate under the Confirm gate, and `.\qa status` shows how
+many confirmed orders you have. The gate needs:
+- 20 confirmed live orders
+- none still Unknown at the end of a day
+- mean slippage within the backtest's assumption
+- no violations on Confirm days
+- an intact audit chain

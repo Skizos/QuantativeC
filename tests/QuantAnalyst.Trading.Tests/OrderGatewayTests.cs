@@ -156,12 +156,12 @@ public sealed class OrderGatewayTests : IDisposable
         [.. Directory.GetFiles(_dir.Path).Order().SelectMany(AuditLog.Read).Select(r => r.GetProperty("kind").GetString()!)];
 
     [Theory]
-    [InlineData(TradingMode.Confirm)]
-    [InlineData(TradingMode.Auto)]
-    public void ConfirmAndAuto_CannotStart_InPhase6(TradingMode mode)
+    [InlineData(TradingMode.Confirm, "needs the order card with its typed confirmation and Avanza's pre-trade checks")]
+    [InlineData(TradingMode.Auto, "not available before Phase 8")]
+    public void Confirm_NeedsItsCardAndPreflight_AndAutoCannotStart(TradingMode mode, string expected)
     {
         ModeNotAllowedException ex = Assert.Throws<ModeNotAllowedException>(() => NewGateway(new FakeSimulatedChannel(), mode));
-        Assert.Contains("not available in Phase 6", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(expected, ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]

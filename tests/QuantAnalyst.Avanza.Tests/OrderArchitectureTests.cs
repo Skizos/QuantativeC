@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using QuantAnalyst.Avanza.Http;
 using QuantAnalyst.Avanza.Orders;
+using QuantAnalyst.Cli.Commands;
 using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Trading;
 
@@ -90,24 +91,45 @@ public sealed class OrderArchitectureTests
     }
 
     [Fact]
-    public void ThePreflight_IsBuiltOnlyByTheConnection()
+    public void ThePreflight_IsBuiltOnlyByTheConnection_AndAskedForOnlyByTheConfirmSession()
     {
         IlReference[] built = [.. All.Value.Where(r => r.Target is ConstructorInfo c && c.DeclaringType == typeof(AvanzaPreflight))];
         Assert.Equal([typeof(AvanzaConnection)], built.Select(b => b.Owner).Distinct());
         Assert.True(typeof(AvanzaPreflight).GetConstructors().Length == 0, "the preflight must have no public constructor");
-        Assert.True(typeof(AvanzaConnection).GetMethod("CreatePreflight", BindingFlags.Instance | BindingFlags.NonPublic)!.IsAssembly);
+
+        // The probe gets its preflight inside the connection; outside it, only the CLI's Confirm composition asks.
+        MethodInfo factory = typeof(AvanzaConnection).GetMethod(nameof(AvanzaConnection.CreatePreflight))!;
+        Assert.Equal([typeof(AvanzaCommands)], All.Value.Where(r => r.Target == factory).Select(r => r.Owner).Distinct());
     }
 
     [Fact]
-    public void TheAvanzaOrderChannel_IsBuiltOnlyByTheConnection_AndNothingAsksForItInPhase6()
+    public void OnlyTheConfirmStartupChecks_CreateALiveAuthorization()
+    {
+        IlReference[] created = [.. All.Value.Where(r => r.Target is ConstructorInfo c && c.DeclaringType == typeof(Trading.Modes.LiveAuthorization))];
+        Assert.Equal([typeof(Trading.Modes.ConfirmStartup)], created.Select(c => c.Owner).Distinct()); // positive control: it is created there
+        Assert.Empty(typeof(Trading.Modes.LiveAuthorization).GetConstructors()); // no public constructor
+    }
+
+    [Fact]
+    public void TheAvanzaOrderChannel_SaysItIsNotReady_UntilTheOwnersCapture()
+    {
+        using var rig = new TestRig();
+        AvanzaOrderChannel channel = rig.Connection.CreateOrderChannel();
+        Assert.Equal(AvanzaOrderChannel.Provisional, channel.NotReadyReason);
+        Assert.Contains("(O4)", channel.NotReadyReason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheAvanzaOrderChannel_IsBuiltOnlyByTheConnection_AndOnlyTheCliServicesAskForIt()
     {
         IlReference[] built = [.. All.Value.Where(r => r.Target is ConstructorInfo c && c.DeclaringType == typeof(AvanzaOrderChannel))];
         Assert.Equal([typeof(AvanzaConnection)], built.Select(b => b.Owner).Distinct());
         Assert.True(typeof(AvanzaOrderChannel).GetConstructors().Length == 0, "the channel must have no public constructor");
 
-        MethodInfo factory = typeof(AvanzaConnection).GetMethod("CreateOrderChannel", BindingFlags.Instance | BindingFlags.NonPublic)!;
-        Assert.True(factory.IsAssembly, "CreateOrderChannel must stay internal in Phase 6");
-        Assert.Empty(All.Value.Where(r => r.Target == factory).Select(r => r.ToString()));
+        // The one caller is the CLI services' default channel factory; the Confirm session is its only user, and the
+        // gateway sends through the channel only with the live authorization issued for it.
+        MethodInfo factory = typeof(AvanzaConnection).GetMethod(nameof(AvanzaConnection.CreateOrderChannel))!;
+        Assert.Equal([typeof(AvanzaCliServices)], All.Value.Where(r => r.Target == factory).Select(r => r.Owner).Distinct());
     }
 }
 

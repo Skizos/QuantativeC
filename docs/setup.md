@@ -107,9 +107,16 @@ Claude Code must never run QuantAnalyst in **Confirm** or **Auto** mode, or call
 - set `TRADING__MODE` / `Trading:Mode` to Confirm/Auto, including `dotnet user-secrets set`
 - reference Avanza order routes (`order-entry/order`, `rest/order/{new,modify,delete}`, `stoploss/{new,modify}`, `fund-order-page/{buy,sell}`)
 - reference Avanza money-movement paths: `transfer`, `withdraw`, `deposit`, `payment`, `uttag`, `overforing` or `insattning` under `/_api/` (ADR 0004)
+- change `config/holdout.json` (the final backtest holdout is yours to unlock)
+- run `qa promote` or change `promotion/state.json` (promotion is yours, ADR 0003 §3)
+- run `qa trade` with any flags, or `qa rebalance --execute` (live sessions are yours to start, Phase 7)
+
+**A second, independent lock (Phase 7):** the program itself refuses to start Confirm when `CLAUDECODE` or
+`CLAUDE_CODE_ENTRYPOINT` is set. Claude Code sets both in every shell it starts, so even a command the hook missed
+can't start a live session from Claude Code. It is the first of the Confirm startup checks.
 
 **Check it in three steps:**
-1. **Self-test:** `bash tests/hooks/block-live-trading.test.sh`. Expect 29 lines starting with `ok` and exit code 0. CI runs this on every push.
+1. **Self-test:** `bash tests/hooks/block-live-trading.test.sh`. Expect 78 lines starting with `ok` and exit code 0. CI runs this on every push.
 2. **Registration:** in Claude Code, run `/hooks` and confirm there is a `PreToolUse` entry for `Bash` pointing to `block-live-trading.sh`.
 3. **Live refusal:** ask Claude Code to run `echo qa paper run --mode Auto`. The tool call must be refused with `BLOCKED by .claude/hooks/block-live-trading.sh: …`. If it runs, stop, because the hook is not active.
 

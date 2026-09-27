@@ -16,8 +16,11 @@ public sealed record PromotionState(TradingMode MaxAllowed, int Records, string 
     public const string StateFile = "state.json";
     public const string TemplateFile = "state.template.json";
 
-    /// <summary>The highest mode Phase 6 can run, whatever the promotion record says.</summary>
-    public const TradingMode HighestImplemented = TradingMode.Paper;
+    /// <summary>
+    /// The highest mode this build can run, whatever the promotion record says. Confirm (Phase 7) still starts only
+    /// through <see cref="ConfirmStartup"/>, whose checks every live session must pass.
+    /// </summary>
+    public const TradingMode HighestImplemented = TradingMode.Confirm;
 
     public static PromotionState Load(string promotionDirectory)
     {
@@ -62,7 +65,7 @@ public sealed record PromotionState(TradingMode MaxAllowed, int Records, string 
 
         if (requested > HighestImplemented)
         {
-            throw new ModeNotAllowedException($"Mode {requested} is not available yet: Confirm arrives in Phase 7 and Auto in Phase 8.");
+            throw new ModeNotAllowedException($"Mode {requested} is not available yet: Auto arrives in Phase 8.");
         }
 
         return requested;

@@ -314,7 +314,25 @@ public sealed class KillSwitch : IDisposable
 
         if (_account is not null)
         {
-            AccountSnapshot a = await _account.GetAsync(ct).ConfigureAwait(false);
+            AccountSnapshot a;
+            try
+            {
+                a = await _account.GetAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (BrokerHalts.IsLiveReadFailure(ex))
+            {
+                // The loss stop can't be judged without the account: halt new orders when the failure means it; a
+                // passing failure (a timeout) is audited and tried again on the next tick.
+                HaltReason? reason = BrokerHalts.For(ex);
+                _audit.Append("loss-stop-unavailable", new { error = ex.GetType().Name, ex.Message, halt = reason?.ToString() });
+                if (reason is { } r)
+                {
+                    _halts.Raise(r, "daily loss stop: " + ex.Message);
+                }
+
+                return;
+            }
+
             if (a.StartOfDayValue > 0 && (a.AccountValue - a.StartOfDayValue) / a.StartOfDayValue <= -_dailyLossStop)
             {
                 Trigger("automatic", string.Create(CultureInfo.InvariantCulture, $"daily loss stop: {a.AccountValue:N0} SEK vs {a.StartOfDayValue:N0} at the start of the day (limit -{_dailyLossStop:P1})"));

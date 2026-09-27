@@ -10,6 +10,12 @@ public interface IBrokerOrderChannel
     /// <summary>Gets a short name for audit records, e.g. "paper" or "avanza".</summary>
     string Name { get; }
 
+    /// <summary>
+    /// Gets why this channel must not send real orders yet (e.g. its order format is still provisional), or null when
+    /// it may. The Confirm startup checks refuse to authorise a channel that gives a reason.
+    /// </summary>
+    string? NotReadyReason => null;
+
     /// <summary>Places a day limit order. Never retried by the caller: a timeout or unreadable answer is Unknown.</summary>
     Task<OrderSubmitResult> PlaceAsync(ApprovedOrder order, CancellationToken ct);
 

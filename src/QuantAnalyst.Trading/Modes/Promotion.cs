@@ -81,6 +81,45 @@ public static class PromotionGate
         return new GateResult(evidence.Length >= MinPaperDays && sent > 0 && audit.Valid, lines, evidence);
     }
 
+    /// <summary>ADR 0003 §3: at least this many confirmed live orders before Auto.</summary>
+    public const int MinConfirmedOrders = 20;
+
+    /// <summary>
+    /// Confirm → Auto (ADR 0003 §3; plan 07 step 6), from every Confirm day's report: at least 20 confirmed live orders
+    /// (rehearsals on a simulated channel don't count), no order Unknown at the end of any day, the value-weighted mean
+    /// slippage of the filled ones against the arrival mid no worse than the backtest's cost assumption, no violations
+    /// on Confirm days (stricter than the ADR's list: a live day with a violation is no evidence), and an intact audit
+    /// chain. Auto itself arrives in Phase 8; this only shows how far Confirm is.
+    /// </summary>
+    public static GateResult Auto(IReadOnlyList<EodReport> reports, AuditVerification audit)
+    {
+        ArgumentNullException.ThrowIfNull(reports);
+        ArgumentNullException.ThrowIfNull(audit);
+        CultureInfo c = CultureInfo.InvariantCulture;
+        EodReport[] days = [.. reports.Where(r => r.Modes.Contains("Confirm")).OrderBy(r => r.Date)];
+        EodLiveOrder[] live = [.. days.SelectMany(r => r.Live?.Orders ?? []).Where(o => !o.Simulated)];
+        EodLiveOrder[] filled = [.. live.Where(o => o.Filled > 0 && o.AverageFillPrice is not null)];
+        decimal? mean = EodExecution.WeightedMean(filled, o => o.SlippageVsArrivalBps);
+        decimal[] assumptions = [.. days.Select(r => r.Live?.CostAssumptionBps).OfType<decimal>()];
+        decimal? assumption = assumptions.Length > 0 ? assumptions.Min() : null; // the strictest one recorded
+        bool slippageOk = mean is { } m && assumption is { } a && m <= a;
+        int unknown = days.Sum(r => r.UnknownAtEnd);
+        int violations = days.Sum(r => r.Violations.Count);
+        decimal quoted = live.Sum(o => o.AvanzaFee ?? 0m);
+        decimal model = live.Sum(o => o.ModelFee);
+
+        var lines = new List<string>
+        {
+            string.Create(c, $"{Mark(live.Length >= MinConfirmedOrders)} confirmed live orders: {live.Length} (need {MinConfirmedOrders}){(days.Length > 0 ? $", over {days.Length} Confirm day(s) from {days[0].Date:yyyy-MM-dd}" : string.Empty)}"),
+            string.Create(c, $"{Mark(unknown == 0)} orders still Unknown at the end of a day: {unknown} (need 0)"),
+            string.Create(c, $"{Mark(slippageOk)} slippage vs the arrival mid: {(mean is { } s ? $"{s:+0.0;-0.0} bps" : "none yet")} over {filled.Length} filled order(s); the backtest assumes {(assumption is { } x ? $"{x:0.#} bps" : "(not recorded)")} (half-spread + slippage)"),
+            string.Create(c, $"{Mark(violations == 0)} violations on Confirm days: {violations}"),
+            string.Create(c, $"{Mark(audit.Valid)} audit chain: {(audit.Valid ? $"intact ({audit.Records} records, {audit.Files} files)" : audit.Problem)}"),
+            string.Create(c, $"  fees: Avanza quoted {quoted:N2} SEK, the model {model:N2} SEK"),
+        };
+        return new GateResult(live.Length >= MinConfirmedOrders && unknown == 0 && slippageOk && violations == 0 && audit.Valid, lines, days);
+    }
+
     private static string Mark(bool ok) => ok ? "[ok]" : "[--]";
 }
 

@@ -40,7 +40,8 @@ internal static partial class AvanzaMapper
             a.IsTradable,
             a.HasCredit,
             a.IsDiscretionaryAccount,
-            [.. (a.CurrencyBalances ?? []).Select(c => new CurrencyBalance(c.Currency, c.Balance))]))];
+            [.. (a.CurrencyBalances ?? []).Select(c => new CurrencyBalance(c.Currency, c.Balance))],
+            a.AvailableForPurchaseWithoutCredit))];
 
     /// <summary>Only an empty deal list can be mapped until a recording shows what a deal looks like.</summary>
     public static IReadOnlyList<BrokerDeal> ToDeals(DealsDto dto) =>

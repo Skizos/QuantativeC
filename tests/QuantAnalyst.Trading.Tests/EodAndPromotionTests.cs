@@ -322,14 +322,15 @@ public sealed class PromotionSigningTests : IDisposable
     }
 
     [Fact]
-    public void APromotionToConfirm_StillCannotStartConfirmInPhase6()
+    public void APromotionToConfirm_AllowsConfirm_ButNotAuto()
     {
         string promotion = _dir.File("promotion");
         Promotion.Append(promotion, Record());
         PromotionState s = PromotionState.Load(promotion);
         Assert.Equal(TradingMode.Paper, s.Effective(TradingMode.Paper));
-        ModeNotAllowedException ex = Assert.Throws<ModeNotAllowedException>(() => s.Effective(TradingMode.Confirm));
-        Assert.Contains("Phase 7", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(TradingMode.Confirm, s.Effective(TradingMode.Confirm)); // still only through ConfirmStartup's checks
+        ModeNotAllowedException ex = Assert.Throws<ModeNotAllowedException>(() => s.Effective(TradingMode.Auto));
+        Assert.Contains("above the promotion state", ex.Message, StringComparison.Ordinal);
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(promotion, PromotionState.StateFile)));
         Assert.Equal("Confirm", doc.RootElement.GetProperty("maxAllowed").GetString());
     }
