@@ -398,7 +398,7 @@ public sealed class ViewModelTests : IDisposable
     public void TheShell_HasItsPages_APaperChip_AndAValidLoginMethod()
     {
         ShellViewModel shell = Shell();
-        Assert.Equal(["Overview", "Trading", "Accounts", "Instruments", "Strategy", "Reports"], shell.Pages.Select(p => p.Title));
+        Assert.Equal(["Overview", "Trading", "Charts", "Accounts", "Instruments", "Strategy", "Reports"], shell.Pages.Select(p => p.Title));
         Assert.Equal(PageKind.Status, shell.SelectedPage.Kind);
         Assert.StartsWith("PAPER", shell.ModeBanner, StringComparison.Ordinal);
 

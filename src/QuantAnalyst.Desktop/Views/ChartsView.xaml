@@ -1,0 +1,110 @@
+<UserControl x:Class="QuantAnalyst.Desktop.Views.ChartsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="230" />
+            <ColumnDefinition Width="16" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Your instruments: the allowlist, and any name the running session trades. -->
+        <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0,12" Margin="0">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="YOUR INSTRUMENTS" Style="{StaticResource Overline}" Margin="20,0,20,8" />
+                <ListBox ItemsSource="{Binding Instruments}" SelectedItem="{Binding Selected}" BorderThickness="0" Background="Transparent"
+                         ItemContainerStyle="{StaticResource RowItem}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="{Binding Ticker}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding Name}" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <!-- The selected name's candles. -->
+        <Border Grid.Column="2" Style="{StaticResource Card}" Margin="0">
+            <DockPanel>
+                <DockPanel DockPanel.Dock="Top">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Command="{Binding OpenWindowCommand}" Margin="0" VerticalAlignment="Top"
+                            ToolTip="Opens these charts in a window of their own, e.g. beside the Trading page or on another screen. Open as many as you like.">
+                        <StackPanel Orientation="Horizontal">
+                            <c:Icon Data="{StaticResource IconWindow}" Width="16" Height="16" Margin="0,0,6,0" />
+                            <TextBlock Text="Open in new window" />
+                        </StackPanel>
+                    </Button>
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Ticker}" Style="{StaticResource H2}" />
+                            <TextBlock Text="{Binding Name}" Style="{StaticResource Caption}" VerticalAlignment="Bottom" Margin="10,0,0,2" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                            <TextBlock Text="{Binding LastText}" Style="{StaticResource Hero}" />
+                            <TextBlock Text="{Binding ChangeText}" FontWeight="SemiBold" FontSize="15" VerticalAlignment="Bottom" Margin="14,0,0,6"
+                                       Foreground="{Binding Direction, Converter={StaticResource MarkToBrush}}" />
+                        </StackPanel>
+                        <TextBlock Text="{Binding AsOfText}" Style="{StaticResource Caption}" />
+                    </StackPanel>
+                </DockPanel>
+
+                <!-- History or Today, the candle length, the range and what is drawn. -->
+                <WrapPanel DockPanel.Dock="Top" Margin="0,14,0,0">
+                    <ListBox Style="{StaticResource Segments}" ItemsSource="{Binding Sources}" SelectedItem="{Binding SelectedSource}" Margin="0,0,18,6"
+                             ToolTip="History: the stored daily prices. Today: the running Paper session's own quotes, as it trades." />
+                    <ListBox Style="{StaticResource Segments}" ItemsSource="{Binding Periods}" SelectedItem="{Binding SelectedPeriod}" Margin="0,0,18,6"
+                             ToolTip="How long each candle is.">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Label}" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <ListBox Style="{StaticResource Segments}" ItemsSource="{Binding Ranges}" SelectedItem="{Binding SelectedRange}" Margin="0,0,18,6"
+                             Visibility="{Binding IsHistory, Converter={StaticResource Visibility}}"
+                             ToolTip="How far back the chart starts. Zoom out with the mouse wheel for older candles.">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding Label}" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,6">
+                        <CheckBox Content="Volume" IsChecked="{Binding ShowVolume}" Margin="0,0,16,0" VerticalAlignment="Center"
+                                  Foreground="{StaticResource InkSecondaryBrush}" Visibility="{Binding IsHistory, Converter={StaticResource Visibility}}" />
+                        <CheckBox Content="Averages" IsChecked="{Binding ShowAverages}" Margin="0,0,16,0" VerticalAlignment="Center"
+                                  Foreground="{StaticResource InkSecondaryBrush}" Visibility="{Binding IsHistory, Converter={StaticResource Visibility}}" />
+                        <CheckBox Content="My trades" IsChecked="{Binding ShowTrades}" VerticalAlignment="Center" Foreground="{StaticResource InkSecondaryBrush}" />
+                    </StackPanel>
+                </WrapPanel>
+
+                <!-- The latest candle's numbers and what the chart shows. -->
+                <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                    <TextBlock Text="{Binding StatsTitle}" Style="{StaticResource Overline}" />
+                    <ItemsControl ItemsSource="{Binding Stats}" Margin="0,6,0,0">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,30,6">
+                                    <TextBlock Text="{Binding Label}" Style="{StaticResource Caption}" />
+                                    <TextBlock Text="{Binding Value}" Style="{StaticResource Number}" FontWeight="SemiBold" FontSize="15" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="{Binding Note}" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                </StackPanel>
+
+                <c:CandleChart Data="{Binding Chart}" EmptyText="{Binding EmptyText}" MinHeight="320" Margin="0,12,0,0" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</UserControl>

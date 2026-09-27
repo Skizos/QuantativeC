@@ -13,6 +13,7 @@ public enum PageKind
     Session,
     Reports,
     Accounts,
+    Charts,
 }
 
 /// <summary>
@@ -77,6 +78,9 @@ public abstract class PageViewModel : ObservableObject
             ? "stopped"
             : result.Errors.FirstOrDefault() ?? (result.Lines.Count > 0 ? result.Lines[^1].Text : $"exit code {result.ExitCode}");
     }
+
+    /// <summary>Stops following the engine (a page in its own window, when the window closes).</summary>
+    protected void Detach() => Engine.PropertyChanged -= OnEnginePropertyChanged;
 
     /// <summary>Called when the engine starts or finishes a command: refresh the page's commands here.</summary>
     protected virtual void OnBusyChanged()

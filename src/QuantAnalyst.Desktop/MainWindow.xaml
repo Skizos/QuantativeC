@@ -14,6 +14,7 @@
         <DataTemplate DataType="{x:Type vm:SessionViewModel}"><views:SessionView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:ReportsViewModel}"><views:ReportsView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:AccountsViewModel}"><views:AccountsView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ChartsViewModel}"><views:ChartsView /></DataTemplate>
     </Window.Resources>
 
     <Grid>

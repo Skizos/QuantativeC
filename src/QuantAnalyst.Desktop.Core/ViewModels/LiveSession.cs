@@ -15,6 +15,7 @@ namespace QuantAnalyst.Desktop.Core.ViewModels;
 public sealed class InstrumentTile(OrderbookId id, string ticker, string name, decimal? previousClose) : ObservableObject
 {
     private readonly List<ChartPoint> _prices = [];
+    private readonly CandleBuilder _candles = new();
     private string _lastText = "–";
     private string _changeText = string.Empty;
     private string _direction = "flat";
@@ -31,6 +32,9 @@ public sealed class InstrumentTile(OrderbookId id, string ticker, string name, d
     public decimal? PreviousClose { get; } = previousClose;
 
     public IReadOnlyList<ChartPoint> Prices => _prices;
+
+    /// <summary>Gets today's one-minute candles from every price the session reported (the charts window's "Today").</summary>
+    public IReadOnlyList<Candle> Candles => _candles.Candles;
 
     public string LastText
     {
@@ -69,6 +73,7 @@ public sealed class InstrumentTile(OrderbookId id, string ticker, string name, d
     /// <summary>Adds a price (the last trade, else the mid); within <paramref name="spacing"/> of the last point it replaces it.</summary>
     internal void AddPrice(DateTimeOffset at, decimal price, TimeSpan spacing, (DateTimeOffset, DateTimeOffset)? window)
     {
+        _candles.Add(at, (double)price);
         var point = new ChartPoint(at, (double)price);
         if (_prices.Count > 0 && at - _prices[^1].At < spacing)
         {
@@ -181,6 +186,9 @@ public sealed class LiveSession : ObservableObject, ISessionObserver
     public ObservableCollection<OrderRow> Orders { get; } = [];
 
     public ObservableCollection<string> DecisionNotes { get; } = [];
+
+    /// <summary>Raised on the UI thread after a quote or an order of one instrument was applied (the charts window redraws).</summary>
+    public event Action<OrderbookId>? InstrumentChanged;
 
     /// <summary>Gets a value indicating whether a session has reported anything since the last start.</summary>
     public bool HasData
@@ -347,6 +355,8 @@ public sealed class LiveSession : ObservableObject, ISessionObserver
         {
             BuildPriceChart();
         }
+
+        InstrumentChanged?.Invoke(e.OrderbookId);
     }
 
     internal void Apply(AccountTick e)
@@ -431,6 +441,8 @@ public sealed class LiveSession : ObservableObject, ISessionObserver
         {
             BuildPriceChart();
         }
+
+        InstrumentChanged?.Invoke(e.OrderbookId);
     }
 
     internal void Apply(DecisionTick e)
@@ -444,6 +456,19 @@ public sealed class LiveSession : ObservableObject, ISessionObserver
             DecisionNotes.Add(note);
         }
     }
+
+    /// <summary>Today's fills of one instrument as chart markers (▲ bought, ▼ sold), oldest first.</summary>
+    public IReadOnlyList<ChartMarker> FillsOf(OrderbookId id) => _fills.TryGetValue(id, out List<ChartMarker>? m) ? [.. m] : [];
+
+    /// <summary>The limits of one instrument's orders still working, as chart levels.</summary>
+    public IReadOnlyList<ChartLevel> WorkingLimitsOf(OrderbookId id) =>
+    [
+        .. _orders.Values
+            .Where(o => o.Last.OrderbookId == id && o.Last.Limit is not null
+                        && o.Last.State is OmsState.New or OmsState.Sent or OmsState.Working or OmsState.PartiallyFilled)
+            .Select(o => new ChartLevel((double)o.Last.Limit!.Value,
+                string.Create(CultureInfo.InvariantCulture, $"{(o.Last.Side == OrderSide.Buy ? "Buy" : "Sell")} {Fmt.Count(o.Last.Volume - o.Last.Filled)} @ {Fmt.Price(o.Last.Limit.Value)}"))),
+    ];
 
     private static decimal? Reference(QuoteTick q) =>
         q.Last ?? (q is { Bid: { } b, Ask: { } a } ? (b + a) / 2 : null);
@@ -465,15 +490,8 @@ public sealed class LiveSession : ObservableObject, ISessionObserver
             Baseline = tile.Baseline,
             Axis = TimeAxis.Intraday,
             Window = _window,
-            Markers = _fills.TryGetValue(tile.Id, out List<ChartMarker>? m) ? [.. m] : [],
-            Levels =
-            [
-                .. _orders.Values
-                    .Where(o => o.Last.OrderbookId == tile.Id && o.Last.Limit is not null
-                                && o.Last.State is OmsState.New or OmsState.Sent or OmsState.Working or OmsState.PartiallyFilled)
-                    .Select(o => new ChartLevel((double)o.Last.Limit!.Value,
-                        string.Create(CultureInfo.InvariantCulture, $"{(o.Last.Side == OrderSide.Buy ? "Buy" : "Sell")} {Fmt.Count(o.Last.Volume - o.Last.Filled)} @ {Fmt.Price(o.Last.Limit.Value)}"))),
-            ],
+            Markers = FillsOf(tile.Id),
+            Levels = WorkingLimitsOf(tile.Id),
             FormatValue = v => Fmt.Price((decimal)v),
         };
     }

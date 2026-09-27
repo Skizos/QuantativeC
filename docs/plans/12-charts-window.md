@@ -1,6 +1,7 @@
 # 12 — A charts window: candlesticks and trading charts for your instruments
 
-- **Status:** planned 2026-09-27 at the owner's request: "Add a window for seeing candlewicks and trading graphs for the
+- **Status:** steps 1–2 done 2026-09-27; waiting for the owner's look at the window (screenshots). Planned the same
+  day at the owner's request: "Add a window for seeing candlewicks and trading graphs for the
   current instruments."
 - **Builds on:** `docs/plans/11-app-redesign.md` (the chart maths in `Desktop.Core`, the session observer, the theme).
 - **Gate:**
@@ -58,3 +59,30 @@
   end-of-day reports, at noon of their day).
 - **Tests (14 new):** periods, aggregation, minute candles, the layout, hover, markers, overlays, labels, zoom, pan,
   both sources. All pass.
+
+**Step 2: the page and the window (done 2026-09-27).**
+- **Live candles:** each of the session's instrument tiles keeps one-minute candles from every price it reports (not
+  only the thinned points of its line chart). `LiveSession` says which instrument changed (`InstrumentChanged`) and
+  gives its fills and working limits (`FillsOf`, `WorkingLimitsOf`, now also used by the Trading page's price chart).
+- **`ChartsViewModel`:**
+  - the allowlist, plus any name the running session trades; History or Today; Day/Week/Month or 1/5/15 min; the
+    range (History); switches for volume, averages and trades
+  - the header (last price, change over the range or since yesterday's close, as of when) and the latest candle's
+    numbers under the chart (open, high, low, close, volume, the range's high and low; Today: the day's)
+  - History reads the store and the audit log only while no command runs, into `HistoryCandles`, which every charts
+    page and window share; after a command ends it reads them again. Today redraws on each quote or order of the
+    selected name.
+  - moving averages come from the daily closes, so they are complete at the range's left edge and on week and month
+    candles show the value at the period's last day
+- **The shell:** a Charts entry in the rail (after Trading); `NewCharts` makes a page for another window, starting like
+  the one it came from; `ChartsWindowRequested` asks the window to open it.
+- **WPF:** `CandleChart` draws the layout (candles, volume, averages, ▲/▼ trades with their label on hover, levels,
+  the last price tag, crosshair with the price at the mouse, and a strip with the hovered candle's numbers), and turns
+  the wheel, dragging and double-click into viewport changes; a chart that gets more of the same candles keeps its
+  zoom and follows the newest. `ChartsView` is the page; `ChartsWindow` shows it on its own, refreshes when it opens
+  and lets go of the session and the engine when it closes. Two icons (candles, new window).
+- **Docs:** `docs/guide.md` §0.
+- **Tests (5 new):** History with volume, averages, periods, ranges and switches over a real DuckDB store; your paper
+  trades from the audit log; what it says without instruments or prices; Today from a session's quotes with fills,
+  limits and yesterday's close; a new window that starts like this one, is independent, and stops following the
+  session when closed. The shell's page list and the XAML checks cover the new views.

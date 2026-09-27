@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using QuantAnalyst.Core.Market;
+using QuantAnalyst.Desktop.Core.Charts;
 using QuantAnalyst.Desktop.Core.Engine;
 using QuantAnalyst.Desktop.Core.Mvvm;
 using QuantAnalyst.Trading.Kill;
@@ -20,6 +21,7 @@ public sealed class ShellViewModel : ObservableObject
     private PageViewModel _selected;
     private string _loginMethod;
     private string _notice = string.Empty;
+    private readonly HistoryCandles _history = new();
 
     /// <param name="accounts">Where the Accounts page loads your accounts (default: the CLI's reads, one login each).</param>
     /// <param name="environment">Your user environment (default: the real one; the live-trading account lives there).</param>
@@ -37,7 +39,8 @@ public sealed class ShellViewModel : ObservableObject
         Session = new SessionViewModel(workspace, engine, time, () => LoginMethod);
         Reports = new ReportsViewModel(workspace, engine, time);
         Accounts = new AccountsViewModel(workspace, engine, accounts ?? new EngineAccountSource(engine, workspace), env, time, () => LoginMethod);
-        Pages = [Status, Session, Accounts, Instruments, Strategy, Reports];
+        Charts = new ChartsViewModel(workspace, engine, time, Session.Live, _history, OpenChartsWindow);
+        Pages = [Status, Session, Charts, Accounts, Instruments, Strategy, Reports];
         _selected = Status;
 
         Status.StartSessionAsked += () => Session.StartCommand.Execute(null);
@@ -69,6 +72,12 @@ public sealed class ShellViewModel : ObservableObject
     public ReportsViewModel Reports { get; }
 
     public AccountsViewModel Accounts { get; }
+
+    /// <summary>Gets the Charts page; <see cref="NewCharts"/> makes one for another window.</summary>
+    public ChartsViewModel Charts { get; }
+
+    /// <summary>Raised when a charts page asks for a window of its own; the window shows the page it is given and refreshes it.</summary>
+    public event Action<ChartsViewModel>? ChartsWindowRequested;
 
     public IReadOnlyList<PageViewModel> Pages { get; }
 
@@ -117,6 +126,26 @@ public sealed class ShellViewModel : ObservableObject
     public void Navigate(PageKind kind) => SelectedPage = Pages.First(p => p.Kind == kind);
 
     public Task RefreshCurrentAsync() => SelectedPage.RefreshAsync();
+
+    /// <summary>
+    /// A charts page for another window, starting like <paramref name="like"/>. It shares the stored candles and the
+    /// running session with every other charts page; dispose it when its window closes.
+    /// </summary>
+    public ChartsViewModel NewCharts(ChartsViewModel? like = null)
+    {
+        var charts = new ChartsViewModel(Workspace, Engine, _time, Session.Live, _history, OpenChartsWindow);
+        if (like is not null)
+        {
+            charts.CopySettings(like);
+        }
+
+        return charts;
+    }
+
+    private void OpenChartsWindow(ChartsViewModel from)
+    {
+        ChartsWindowRequested?.Invoke(NewCharts(from));
+    }
 
     private void Kill()
     {

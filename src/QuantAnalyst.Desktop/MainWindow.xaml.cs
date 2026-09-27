@@ -8,7 +8,8 @@ namespace QuantAnalyst.Desktop;
 
 /// <summary>
 /// The window. Code-behind only for what XAML can't say: the periodic refresh, keeping the activity log scrolled to
-/// the end, and not closing under a running session without asking (closing stops it the way Stop does).
+/// the end, opening charts windows, and not closing under a running session without asking (closing stops it the way
+/// Stop does).
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -42,6 +43,9 @@ public partial class MainWindow : Window
             await shell.Status.RefreshAsync();
         };
         Closing += OnClosing;
+
+        // "Open in new window" on a charts page: the shell makes the page, this opens its window (closed with the app).
+        shell.ChartsWindowRequested += charts => new ChartsWindow(charts).Show();
     }
 
     private async void OnClosing(object? sender, CancelEventArgs e)

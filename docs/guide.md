@@ -22,7 +22,7 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
   - the amber **PAPER** chip: the app only trades on paper, on live prices; nothing is ever sent to Avanza from it
   - the login method (`bankid`, or `totp` for unattended logins)
   - the red **KILL** button, which stops everything at once, even while a session runs
-- **Navigation rail** on the left: Overview, Trading, Accounts, Instruments, Strategy, Reports. **Refresh** at the top
+- **Navigation rail** on the left: Overview, Trading, Charts, Accounts, Instruments, Strategy, Reports. **Refresh** at the top
   right reads the page again from the files the terminal uses.
 - **Overview** (the start page):
   - four tiles: the next session with a countdown ("Mon 28 Sep · decides at 09:10", "in 1 d 21 h"), the Confirm gate
@@ -40,6 +40,16 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
   - today's orders with state chips (Working, Partly filled, Filled …) and the strategy's decision notes
   - the session log, folded away at the bottom of the page
   - after a KILL, clear it here by typing why trading may go on
+- **Charts** (candlesticks for your instruments; **Open in new window** puts them in a window of their own, as many
+  as you like, e.g. beside the Trading page or on another screen):
+  - **History:** the stored daily prices as candles (green closed up, red closed down) by **Day**, **Week** or
+    **Month**, starting at a range (1M 3M 6M 1Y 3Y All), with volume bars, the saved strategy's two moving averages
+    (else 20 and 50 days) and your trades as ▲ buy / ▼ sell from the daily reports
+  - **Today:** while a Paper session runs, **1, 5 or 15 minute** candles built from its quotes, growing as it trades,
+    with your fills, working limits and yesterday's close
+  - hover for a candle's date, open, high, low, close, change and volume; the mouse wheel zooms, dragging moves,
+    double-click goes back to the range; the switches turn volume, averages and trades on or off
+  - the history is read while nothing else runs and kept, so it still shows while a session trades
 - **Accounts:**
   - the Paper account is always there: its cash, what it started with, fees and holdings
   - **Load** makes one Avanza login (BankID) and shows your accounts: name, type, the number masked (`***193`), value,
