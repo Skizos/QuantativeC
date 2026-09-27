@@ -1,21 +1,10 @@
 <Window x:Class="QuantAnalyst.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="clr-namespace:QuantAnalyst.Desktop.Core.ViewModels;assembly=QuantAnalyst.Desktop.Core"
-        xmlns:views="clr-namespace:QuantAnalyst.Desktop.Views"
         xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls"
         Title="QuantAnalyst" Width="1320" Height="880" MinWidth="1040" MinHeight="680"
         WindowStartupLocation="CenterScreen" Background="{StaticResource PageBrush}" Foreground="{StaticResource InkBrush}"
         FontFamily="{StaticResource UiFont}" FontSize="14" UseLayoutRounding="True">
-    <Window.Resources>
-        <DataTemplate DataType="{x:Type vm:StatusViewModel}"><views:StatusView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:InstrumentsViewModel}"><views:InstrumentsView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:StrategyViewModel}"><views:StrategyView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:SessionViewModel}"><views:SessionView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:ReportsViewModel}"><views:ReportsView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:AccountsViewModel}"><views:AccountsView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:ChartsViewModel}"><views:ChartsView /></DataTemplate>
-    </Window.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
@@ -59,62 +48,133 @@
 
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="224" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- Navigation rail -->
+            <!-- Navigation rail: folds to icons for more room (the name shows on hover). -->
             <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,1,0">
-                <ListBox ItemsSource="{Binding Pages}" SelectedItem="{Binding SelectedPage}" BorderThickness="0" Background="Transparent"
-                         Padding="0,12" ItemContainerStyle="{StaticResource NavItem}">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Orientation="Horizontal">
-                                <c:Icon Data="{Binding Kind, Converter={StaticResource PageIcon}}" Width="20" Height="20" />
-                                <TextBlock Text="{Binding Title}" FontSize="14.5" FontWeight="SemiBold" Margin="12,0,0,0" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Width" Value="224" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding NavCollapsed}" Value="True">
+                                <Setter Property="Width" Value="84" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <DockPanel>
+                    <Button DockPanel.Dock="Top" Style="{StaticResource Ghost}" Command="{Binding ToggleNavCommand}" HorizontalAlignment="Left" Margin="18,12,0,0"
+                            ToolTip="Fold the menu to icons for more room, or unfold it">
+                        <c:Icon Width="18" Height="18">
+                            <c:Icon.Style>
+                                <Style TargetType="c:Icon">
+                                    <Setter Property="Data" Value="{StaticResource IconFold}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding NavCollapsed}" Value="True">
+                                            <Setter Property="Data" Value="{StaticResource IconUnfold}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </c:Icon.Style>
+                        </c:Icon>
+                    </Button>
+                    <ListBox ItemsSource="{Binding Pages}" SelectedItem="{Binding SelectedPage}" BorderThickness="0" Background="Transparent"
+                             Padding="0,6,0,12" ItemContainerStyle="{StaticResource NavItem}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" ToolTip="{Binding Title}">
+                                    <c:Icon Data="{Binding Kind, Converter={StaticResource PageIcon}}" Width="20" Height="20" />
+                                    <TextBlock Text="{Binding Title}" FontSize="14.5" FontWeight="SemiBold" Margin="12,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.NavCollapsed, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
             </Border>
 
-            <!-- The selected page -->
-            <DockPanel Grid.Column="1" Margin="32,24,32,8">
-                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,16">
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" Style="{StaticResource Ghost}" Command="{Binding SelectedPage.RefreshCommand}" Margin="0"
-                                ToolTip="Read everything on this page again from the files the CLI uses.">
-                            <StackPanel Orientation="Horizontal">
-                                <c:Icon Data="{StaticResource IconRefresh}" Width="16" Height="16" Margin="0,0,6,0" />
-                                <TextBlock Text="Refresh" />
-                            </StackPanel>
-                        </Button>
-                        <TextBlock Text="{Binding SelectedPage.Title}" Style="{StaticResource H1}" />
-                    </DockPanel>
-                    <TextBlock Text="{Binding SelectedPage.Subtitle}" Style="{StaticResource Hint}" Margin="0,4,0,0" />
-                    <Border CornerRadius="8" Padding="12,9" Margin="0,12,0,0">
-                        <Border.Style>
-                            <Style TargetType="Border">
-                                <Setter Property="Background" Value="{StaticResource InfoSoftBrush}" />
-                                <Setter Property="Visibility" Value="Visible" />
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding SelectedPage.MessageIsError}" Value="True">
-                                        <Setter Property="Background" Value="{StaticResource NegativeSoftBrush}" />
-                                    </DataTrigger>
-                                    <DataTrigger Binding="{Binding SelectedPage.Message}" Value="">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Border.Style>
+            <!-- The pages: the selected one, and optionally a second one on the right with a divider to drag. -->
+            <Grid Grid.Column="1" x:Name="Panes">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="MainColumn" Width="*" MinWidth="460" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition x:Name="BesideColumn" Width="0" />
+                </Grid.ColumnDefinitions>
+
+                <DockPanel Grid.Column="0" Margin="28,22,20,8">
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
                         <DockPanel>
-                            <c:Icon DockPanel.Dock="Left" Data="{StaticResource IconInfo}" Width="18" Height="18" VerticalAlignment="Top" Margin="0,1,10,0" />
-                            <TextBlock Text="{Binding SelectedPage.Message}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <c:Icon Data="{StaticResource IconSplit}" Width="16" Height="16" Margin="0,0,6,0" Foreground="{StaticResource InkSecondaryBrush}" />
+                                <TextBlock Text="Beside" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <ComboBox ItemsSource="{Binding BesideChoices}" SelectedItem="{Binding SelectedBeside}" Width="132" Margin="0,0,12,0"
+                                          ToolTip="Show a second page on the right of this one, e.g. Charts beside Instruments. Charts beside Charts is a second chart." />
+                                <Button Style="{StaticResource Ghost}" Command="{Binding OpenWindowCommand}" CommandParameter="{Binding SelectedPage}" Margin="0"
+                                        ToolTip="Open this page in a window of its own (e.g. on another screen). Open as many as you like; they close with the app.">
+                                    <StackPanel Orientation="Horizontal">
+                                        <c:Icon Data="{StaticResource IconWindow}" Width="16" Height="16" Margin="0,0,6,0" />
+                                        <TextBlock Text="New window" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource Ghost}" Command="{Binding SelectedPage.RefreshCommand}" Margin="4,0,0,0"
+                                        ToolTip="Read everything on this page again from the files the CLI uses.">
+                                    <StackPanel Orientation="Horizontal">
+                                        <c:Icon Data="{StaticResource IconRefresh}" Width="16" Height="16" Margin="0,0,6,0" />
+                                        <TextBlock Text="Refresh" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                            <TextBlock Text="{Binding SelectedPage.Title}" Style="{StaticResource H1}" TextTrimming="CharacterEllipsis" />
                         </DockPanel>
-                    </Border>
-                </StackPanel>
-                <ContentControl Content="{Binding SelectedPage}" Focusable="False" />
-            </DockPanel>
+                        <TextBlock Text="{Binding SelectedPage.Subtitle}" Style="{StaticResource Hint}" Margin="0,4,0,12" />
+                        <ContentControl Content="{Binding SelectedPage}" ContentTemplate="{StaticResource PageMessage}" Focusable="False" />
+                    </StackPanel>
+                    <ContentControl Content="{Binding SelectedPage}" Focusable="False" />
+                </DockPanel>
+
+                <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
+                              Background="{StaticResource LineBrush}" Margin="0,22,0,8" Cursor="SizeWE" ShowsPreview="False"
+                              Visibility="{Binding HasBeside, Converter={StaticResource Visibility}}"
+                              ToolTip="Drag to share the width between the two pages" />
+
+                <Border Grid.Column="2" Visibility="{Binding HasBeside, Converter={StaticResource Visibility}}">
+                    <DockPanel Margin="20,22,28,8" DataContext="{Binding BesidePage}">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,4,0,14">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Style="{StaticResource Ghost}" Command="{Binding DataContext.OpenWindowCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}" Margin="0" ToolTip="Open this page in a window of its own">
+                                    <c:Icon Data="{StaticResource IconWindow}" Width="16" Height="16" />
+                                </Button>
+                                <Button Style="{StaticResource Ghost}" Command="{Binding RefreshCommand}" Margin="2,0,0,0" ToolTip="Read this page again">
+                                    <c:Icon Data="{StaticResource IconRefresh}" Width="16" Height="16" />
+                                </Button>
+                                <Button Style="{StaticResource Ghost}" Command="{Binding DataContext.CloseBesideCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Margin="2,0,0,0" ToolTip="Close the page on the right">
+                                    <c:Icon Data="{StaticResource IconClose}" Width="16" Height="16" />
+                                </Button>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <c:Icon Data="{Binding Kind, Converter={StaticResource PageIcon}}" Width="22" Height="22" VerticalAlignment="Center"
+                                        Foreground="{StaticResource AccentBrush}" />
+                                <TextBlock Text="{Binding Title}" Style="{StaticResource H2}" FontSize="21" Margin="10,0,0,0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DockPanel>
+                        <ContentControl DockPanel.Dock="Top" Content="{Binding}" ContentTemplate="{StaticResource PageMessage}" Focusable="False" />
+                        <ContentControl Content="{Binding}" Focusable="False" />
+                    </DockPanel>
+                </Border>
+            </Grid>
 
             <!-- BankID overlay: shown while a login waits for the phone. -->
             <Grid Grid.ColumnSpan="2" Background="{StaticResource OverlayBrush}"

@@ -22,8 +22,14 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
   - the amber **PAPER** chip: the app only trades on paper, on live prices; nothing is ever sent to Avanza from it
   - the login method (`bankid`, or `totp` for unattended logins)
   - the red **KILL** button, which stops everything at once, even while a session runs
-- **Navigation rail** on the left: Overview, Trading, Charts, Accounts, Instruments, Strategy, Reports. **Refresh** at the top
-  right reads the page again from the files the terminal uses.
+- **Navigation rail** on the left: Overview, Trading, Charts, Accounts, Instruments, Strategy, Reports. The « button at
+  its top folds it to icons for more room (hover an icon for its name).
+- **Several pages at once:** at the top right of every page:
+  - **Beside:** pick a second page to show on the right, e.g. Charts beside Instruments or Trading. Drag the divider to
+    share the width; **×** closes it. Charts beside Charts is a second chart (another name, or Today next to History).
+  - **New window:** the page in a window of its own, e.g. on another screen or snapped with Win + ← / →. Open as many as
+    you like; they show the same numbers as the main window and close with it.
+  - **Refresh** reads the page again from the files the terminal uses. Every page on screen also refreshes by itself.
 - **Overview** (the start page):
   - four tiles: the next session with a countdown ("Mon 28 Sep · decides at 09:10", "in 1 d 21 h"), the Confirm gate
     as 10 dots (one per clean Paper day), the live-trading account (masked, e.g. `***193`) and the kill switch
@@ -40,10 +46,10 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
   - today's orders with state chips (Working, Partly filled, Filled …) and the strategy's decision notes
   - the session log, folded away at the bottom of the page
   - after a KILL, clear it here by typing why trading may go on
-- **Charts** (candlesticks for your instruments; **Open in new window** puts them in a window of their own, as many
-  as you like, e.g. beside the Trading page or on another screen):
+- **Charts** (candlesticks for your instruments, the chart filling the page; pick a name from the chips at the top;
+  **New chart window** opens another chart, as many as you like):
   - **History:** the stored daily prices as candles (green closed up, red closed down) by **Day**, **Week** or
-    **Month**, starting at a range (1M 3M 6M 1Y 3Y All), with volume bars, the saved strategy's two moving averages
+    **Month**, starting at a range (1M 3M 6M 1Y 3Y All; 3M at first), with volume bars, the saved strategy's two moving averages
     (else 20 and 50 days) and your trades as ▲ buy / ▼ sell from the daily reports
   - **Today:** while a Paper session runs, **1, 5 or 15 minute** candles built from its quotes, growing as it trades,
     with your fills, working limits and yesterday's close

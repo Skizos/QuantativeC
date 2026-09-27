@@ -1,6 +1,7 @@
 # 13 — Several pages at once, and bigger charts
 
-- **Status:** planned 2026-09-27 at the owner's request: "Make me be able to pull up several different tabs at once,
+- **Status:** steps 1–2 done 2026-09-27; waiting for the owner's look at the window (screenshots). Planned the same
+  day at the owner's request: "Make me be able to pull up several different tabs at once,
   i.e. the chart and instrument tab for example, make the chart easier to see as it's currently a bit small."
 - **Builds on:** `docs/plans/11-app-redesign.md` (the shell and pages) and `docs/plans/12-charts-window.md` (the charts).
 - **Gate:**
@@ -35,3 +36,21 @@
   explanation (whole on hover) on a line each under it. Day candles open on 3M.
 - Axis, level and price-tag text 12 px, the hover strip 13 px, trade markers larger; the line charts' axes 12 px too.
 - **Tests:** 1 new (the opening view), 2 updated (body width, the 3M default). All 120 app tests pass.
+
+**Step 2: several pages at once (done 2026-09-27).**
+- **The shell:** `BesideChoices` / `SelectedBeside` / `BesidePage` (a page on the right; Charts there is a chart of its
+  own; choosing the left page again does nothing; picking the right-hand page in the rail moves it left);
+  `CloseBesideCommand`; `OpenWindowCommand` / `OpenInWindow` with `PageWindowRequested` and `WindowClosed` (the same
+  page in a window, a chart of its own for Charts; a chart is disposed once nothing shows it); `RefreshVisibleAsync`
+  (the left, right and window pages, each once; while a command runs only the Trading page); `NavCollapsed` with
+  `ToggleNavCommand`. The Charts page's **New chart window** uses the same path, so `ChartsWindow` became the generic
+  `PageWindow`.
+- **The main window:** the page header has **Beside** (a list), **New window** and **Refresh**; the page on the right
+  has its own small header (icon, title, new window, refresh, ×) and message line; a divider to drag between them
+  (both at least 380–460 px; a new page on the right starts at half and half). The rail folds to 84 px of icons.
+  The page views' templates and a shared message-line template moved to `App.xaml`, so every window can show every
+  page. The timer refreshes every page on screen.
+- **Docs:** `docs/guide.md` §0.
+- **Tests (4 new, 1 updated):** the page on the right (charts of their own, replacing, the left page refused, moving
+  left, closing); page windows (the same page, a chart of its own, closing); what is refreshed; the rail. The charts
+  window test now goes through the page-window path. The XAML checks cover the new main window and page window.

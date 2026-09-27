@@ -9,9 +9,18 @@ using QuantAnalyst.Trading.Kill;
 
 namespace QuantAnalyst.Desktop.Core.ViewModels;
 
+/// <summary>A choice in the page header's <b>Beside</b> list: a page to show on the right, or nothing.</summary>
+public sealed record PageChoice(string Title, PageKind? Kind)
+{
+    public override string ToString() => Title;
+}
+
 /// <summary>
 /// The window: the pages, the login method, the activity log of every command, the BankID overlay and the red
 /// KILL button. KILL writes the kill flag directly (like <c>qa kill</c>), so it works even while a session runs.
+/// Several pages can be seen at once (docs/plans/13-pages-side-by-side.md): one <see cref="BesidePage"/> on the right
+/// of the selected one, and any page in windows of its own (<see cref="OpenInWindow"/>). Charts is the exception: beside
+/// or in a window it is a chart of its own, so two charts can show two names.
 /// </summary>
 public sealed class ShellViewModel : ObservableObject
 {
@@ -20,8 +29,12 @@ public sealed class ShellViewModel : ObservableObject
     private readonly TimeProvider _time;
     private PageViewModel _selected;
     private string _loginMethod;
-    private string _notice = string.Empty;
     private readonly HistoryCandles _history = new();
+    private readonly List<PageViewModel> _windowPages = [];
+    private string _notice = string.Empty;
+    private PageViewModel? _beside;
+    private PageChoice _besideChoice;
+    private bool _navCollapsed;
 
     /// <param name="accounts">Where the Accounts page loads your accounts (default: the CLI's reads, one login each).</param>
     /// <param name="environment">Your user environment (default: the real one; the live-trading account lives there).</param>
@@ -39,9 +52,20 @@ public sealed class ShellViewModel : ObservableObject
         Session = new SessionViewModel(workspace, engine, time, () => LoginMethod);
         Reports = new ReportsViewModel(workspace, engine, time);
         Accounts = new AccountsViewModel(workspace, engine, accounts ?? new EngineAccountSource(engine, workspace), env, time, () => LoginMethod);
-        Charts = new ChartsViewModel(workspace, engine, time, Session.Live, _history, OpenChartsWindow);
+        Charts = new ChartsViewModel(workspace, engine, time, Session.Live, _history, OpenInWindow);
         Pages = [Status, Session, Charts, Accounts, Instruments, Strategy, Reports];
         _selected = Status;
+        BesideChoices = [new PageChoice("Nothing", null), .. Pages.Select(p => new PageChoice(p.Title, p.Kind))];
+        _besideChoice = BesideChoices[0];
+        CloseBesideCommand = new RelayCommand(() => SelectedBeside = BesideChoices[0], () => _beside is not null);
+        OpenWindowCommand = new RelayCommand(p =>
+        {
+            if (p is PageViewModel page)
+            {
+                OpenInWindow(page);
+            }
+        });
+        ToggleNavCommand = new RelayCommand(() => NavCollapsed = !NavCollapsed);
 
         Status.StartSessionAsked += () => Session.StartCommand.Execute(null);
         KillCommand = new RelayCommand(Kill);
@@ -73,11 +97,14 @@ public sealed class ShellViewModel : ObservableObject
 
     public AccountsViewModel Accounts { get; }
 
-    /// <summary>Gets the Charts page; <see cref="NewCharts"/> makes one for another window.</summary>
+    /// <summary>Gets the Charts page; <see cref="NewCharts"/> makes one for another window or the right side.</summary>
     public ChartsViewModel Charts { get; }
 
-    /// <summary>Raised when a charts page asks for a window of its own; the window shows the page it is given and refreshes it.</summary>
-    public event Action<ChartsViewModel>? ChartsWindowRequested;
+    /// <summary>
+    /// Raised when a page should get a window of its own (<see cref="OpenInWindow"/>). The window shows the page it is
+    /// given, refreshes it when it opens, and calls <see cref="WindowClosed"/> when it closes.
+    /// </summary>
+    public event Action<PageViewModel>? PageWindowRequested;
 
     public IReadOnlyList<PageViewModel> Pages { get; }
 
@@ -88,10 +115,77 @@ public sealed class ShellViewModel : ObservableObject
         {
             if (value is not null && Set(ref _selected, value))
             {
+                if (ReferenceEquals(value, _beside))
+                {
+                    SelectedBeside = BesideChoices[0]; // the page moved to the left
+                }
+
                 _ = value.RefreshAsync();
             }
         }
     }
+
+    /// <summary>Gets the choices of the Beside list: nothing, or one of the pages.</summary>
+    public IReadOnlyList<PageChoice> BesideChoices { get; }
+
+    /// <summary>
+    /// Gets or sets what is shown on the right of the selected page. Choosing the page that is already on the left does
+    /// nothing (the list goes back), except Charts: that opens a second chart.
+    /// </summary>
+    public PageChoice SelectedBeside
+    {
+        get => _besideChoice;
+        set
+        {
+            if (value is null || value == _besideChoice)
+            {
+                return;
+            }
+
+            if (value.Kind is { } kind && kind != PageKind.Charts && kind == SelectedPage.Kind)
+            {
+                Engine.Ui.Post(() => OnPropertyChanged(nameof(SelectedBeside)));
+                return;
+            }
+
+            _besideChoice = value;
+            OnPropertyChanged();
+            ShowBeside(value.Kind);
+        }
+    }
+
+    /// <summary>Gets the page on the right of the selected one, or null.</summary>
+    public PageViewModel? BesidePage
+    {
+        get => _beside;
+        private set
+        {
+            if (Set(ref _beside, value))
+            {
+                OnPropertyChanged(nameof(HasBeside));
+                CloseBesideCommand.Refresh();
+            }
+        }
+    }
+
+    public bool HasBeside => _beside is not null;
+
+    public RelayCommand CloseBesideCommand { get; }
+
+    /// <summary>Gets the command that opens the page given as its parameter in a window of its own.</summary>
+    public RelayCommand OpenWindowCommand { get; }
+
+    /// <summary>Gets the pages shown in windows of their own (a page opened twice is here twice).</summary>
+    public IReadOnlyList<PageViewModel> WindowPages => _windowPages;
+
+    /// <summary>Gets or sets whether the navigation rail shows icons only (more room for the pages).</summary>
+    public bool NavCollapsed
+    {
+        get => _navCollapsed;
+        set => Set(ref _navCollapsed, value);
+    }
+
+    public RelayCommand ToggleNavCommand { get; }
 
     /// <summary>Gets the banner that is always shown: what mode the app trades in.</summary>
     public string ModeBanner { get; } = "PAPER · simulated orders on live prices";
@@ -128,12 +222,47 @@ public sealed class ShellViewModel : ObservableObject
     public Task RefreshCurrentAsync() => SelectedPage.RefreshAsync();
 
     /// <summary>
+    /// Refreshes every page on screen: the selected one, the one beside it and those in windows, each once. While a
+    /// command runs only the Trading page is refreshed (the other pages read files a session may be writing).
+    /// </summary>
+    public async Task RefreshVisibleAsync()
+    {
+        PageViewModel[] visible = [.. new[] { SelectedPage, _beside }.OfType<PageViewModel>().Concat(_windowPages).Distinct()];
+        foreach (PageViewModel page in visible)
+        {
+            if (!Engine.IsBusy || page is SessionViewModel)
+            {
+                await page.RefreshAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Opens <paramref name="page"/> in a window of its own. The window shows the same page as the main window (the
+    /// same numbers and buttons), except a chart, which gets an independent copy starting like it.
+    /// </summary>
+    public void OpenInWindow(PageViewModel page)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+        PageViewModel shown = page is ChartsViewModel charts ? NewCharts(charts) : page;
+        _windowPages.Add(shown);
+        PageWindowRequested?.Invoke(shown);
+    }
+
+    /// <summary>A page's window closed: it is no longer refreshed, and a chart of its own lets go of the session.</summary>
+    public void WindowClosed(PageViewModel page)
+    {
+        _windowPages.Remove(page);
+        Release(page);
+    }
+
+    /// <summary>
     /// A charts page for another window, starting like <paramref name="like"/>. It shares the stored candles and the
     /// running session with every other charts page; dispose it when its window closes.
     /// </summary>
     public ChartsViewModel NewCharts(ChartsViewModel? like = null)
     {
-        var charts = new ChartsViewModel(Workspace, Engine, _time, Session.Live, _history, OpenChartsWindow);
+        var charts = new ChartsViewModel(Workspace, Engine, _time, Session.Live, _history, OpenInWindow);
         if (like is not null)
         {
             charts.CopySettings(like);
@@ -142,9 +271,34 @@ public sealed class ShellViewModel : ObservableObject
         return charts;
     }
 
-    private void OpenChartsWindow(ChartsViewModel from)
+    private void ShowBeside(PageKind? kind)
     {
-        ChartsWindowRequested?.Invoke(NewCharts(from));
+        PageViewModel? before = _beside;
+        PageViewModel? next = kind switch
+        {
+            null => null,
+            PageKind.Charts => NewCharts(Charts),
+            { } k => Pages.First(p => p.Kind == k),
+        };
+        BesidePage = next;
+        if (before is not null)
+        {
+            Release(before);
+        }
+
+        if (next is not null)
+        {
+            _ = next.RefreshAsync();
+        }
+    }
+
+    /// <summary>Disposes a chart of its own once nothing shows it any more; the app's own pages live as long as it does.</summary>
+    private void Release(PageViewModel page)
+    {
+        if (page is ChartsViewModel charts && !ReferenceEquals(charts, Charts) && !ReferenceEquals(charts, _beside) && !_windowPages.Contains(charts))
+        {
+            charts.Dispose();
+        }
     }
 
     private void Kill()

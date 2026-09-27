@@ -247,6 +247,9 @@ public sealed class ChartsViewModel : PageViewModel, IDisposable
     /// <summary>Gets the button that opens another charts window (you can have several, each on its own instrument).</summary>
     public RelayCommand OpenWindowCommand { get; }
 
+    /// <summary>Gets a value indicating whether the page has let go of the session and the engine (its window or pane closed).</summary>
+    internal bool IsDisposed => _disposed;
+
     /// <summary>Starts like <paramref name="other"/>: its instrument, source, candle length, range and switches.</summary>
     public void CopySettings(ChartsViewModel other)
     {

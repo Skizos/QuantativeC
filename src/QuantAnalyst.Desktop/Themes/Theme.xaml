@@ -112,6 +112,10 @@
     <Geometry x:Key="IconReports">M7,3.5 L14,3.5 L18.5,8 L18.5,20.5 L7,20.5 Z M14,3.5 L14,8 L18.5,8 M10,12.5 L15.5,12.5 M10,16.5 L15.5,16.5</Geometry>
     <Geometry x:Key="IconCharts">M8,3.5 L8,7.5 M8,15.5 L8,20.5 M5.5,7.5 L10.5,7.5 L10.5,15.5 L5.5,15.5 Z M16,5 L16,9 M16,13.5 L16,18.5 M13.5,9 L18.5,9 L18.5,13.5 L13.5,13.5 Z</Geometry>
     <Geometry x:Key="IconWindow">M13.5,4.5 L19.5,4.5 L19.5,10.5 M19.5,4.5 L11.5,12.5 M10,5.5 L5.5,5.5 L5.5,18.5 L18.5,18.5 L18.5,14</Geometry>
+    <Geometry x:Key="IconClose">M6.5,6.5 L17.5,17.5 M17.5,6.5 L6.5,17.5</Geometry>
+    <Geometry x:Key="IconSplit">M3.5,5.5 L20.5,5.5 L20.5,18.5 L3.5,18.5 Z M12,5.5 L12,18.5</Geometry>
+    <Geometry x:Key="IconFold">M11.5,6.5 L6,12 L11.5,17.5 M18,6.5 L12.5,12 L18,17.5</Geometry>
+    <Geometry x:Key="IconUnfold">M6,6.5 L11.5,12 L6,17.5 M12.5,6.5 L18,12 L12.5,17.5</Geometry>
     <Geometry x:Key="IconPower">M12,3.5 L12,11.5 M7.2,6.6 A7,7 0 1 0 16.8,6.6</Geometry>
     <Geometry x:Key="IconRefresh">M18.5,8.5 A7,7 0 1 0 19,14.5 M19,4 L19,8.5 L14.5,8.5</Geometry>
     <Geometry x:Key="IconPlay">M8,5.5 L18,12 L8,18.5 Z</Geometry>

@@ -2,6 +2,9 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:QuantAnalyst.Desktop"
+             xmlns:vm="clr-namespace:QuantAnalyst.Desktop.Core.ViewModels;assembly=QuantAnalyst.Desktop.Core"
+             xmlns:views="clr-namespace:QuantAnalyst.Desktop.Views"
+             xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls"
              ShutdownMode="OnMainWindowClose">
     <Application.Resources>
         <ResourceDictionary>
@@ -17,6 +20,39 @@
             <local:NonEmptyToVisibilityConverter x:Key="NonEmptyToVisibility" />
             <local:PageIconConverter x:Key="PageIcon" />
             <BooleanToVisibilityConverter x:Key="Visibility" />
+
+            <!-- A page's message line (blue, or red for an error; hidden when empty), given the page as its content. -->
+            <DataTemplate x:Key="PageMessage">
+                <Border CornerRadius="8" Padding="12,9" Margin="0,0,0,12">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="{StaticResource InfoSoftBrush}" />
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding MessageIsError}" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource NegativeSoftBrush}" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Message}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <DockPanel>
+                        <c:Icon DockPanel.Dock="Left" Data="{StaticResource IconInfo}" Width="18" Height="18" VerticalAlignment="Top" Margin="0,1,10,0" />
+                        <TextBlock Text="{Binding Message}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                    </DockPanel>
+                </Border>
+            </DataTemplate>
+
+            <!-- Each page's view, for any window that shows a page: the main window (left and right) and page windows. -->
+            <DataTemplate DataType="{x:Type vm:StatusViewModel}"><views:StatusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type vm:InstrumentsViewModel}"><views:InstrumentsView /></DataTemplate>
+            <DataTemplate DataType="{x:Type vm:StrategyViewModel}"><views:StrategyView /></DataTemplate>
+            <DataTemplate DataType="{x:Type vm:SessionViewModel}"><views:SessionView /></DataTemplate>
+            <DataTemplate DataType="{x:Type vm:ReportsViewModel}"><views:ReportsView /></DataTemplate>
+            <DataTemplate DataType="{x:Type vm:AccountsViewModel}"><views:AccountsView /></DataTemplate>
+            <DataTemplate DataType="{x:Type vm:ChartsViewModel}"><views:ChartsView /></DataTemplate>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

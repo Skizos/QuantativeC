@@ -223,11 +223,12 @@ public sealed class ChartsPageTests : IDisposable
         charts.ShowTrades = false;
 
         ChartsViewModel? opened = null;
-        shell.ChartsWindowRequested += c => opened = c;
+        shell.PageWindowRequested += p => opened = Assert.IsType<ChartsViewModel>(p);
         Assert.True(charts.OpenWindowCommand.CanExecute(null));
         charts.OpenWindowCommand.Execute(null);
         Assert.NotNull(opened);
         Assert.NotSame(charts, opened);
+        Assert.Contains(opened, shell.WindowPages);
         await opened!.RefreshAsync(); // what its window does when it opens
 
         Assert.Equal(charts.Selected, opened.Selected);
@@ -244,7 +245,8 @@ public sealed class ChartsPageTests : IDisposable
         ISessionObserver feed = StartSession(shell);
         feed.Quote(new QuoteTick(At(0, 5), Eric, 94.98m, 95.02m, 95.00m));
         Assert.Single(opened.Chart.Candles);
-        opened.Dispose();
+        shell.WindowClosed(opened); // its window closed
+        Assert.DoesNotContain(opened, shell.WindowPages);
         feed.Quote(new QuoteTick(At(1, 5), Eric, 95.08m, 95.12m, 95.10m));
         Assert.Equal(2, charts.Chart.Candles.Count);
         Assert.Single(opened.Chart.Candles);
