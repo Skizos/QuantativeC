@@ -191,7 +191,8 @@ internal static partial class AvanzaCommands
             IReadOnlyList<Account> accounts = await ctx.Connection.Gateway.GetAccountsAsync(ctx.Ct).ConfigureAwait(false);
             IReadOnlyList<TradingAccount> trading = await ctx.Connection.Gateway.GetTradingAccountsAsync(ctx.Ct).ConfigureAwait(false);
             AllowlistResult allowlist = AccountAllowlist.FromEnvironment(trading, services.GetVariable);
-            var rows = accounts.Select(a =>
+            IReadOnlyList<AccountSummary> summaries = AccountOverview.Summaries(accounts, trading, allowlist);
+            var rows = accounts.Zip(summaries, (a, s) =>
             {
                 TradingAccount? t = trading.FirstOrDefault(x => x.Id == a.Id);
                 return new
@@ -205,7 +206,7 @@ internal static partial class AvanzaCommands
                     a.BuyingPower,
                     AvailableForPurchase = t?.AvailableForPurchase,
                     Tradable = t?.IsTradable,
-                    AllowedForLiveTrading = allowlist.Allowed && allowlist.Account!.Id == a.Id,
+                    AllowedForLiveTrading = s.IsLiveAccount,
                 };
             }).ToList();
 
@@ -644,6 +645,29 @@ internal static partial class AvanzaCommands
             error.WriteLine(redactor.Redact($"{prefix}: {ex.Message}"));
             return code;
         }
+    }
+
+    /// <summary>
+    /// One read-only query for the Windows app, with a command's plumbing: the secret store, the login method, the app's
+    /// BankID prompt, the login lock, redaction and cancellation. It logs in once (never retried) and runs
+    /// <paramref name="body"/>; failures propagate as the broker's own exceptions for the app to explain.
+    /// </summary>
+    internal static async Task<T> QueryAsync<T>(AvanzaCliServices services, string stateDirectory, string login, Func<AvanzaConnection, CancellationToken, Task<T>> body)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(body);
+        var redactor = new Redactor();
+        var logger = new RedactingLogger(TextWriter.Null, redactor, LogLevel.Warning);
+        ISecretStore secrets = services.SecretStoreFactory(OperatingSystem.IsWindows() ? "credman" : "env");
+        var options = new AvanzaOptions
+        {
+            StateDirectory = stateDirectory,
+            LoginMethod = login == "totp" ? AvanzaLoginMethod.Totp : AvanzaLoginMethod.BankId,
+        };
+        IBankIdPrompt prompt = services.BankIdPrompt?.Invoke(TextWriter.Null, false) ?? new ConsoleBankIdPrompt(TextWriter.Null, false);
+        using AvanzaConnection connection = services.ConnectionFactory(options, secrets, prompt, logger, redactor);
+        await connection.Authenticator.LoginAsync(services.Cancellation).ConfigureAwait(false);
+        return await body(connection, services.Cancellation).ConfigureAwait(false);
     }
 
     private static void Flush(TextWriter buffer, TextWriter output, Redactor redactor)

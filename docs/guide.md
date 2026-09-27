@@ -19,22 +19,49 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
 
 **What you see:**
 - **Header, always visible:**
-  - the yellow **PAPER MODE** banner (nothing is ever sent to Avanza from the app)
+  - the amber **PAPER** chip: the app only trades on paper, on live prices; nothing is ever sent to Avanza from it
   - the login method (`bankid`, or `totp` for unattended logins)
   - the red **KILL** button, which stops everything at once, even while a session runs
-- **Status** (the start page): the same checklist as `qa status`, coloured ok / todo / warn / FAIL, the next steps, and one button for the most useful next thing (e.g. **Add instruments**, **Choose a strategy**, **Start the Paper session**).
-- **Instruments:** type a ticker (`ERIC-B`) and press **Add**. It imports a year of prices (one BankID login) and allows the share. **Remove** takes it off the list.
+- **Navigation rail** on the left: Overview, Trading, Accounts, Instruments, Strategy, Reports. **Refresh** at the top
+  right reads the page again from the files the terminal uses.
+- **Overview** (the start page):
+  - four tiles: the next session with a countdown ("Mon 28 Sep · decides at 09:10", "in 1 d 21 h"), the Confirm gate
+    as 10 dots (one per clean Paper day), the live-trading account (masked, e.g. `***193`) and the kill switch
+  - the paper account's value at the last close, the change since Paper started, and a chart of every day's close
+    (the same numbers as `qa report eod`)
+  - the same checklist as `qa status`, the next steps, and one button for the most useful next thing (e.g. **Add
+    instruments**, **Choose a strategy**, **Start the Paper session**)
+- **Trading** (today's Paper session):
+  - **Start** logs in (the BankID QR code appears in the window), updates the history, waits for 09:10 and trades on
+    paper until the close. **Stop** ends it early, cancelling orders and writing the partial report.
+  - while it runs: tiles for the account value and today's change, cash, invested, fees, orders and the decision; the
+    account value today against the start of the day (green above, red below); a tile per instrument with its last
+    price, change and a small chart; click one for its price today with your fills (▲ buy, ▼ sell) and working limits
+  - today's orders with state chips (Working, Partly filled, Filled …) and the strategy's decision notes
+  - the session log, folded away at the bottom of the page
+  - after a KILL, clear it here by typing why trading may go on
+- **Accounts:**
+  - the Paper account is always there: its cash, what it started with, fees and holdings
+  - **Load** makes one Avanza login (BankID) and shows your accounts: name, type, the number masked (`***193`), value,
+    cash, buying power and holdings with gain in kr and %. Nothing logs in by itself; press **Load** again for fresh
+    numbers.
+  - each account says whether it **can trade live** (R1: an ISK, tradable, not managed, no credit) and, if not, why
+  - **Use for live trading** (on an account that can): type the account's last 3 digits and press the button. The app
+    sets `AVANZA__ALLOWEDACCOUNTIDS` for your Windows user (what §7 step O6 has you type by hand), so new terminals see
+    it. Close and reopen open terminals. **Stop live trading** clears it. Choosing trades nothing: Confirm still runs
+    every startup check, in the terminal.
+- **Instruments:** your allowed names on the left; on the right the selected name's price chart with ranges (1M 3M 6M
+  1Y 3Y All), last close, the change over the range and, with an ma-cross strategy saved, its two moving averages.
+  Type a ticker (`ERIC-B`) and press **Add**: it imports a year of prices (one BankID login) and allows the share.
+  **Remove** takes it off the list.
 - **Strategy:**
   - pick a strategy and fill in its named fields (e.g. fast 20, slow 100)
   - **Backtest on my instruments** shows how it did
   - **Use for Paper** saves it
-- **Paper session:**
-  - **Start** logs in (the BankID QR code appears in the window), updates the history, waits for 09:10, and trades on paper until the close
-  - the log scrolls live, and the paper account and positions update by themselves
-  - **Stop** ends the session early, cancelling orders and writing the partial report
-  - after a KILL, clear it here by typing why trading may go on
-- **Reports:** each day, marked CLEAN / NOT CLEAN / INCOMPLETE, with its details and a progress bar towards the 10 clean days.
-- **Bottom bar:** what is running now, and the activity log with every command's full output.
+- **Reports:** the gate dots, each day marked CLEAN / NOT CLEAN / INCOMPLETE, and the selected day's details.
+- **Bottom bar:** what is running now, and (click it) the activity log with every command's full output.
+
+Numbers on screen are Swedish style (`5 012,40 kr`, `+0,20 %`); commands and files keep their usual format.
 
 **What stays in the terminal:**
 - promoting to Confirm (`qa promote`, your deliberate step, §6)
@@ -205,6 +232,9 @@ The exact list, with who does what, is in `docs/plans/07-phase7-confirm.md` §"R
 - **Then you** place the first minimal-size orders yourself.
 
 **Naming the account that may trade (you can do this now):**
+
+The easy way is the app: **Accounts**, **Load**, pick your ISK, type its last 3 digits and press **Use for live
+trading** (§0). Then check it in a new terminal with step 3. By hand:
 1. Find your ISK's full account number in Avanza (`qa accounts` shows only the last 3 digits).
 2. Store it as a user environment variable, in PowerShell:
    `[Environment]::SetEnvironmentVariable('AVANZA__ALLOWEDACCOUNTIDS', '<account number>', 'User')`

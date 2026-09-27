@@ -1,6 +1,7 @@
 # 11 — The Windows app, redesigned: readable, modern, with charts and your account
 
-- **Status:** planned 2026-09-27 at the owner's request: "Make it easily readable. Make it look modern and also let
+- **Status:** steps 1–4 done 2026-09-27; waiting for the owner's look at the window (screenshots). Planned the same
+  day at the owner's request: "Make it easily readable. Make it look modern and also let
   me choose which account I wanna use. Make graphs and stuff alike for the current trading run. Generally make the app
   better with inspirations from other apps, like Avanza."
 - **Builds on:** `docs/plans/10-windows-app.md` (the app as it is: five pages, in-process `qa`, Paper only).
@@ -27,7 +28,7 @@
 | **Charts** | Our own small chart control, not a charting package. The maths is in `Desktop.Core` and tested on Linux: scaling, "nice" axis steps, time labels, the hover point and markers. The WPF part only draws. | No new third-party code to vet (plan 10's rule), and the maths is checked by the same test run as everything else. |
 | **What is charted** | **Trading:** the paper account's value today against the start of the day, green above and red below like Avanza's day chart; each instrument's price today with your fills marked (▲ buy, ▼ sell) and working limits as lines. **Instruments:** each name's daily history with ranges (1M 3M 6M 1Y 3Y All) and the strategy's moving averages. **Overview:** the paper account's value day by day, from the end-of-day reports. | The first thing a trader looks at is "how is it going", then "what did it do". |
 | **Live data from the session** | A small observer seam, `ISessionObserver`, which the Paper session calls with quotes, the paper account's value, order updates and the day's decision. The CLI passes none, so the terminal is unchanged. The app passes its own and draws from it. | Structured data straight from the running session; nothing parses printed text (plan 10's rule). |
-| **"Choose which account"** | The **Accounts** page loads your Avanza accounts with **one BankID login** per refresh: type, name, masked id (`***193`), value, buying power and holdings. Pick one to see it; the Paper account is always there too. For an account that may trade live (an ISK, tradable, not managed, no credit: R1), **"Use for live trading"** makes it the one account Confirm may use. You confirm by typing its last 3 digits. The app then sets `AVANZA__ALLOWEDACCOUNTIDS` for you (your user environment), exactly what `docs/guide.md` §7 has you type by hand today. **"Stop allowing live trading"** clears it. | One place to see and choose. The choice is the same R1 setting as before, so Confirm's startup checks are unchanged. The full account number is never shown, logged or written anywhere but that one variable. |
+| **"Choose which account"** | The **Accounts** page loads your Avanza accounts with **one BankID login** per refresh: type, name, masked id (`***193`), value, buying power and holdings. Pick one to see it; the Paper account is always there too. For an account that may trade live (an ISK, tradable, not managed, no credit: R1), **"Use for live trading"** makes it the one account Confirm may use. You confirm by typing its last 3 digits. The app then sets `AVANZA__ALLOWEDACCOUNTIDS` for you (your user environment), exactly what `docs/guide.md` §7 has you type by hand today. **"Stop live trading"** clears it. | One place to see and choose. The choice is the same R1 setting as before, so Confirm's startup checks are unchanged. The full account number is never shown, logged or written anywhere but that one variable. |
 | **Logins** | Still at most one login per button press (CLAUDE.md). Nothing logs in by itself; account values stay in memory while the app is open. | The safety rule and BankID's one-scan-per-login. |
 | **Numbers** | Swedish style where it helps reading: a space as the thousands separator (`5 000,00 kr`) on screen. Commands and files keep the invariant format. | It reads like your bank. |
 
@@ -174,3 +175,36 @@ now, the activity log).
   - `LiveSession`, 5
   - Start passes the page's observer
   All 1,044 managed tests pass, 1 skipped.
+
+**Step 4: Accounts and Overview (done 2026-09-27).**
+- **One overview, two users:** `AccountOverview` (Cli) reads the accounts, the trading accounts and the holdings after
+  one login, with R1's verdict per account (`AccountAllowlist.Problems`) and whether it is the one
+  `AVANZA__ALLOWEDACCOUNTIDS` names. `qa accounts` builds its rows with the same `Summaries`; its output is unchanged.
+  The app runs it in-process through `QaEngine.QueryAsync`: busy while it runs, Stop cancels it, the BankID QR code in
+  the window, one line in the activity log. No new endpoint: the three reads the CLI already makes.
+- **The Accounts page:**
+  - the Paper account always, and your Avanza accounts after **Load** (one login per press, never by itself)
+  - each card: name, type, masked number, value and a chip (Live trading / Can trade live / Can't trade live /
+    Simulated). The selected account shows cash, buying power, holdings with gain in kr and %, and why it can't trade
+    live.
+  - **Use for live trading** needs the last 3 digits typed. It then writes the full number to
+    `AVANZA__ALLOWEDACCOUNTIDS` for your Windows user and for the app's own process; nothing else holds it. **Stop live
+    trading** clears it. Neither needs a new login.
+  - rows are keyed by their place in Avanza's list, not by the masked number, so two accounts ending in the same 3
+    digits can't be mixed up
+  - a load opens the live account, else your first Avanza account
+- **The Overview:** tiles for the next session with a countdown (from the calendar, `risk_limits.json` and the decision
+  time), the Confirm gate as 10 dots (`PromotionGate.Confirm` over the rebuilt reports and the verified audit chain),
+  the live-trading account masked, and the kill switch; then the paper account card and chart, the checklist and the
+  next steps as before.
+- **Docs:** `docs/guide.md` §0 rewritten for the new pages; §7 points to the Accounts page for naming the account.
+- **Tests (14 new):**
+  - the overview over the recorded 2026-09-25 answers: every account, holdings, R1's verdict; only reads after the
+    login; without a choice no account is the live one, 2
+  - the Accounts page with a fake source and environment, 6: before loading; load with the chosen login method; the
+    digits must match, then set and clear; a choice made in the terminal, and one naming two accounts; two accounts
+    ending in the same digits; a failed load. Each checks that no full number (nor its unmasked part) appears in any
+    text on the page.
+  - the Overview's tiles, 1, and its countdown text, 5
+  All 1,058 managed tests pass, 1 skipped (Windows only). The app tests use a fake environment, so they never touch
+  your real variables.

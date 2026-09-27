@@ -2,11 +2,18 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using QuantAnalyst.Cli.Commands;
 using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.Calendar;
 using QuantAnalyst.Desktop.Core.Charts;
 using QuantAnalyst.Desktop.Core.Engine;
 using QuantAnalyst.Desktop.Core.Mvvm;
 using QuantAnalyst.Desktop.Core.Presentation;
+using QuantAnalyst.Trading.Accounts;
+using QuantAnalyst.Trading.Audit;
+using QuantAnalyst.Trading.Modes;
 using QuantAnalyst.Trading.Paper;
+using QuantAnalyst.Trading.Reports;
+using QuantAnalyst.Trading.Risk;
+using QuantAnalyst.Trading.Scheduling;
 
 namespace QuantAnalyst.Desktop.Core.ViewModels;
 
@@ -23,14 +30,24 @@ public sealed record StatusLine(string Mark, string Label, string Text)
 }
 
 /// <summary>
-/// The start page: <c>qa status</c> as a checklist (the same <c>StatusCommand.Build</c>, read-only), the numbered next
-/// steps, and one button for the most useful next thing.
+/// The start page, the Overview (docs/plans/11-app-redesign.md): the next session with a countdown, the Confirm gate as
+/// dots, the live-trading account and the kill switch; the paper account's value day by day; <c>qa status</c> as a
+/// checklist (the same <c>StatusCommand.Build</c>, read-only), the numbered next steps, and one button for the most
+/// useful next thing.
 /// </summary>
 public sealed class StatusViewModel : PageViewModel
 {
     private readonly Workspace _workspace;
     private readonly TimeProvider _time;
     private readonly Action<PageKind> _navigate;
+    private readonly IUserEnvironment _environment;
+    private string _gateProgress = string.Empty;
+    private string _nextSessionText = string.Empty;
+    private string _nextSessionIn = string.Empty;
+    private string _liveAccountText = string.Empty;
+    private string _liveAccountTone = "neutral";
+    private string _killText = string.Empty;
+    private string _killTone = "ok";
     private string _heading = "Status";
     private string _nextActionLabel = string.Empty;
     private PageKind? _nextActionPage;
@@ -41,12 +58,13 @@ public sealed class StatusViewModel : PageViewModel
     private string _paperDirection = "flat";
     private string _paperNote = string.Empty;
 
-    public StatusViewModel(Workspace workspace, QaEngine engine, TimeProvider time, Action<PageKind> navigate)
-        : base(PageKind.Status, "Status", "What is set up, what is missing, and what to do next.", engine)
+    public StatusViewModel(Workspace workspace, QaEngine engine, TimeProvider time, Action<PageKind> navigate, IUserEnvironment environment)
+        : base(PageKind.Status, "Overview", "How the paper account is doing, when the next session is, and what to do next.", engine)
     {
         _workspace = workspace;
         _time = time;
         _navigate = navigate;
+        _environment = environment;
         NextActionCommand = new RelayCommand(() =>
         {
             if (_nextActionPage is { } page)
@@ -82,6 +100,56 @@ public sealed class StatusViewModel : PageViewModel
     }
 
     public RelayCommand NextActionCommand { get; }
+
+    /// <summary>Gets one entry per day the Confirm gate needs: true for each clean Paper day counted.</summary>
+    public ObservableCollection<bool> GateDots { get; } = [];
+
+    /// <summary>Gets "3 of 10 clean Paper days".</summary>
+    public string GateProgress
+    {
+        get => _gateProgress;
+        private set => Set(ref _gateProgress, value);
+    }
+
+    /// <summary>Gets the next session, e.g. "Mon 28 Sep · decides at 09:10".</summary>
+    public string NextSessionText
+    {
+        get => _nextSessionText;
+        private set => Set(ref _nextSessionText, value);
+    }
+
+    /// <summary>Gets how long until then, e.g. "in 21 h 10 min".</summary>
+    public string NextSessionIn
+    {
+        get => _nextSessionIn;
+        private set => Set(ref _nextSessionIn, value);
+    }
+
+    /// <summary>Gets the account live trading may use, masked ("***193"), or that none is chosen.</summary>
+    public string LiveAccountText
+    {
+        get => _liveAccountText;
+        private set => Set(ref _liveAccountText, value);
+    }
+
+    public string LiveAccountTone
+    {
+        get => _liveAccountTone;
+        private set => Set(ref _liveAccountTone, value);
+    }
+
+    /// <summary>Gets "Off" or "ON" for the kill switch.</summary>
+    public string KillText
+    {
+        get => _killText;
+        private set => Set(ref _killText, value);
+    }
+
+    public string KillTone
+    {
+        get => _killTone;
+        private set => Set(ref _killTone, value);
+    }
 
     /// <summary>Gets the paper account's value at each Paper day's close (from the end-of-day reports).</summary>
     public ChartData PaperChart
@@ -145,6 +213,10 @@ public sealed class StatusViewModel : PageViewModel
         }
 
         await LoadPaperHistoryAsync();
+        LoadNextSession();
+        LoadLiveAccount();
+        bool killOn = Lines.Any(l => l.Label == "Kill switch" && l.IsFailure);
+        (KillText, KillTone) = killOn ? ("ON", "FAIL") : ("Off", "ok");
 
         (string actionLabel, PageKind? page, bool start) = NextAction(Lines);
         NextActionLabel = actionLabel;
@@ -154,11 +226,59 @@ public sealed class StatusViewModel : PageViewModel
         Say(string.Empty);
     }
 
+    private void LoadNextSession()
+    {
+        try
+        {
+            RiskLimits limits = RiskLimits.Load(Path.Combine(_workspace.ConfigDir, RiskLimits.FileName));
+            PaperConfig paper = PaperConfig.Load(Path.Combine(_workspace.ConfigDir, PaperConfig.FileName));
+            MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(_workspace.ConfigDir);
+            DateTimeOffset now = _time.GetUtcNow();
+            DateTimeOffset decision = new TradingSchedule(calendar, limits, paper.DecisionTime).NextDecision(now).DecisionUtc;
+            NextSessionText = string.Create(CultureInfo.InvariantCulture, $"{MarketTime.ToStockholm(decision):ddd d MMM} · decides at {MarketTime.ToStockholm(decision):HH:mm}");
+            NextSessionIn = Until(decision - now);
+        }
+        catch (Exception ex) when (ex is TradingConfigException or CalendarConfigException or IOException or ArgumentException or InvalidOperationException)
+        {
+            (NextSessionText, NextSessionIn) = ("Not known", ex.Message);
+        }
+    }
+
+    /// <summary>"in 2 d 3 h", "in 21 h 10 min", "in 5 min", or "now".</summary>
+    internal static string Until(TimeSpan span) => span switch
+    {
+        { TotalMinutes: < 1 } => "now",
+        { TotalHours: < 1 } => string.Create(CultureInfo.InvariantCulture, $"in {span.Minutes} min"),
+        { TotalDays: < 1 } => string.Create(CultureInfo.InvariantCulture, $"in {span.Hours} h {span.Minutes} min"),
+        _ => string.Create(CultureInfo.InvariantCulture, $"in {span.Days} d {span.Hours} h"),
+    };
+
+    private void LoadLiveAccount()
+    {
+        string? raw = _environment.Read(AccountAllowlist.Variable);
+        (LiveAccountText, LiveAccountTone) = string.IsNullOrWhiteSpace(raw)
+            ? ("Not chosen", "neutral")
+            : AccountAllowlist.TryParse(raw, out QuantAnalyst.Core.AccountId id, out _) ? (id.Masked, "live") : ("Not usable", "FAIL");
+    }
+
     private async Task LoadPaperHistoryAsync()
     {
         try
         {
-            IReadOnlyList<PaperDay> days = await Task.Run(() => ChartSources.PaperDays(_workspace, _time));
+            (IReadOnlyList<EodReport> reports, AuditVerification? chain) = await Task.Run(() =>
+            {
+                IReadOnlyList<EodReport> all = ChartSources.Reports(_workspace, _time);
+                return (all, Directory.Exists(_workspace.AuditDir) ? AuditLog.Verify(_workspace.AuditDir) : null);
+            });
+            int clean = chain is null ? 0 : PromotionGate.Confirm(reports, chain).Evidence.Count;
+            GateDots.Clear();
+            for (int i = 0; i < PromotionGate.MinPaperDays; i++)
+            {
+                GateDots.Add(i < clean);
+            }
+
+            GateProgress = string.Create(CultureInfo.InvariantCulture, $"{clean} of {PromotionGate.MinPaperDays} clean Paper days");
+            IReadOnlyList<PaperDay> days = ChartSources.PaperDays(reports);
             if (days.Count == 0)
             {
                 decimal cash = PaperConfig.Load(Path.Combine(_workspace.ConfigDir, PaperConfig.FileName)).Cash;

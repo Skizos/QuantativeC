@@ -3,6 +3,67 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+        <!-- At a glance: the next session, the Confirm gate, the live-trading account and the kill switch. -->
+        <UniformGrid Columns="4" Margin="0,0,-12,4">
+            <Border Style="{StaticResource Tile}">
+                <StackPanel>
+                    <TextBlock Text="NEXT SESSION" Style="{StaticResource Overline}" />
+                    <TextBlock Text="{Binding NextSessionText}" Style="{StaticResource KpiValue}" FontSize="17" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding NextSessionIn}" Style="{StaticResource Caption}" Margin="0,2,0,0" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Tile}">
+                <StackPanel>
+                    <TextBlock Text="CONFIRM GATE" Style="{StaticResource Overline}" />
+                    <ItemsControl ItemsSource="{Binding GateDots}" Margin="0,8,0,6">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Ellipse Width="12" Height="12" Margin="0,0,5,0">
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Setter Property="Fill" Value="{StaticResource LineBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding}" Value="True">
+                                                    <Setter Property="Fill" Value="{StaticResource PositiveBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="{Binding GateProgress}" Style="{StaticResource Caption}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Tile}">
+                <StackPanel>
+                    <TextBlock Text="LIVE TRADING ACCOUNT" Style="{StaticResource Overline}" />
+                    <Border Style="{StaticResource Chip}" Margin="0,8,0,0" Background="{Binding LiveAccountTone, Converter={StaticResource MarkToSoftBrush}}">
+                        <TextBlock Text="{Binding LiveAccountText}" Style="{StaticResource ChipText}" FontSize="13"
+                                   Foreground="{Binding LiveAccountTone, Converter={StaticResource MarkToBrush}}" />
+                    </Border>
+                    <TextBlock Text="Chosen on the Accounts page" Style="{StaticResource Caption}" Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Tile}">
+                <StackPanel>
+                    <TextBlock Text="KILL SWITCH" Style="{StaticResource Overline}" />
+                    <Border Style="{StaticResource Chip}" Margin="0,8,0,0" Background="{Binding KillTone, Converter={StaticResource MarkToSoftBrush}}">
+                        <TextBlock Text="{Binding KillText}" Style="{StaticResource ChipText}" FontSize="13"
+                                   Foreground="{Binding KillTone, Converter={StaticResource MarkToBrush}}" />
+                    </Border>
+                    <TextBlock Text="The red KILL button stops everything" Style="{StaticResource Caption}" Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+        </UniformGrid>
+
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="3*" />
@@ -70,5 +131,6 @@
                 </StackPanel>
             </Border>
         </Grid>
+        </StackPanel>
     </ScrollViewer>
 </UserControl>

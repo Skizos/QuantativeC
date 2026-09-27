@@ -142,6 +142,39 @@ public sealed class QaEngine : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Runs a read-only Avanza query in-process (e.g. the Accounts page's overview), one at a time like a command:
+    /// busy while it runs, stopped by <see cref="Cancel"/>, with the app's BankID QR code. Its result comes back
+    /// typed instead of printed; the activity log gets one line saying what ran.
+    /// </summary>
+    internal async Task<T> QueryAsync<T>(string title, Func<AvanzaCliServices, Task<T>> body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        if (IsBusy)
+        {
+            throw new InvalidOperationException($"'{CurrentCommand}' is still running; wait for it or stop it first.");
+        }
+
+        using var cts = new CancellationTokenSource();
+        _cts = cts;
+        CurrentCommand = title;
+        _ui.Post(() => LineWritten?.Invoke(new OutputLine(title + " …", false)));
+        AvanzaCliServices services = _services with { Cancellation = cts.Token, BankIdPrompt = (_, _) => BankId, Input = TextReader.Null };
+        try
+        {
+            return await Task.Run(() => body(services), CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            _cts = null;
+            _ui.Post(() =>
+            {
+                BankId.Reset();
+                CurrentCommand = null;
+            });
+        }
+    }
+
     /// <summary>Stops the running command the way Ctrl+C does (a Paper session cancels its orders and writes its report).</summary>
     public void Cancel() => _cts?.Cancel();
 }

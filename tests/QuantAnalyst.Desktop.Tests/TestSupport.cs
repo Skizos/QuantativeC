@@ -103,3 +103,13 @@ internal sealed class ScriptedRunner
         return code;
     }
 }
+
+/// <summary>User environment variables in memory: tests never touch the real ones (the live-trading account lives there).</summary>
+internal sealed class FakeEnvironment : IUserEnvironment
+{
+    public Dictionary<string, string?> Values { get; } = new(StringComparer.Ordinal);
+
+    public string? Read(string name) => Values.GetValueOrDefault(name);
+
+    public void Write(string name, string? value) => Values[name] = value;
+}

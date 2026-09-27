@@ -21,19 +21,23 @@ public sealed class ShellViewModel : ObservableObject
     private string _loginMethod;
     private string _notice = string.Empty;
 
-    public ShellViewModel(Workspace workspace, QaEngine engine, TimeProvider time)
+    /// <param name="accounts">Where the Accounts page loads your accounts (default: the CLI's reads, one login each).</param>
+    /// <param name="environment">Your user environment (default: the real one; the live-trading account lives there).</param>
+    public ShellViewModel(Workspace workspace, QaEngine engine, TimeProvider time, IAccountSource? accounts = null, IUserEnvironment? environment = null)
     {
         Workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         Engine = engine ?? throw new ArgumentNullException(nameof(engine));
         _time = time ?? throw new ArgumentNullException(nameof(time));
         _loginMethod = DefaultLogin();
+        IUserEnvironment env = environment ?? new UserEnvironment();
 
-        Status = new StatusViewModel(workspace, engine, time, Navigate);
+        Status = new StatusViewModel(workspace, engine, time, Navigate, env);
         Instruments = new InstrumentsViewModel(workspace, engine, () => LoginMethod);
         Strategy = new StrategyViewModel(workspace, engine);
         Session = new SessionViewModel(workspace, engine, time, () => LoginMethod);
         Reports = new ReportsViewModel(workspace, engine, time);
-        Pages = [Status, Session, Instruments, Strategy, Reports];
+        Accounts = new AccountsViewModel(workspace, engine, accounts ?? new EngineAccountSource(engine, workspace), env, time, () => LoginMethod);
+        Pages = [Status, Session, Accounts, Instruments, Strategy, Reports];
         _selected = Status;
 
         Status.StartSessionAsked += () => Session.StartCommand.Execute(null);
@@ -63,6 +67,8 @@ public sealed class ShellViewModel : ObservableObject
     public SessionViewModel Session { get; }
 
     public ReportsViewModel Reports { get; }
+
+    public AccountsViewModel Accounts { get; }
 
     public IReadOnlyList<PageViewModel> Pages { get; }
 

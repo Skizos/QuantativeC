@@ -44,25 +44,26 @@ public static class ChartSources
     /// audit log (the same numbers as <c>qa report eod</c>). Days without an account line (a session stopped before any
     /// value was known) are left out.
     /// </summary>
-    public static IReadOnlyList<PaperDay> PaperDays(Workspace workspace, TimeProvider time)
+    public static IReadOnlyList<PaperDay> PaperDays(Workspace workspace, TimeProvider time) => PaperDays(Reports(workspace, time));
+
+    /// <summary>The Paper days' values from already rebuilt reports.</summary>
+    public static IReadOnlyList<PaperDay> PaperDays(IReadOnlyList<EodReport> reports)
+    {
+        ArgumentNullException.ThrowIfNull(reports);
+        return
+        [
+            .. reports.Where(r => r.Modes.Contains("Paper") && r.Account is not null)
+                .Select(r => new PaperDay(r.Date, r.Account!.StartOfDayValue, r.Account.EndValue)),
+        ];
+    }
+
+    /// <summary>Every day's end-of-day report, oldest first, rebuilt read-only from the audit log (as <c>qa report gate</c> does).</summary>
+    public static IReadOnlyList<EodReport> Reports(Workspace workspace, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(workspace);
-        if (!Directory.Exists(workspace.AuditDir))
-        {
-            return [];
-        }
-
-        var days = new List<PaperDay>();
-        foreach (DateOnly date in AuditDays(workspace.AuditDir))
-        {
-            EodReport report = EodReport.Build(workspace.AuditDir, date, time);
-            if (report.Modes.Contains("Paper") && report.Account is { } a)
-            {
-                days.Add(new PaperDay(date, a.StartOfDayValue, a.EndValue));
-            }
-        }
-
-        return days;
+        return Directory.Exists(workspace.AuditDir)
+            ? [.. AuditDays(workspace.AuditDir).Select(d => EodReport.Build(workspace.AuditDir, d, time))]
+            : [];
     }
 
     /// <summary>The value history as chart points: the first day's start, then each close.</summary>

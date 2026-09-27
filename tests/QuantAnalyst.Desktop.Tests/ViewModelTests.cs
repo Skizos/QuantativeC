@@ -17,11 +17,15 @@ namespace QuantAnalyst.Desktop.Tests;
 public sealed class ViewModelTests : IDisposable
 {
     private readonly TempWorkspace _ws = new();
+    private readonly FakeEnvironment _env = new();
 
     public void Dispose() => _ws.Dispose();
 
-    private ShellViewModel Shell(ScriptedRunner? runner = null) =>
-        new(_ws.Workspace, runner is null ? new QaEngine(new ImmediateDispatcher()) : new QaEngine(new ImmediateDispatcher(), runner.Run, null), _ws.Time);
+    private ShellViewModel Shell(ScriptedRunner? runner = null)
+    {
+        QaEngine engine = runner is null ? new QaEngine(new ImmediateDispatcher()) : new QaEngine(new ImmediateDispatcher(), runner.Run, null);
+        return new(_ws.Workspace, engine, _ws.Time, new EngineAccountSource(engine, _ws.Workspace), _env);
+    }
 
     private void SaveMaCross() =>
         PaperConfig.SaveStrategy(Path.Combine(_ws.Workspace.ConfigDir, PaperConfig.FileName),
@@ -197,6 +201,47 @@ public sealed class ViewModelTests : IDisposable
         Assert.Equal("up", status.PaperDirection);
     }
 
+    [Fact]
+    public async Task TheOverview_ShowsTheNextSession_TheGate_TheLiveAccount_AndTheKillSwitch()
+    {
+        ShellViewModel shell = Shell();
+        StatusViewModel status = shell.Status;
+        await status.RefreshAsync();
+        Assert.Equal("Overview", status.Title);
+        Assert.Equal("Mon 28 Sep · decides at 09:10", status.NextSessionText); // Saturday 12:00 now
+        Assert.Equal("in 1 d 21 h", status.NextSessionIn);
+        Assert.Equal(10, status.GateDots.Count);
+        Assert.DoesNotContain(true, status.GateDots);
+        Assert.Equal("0 of 10 clean Paper days", status.GateProgress);
+        Assert.Equal(("Not chosen", "neutral"), (status.LiveAccountText, status.LiveAccountTone));
+        Assert.Equal(("Off", "ok"), (status.KillText, status.KillTone));
+
+        var monday = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 9, 28, 15, 32, 0, TimeSpan.Zero));
+        var audit = new AuditLog(_ws.Workspace.AuditDir, monday);
+        audit.Append("session-start", new { mode = "Paper" });
+        audit.Append("end-of-day", new { day = new { startOfDayValue = 5000m, accountValue = 5001m, cash = 5001m, feesPaid = 0m } });
+        _env.Write(Trading.Accounts.AccountAllowlist.Variable, "900003193");
+        await status.RefreshAsync();
+        Assert.Equal([true, false, false, false, false, false, false, false, false, false], status.GateDots);
+        Assert.Equal("1 of 10 clean Paper days", status.GateProgress);
+        Assert.Equal(("***193", "live"), (status.LiveAccountText, status.LiveAccountTone)); // masked
+
+        _env.Write(Trading.Accounts.AccountAllowlist.Variable, "900003193 700001987");
+        shell.KillCommand.Execute(null);
+        await status.RefreshAsync();
+        Assert.Equal(("Not usable", "FAIL"), (status.LiveAccountText, status.LiveAccountTone));
+        Assert.Equal(("ON", "FAIL"), (status.KillText, status.KillTone));
+    }
+
+    [Theory]
+    [InlineData(-60, "now")]
+    [InlineData(0.5, "now")]
+    [InlineData(5, "in 5 min")]
+    [InlineData(21 * 60 + 10, "in 21 h 10 min")]
+    [InlineData(51 * 60 + 30, "in 2 d 3 h")]
+    public void TheCountdown_IsShortAndPlain(double minutes, string expected) =>
+        Assert.Equal(expected, StatusViewModel.Until(TimeSpan.FromMinutes(minutes)));
+
     // ---- Strategy ---------------------------------------------------------------------------------------------
 
     [Fact]
@@ -353,7 +398,7 @@ public sealed class ViewModelTests : IDisposable
     public void TheShell_HasItsPages_APaperChip_AndAValidLoginMethod()
     {
         ShellViewModel shell = Shell();
-        Assert.Equal(["Status", "Trading", "Instruments", "Strategy", "Reports"], shell.Pages.Select(p => p.Title));
+        Assert.Equal(["Overview", "Trading", "Accounts", "Instruments", "Strategy", "Reports"], shell.Pages.Select(p => p.Title));
         Assert.Equal(PageKind.Status, shell.SelectedPage.Kind);
         Assert.StartsWith("PAPER", shell.ModeBanner, StringComparison.Ordinal);
 

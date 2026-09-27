@@ -12,6 +12,7 @@ public enum PageKind
     Strategy,
     Session,
     Reports,
+    Accounts,
 }
 
 /// <summary>

@@ -100,6 +100,7 @@ public sealed class PageIconConverter : IValueConverter
         {
             PageKind.Status => "IconOverview",
             PageKind.Session => "IconTrading",
+            PageKind.Accounts => "IconAccounts",
             PageKind.Instruments => "IconInstruments",
             PageKind.Strategy => "IconStrategy",
             _ => "IconReports",
