@@ -98,3 +98,22 @@
     fixings, a failed FX import storing nothing
 - All 1180 tests pass.
 
+### Step 3: the allowlist and the search (done 2026-09-28)
+
+- **The allowlist** takes shares in SEK, USD and CAD (`Allowlist.Check`, used by `qa universe add` and the app's Add).
+  Any other currency is refused with the reason. The Paper session trades USD and CAD names from step 6 on; steps 3–6
+  land together.
+- **The app's hits:**
+  - A US or Canadian share can be added.
+  - Its price shows in kronor too ("≈ 2 350 kr") at the latest stored fixing.
+  - The R6 check ("one share costs more than an order may") compares that SEK price.
+  - With no fixing stored yet, no SEK value is shown and Add decides (it imports the rates first).
+  - The hint says foreign shares trade on paper and make the session run to 22:02.
+- **Tests (5 new):**
+  - US and Canadian hits without and with a stored fixing
+  - other currencies refused
+  - the SEK price
+  - adding a US share through the session (fixings first, then the list)
+  - `qa universe add AAPL`
+- All 1183 tests pass.
+

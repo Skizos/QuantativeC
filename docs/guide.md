@@ -77,7 +77,8 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
     country and marketplace, last price, today's change and sector.
   - Each hit says **Add**, or why it can't be added:
     - **On your list** (a green tick)
-    - **Trades in EUR** (or another currency): the program trades Swedish shares in kronor
+    - **Trades in EUR** (or another currency): the program trades shares in SEK, USD and CAD (US and Canadian shares on
+      paper only, ADR 0005). A US or Canadian hit also shows its price in kronor ("≈ 2 350 kr") once a fixing is stored.
     - **Your list is full (5 names)**: a Paper session streams at most 5; remove one first (you can, while searching)
     - **One share costs more than an order may (500,00 kr)**: R6 with the 5 000 kr account cap
     - **Not tradable at Avanza**

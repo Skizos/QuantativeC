@@ -149,6 +149,48 @@ public sealed class SearchPageTests : IDisposable
     }
 
     [Fact]
+    public async Task UsAndCanadianShares_CanBeAdded_AndShowTheirPriceInKronorAtTheLatestFixing()
+    {
+        var apple = new InstrumentSearchHit(new OrderbookId("4478"), "Apple Inc", "STOCK", "NASDAQ", true, 250m, "USD") { Ticker = "AAPL", FlagCode = "US" };
+        var ford = new InstrumentSearchHit(new OrderbookId("4400"), "Ford Motor Co", "STOCK", "NYSE", true, 12.5m, "USD") { Ticker = "F", FlagCode = "US" };
+        var shopify = new InstrumentSearchHit(new OrderbookId("9001"), "Shopify Inc", "STOCK", "Toronto Stock Exchange", true, 30m, "CAD") { Ticker = "SHOP", FlagCode = "CA" };
+        InstrumentsViewModel page = Shell().Instruments;
+        _search.Answer("us", [apple, ford, shopify]);
+        page.SearchText = "us";
+        await page.SearchCommand.ExecuteAsync();
+
+        // No fixing stored yet: no SEK value, and the price can't be judged, so Add decides (it imports the rates first).
+        Assert.All(page.Results, r => Assert.True(r.CanAdd, r.Why));
+        Assert.All(page.Results, r => Assert.Equal(string.Empty, r.PriceSek));
+        Assert.Equal("250,00 USD", page.Results[0].Price);
+
+        using (var store = Data.Store.HistoryStore.Open(_ws.Workspace.Store))
+        {
+            store.RegisterSource(Data.Fx.RiksbankFxSource.Riksbank);
+            store.UpsertFxRates("USD", [new QuantAnalyst.Core.Market.FxRate(new DateOnly(2026, 9, 25), 9.4m)], Data.Fx.RiksbankFxSource.Riksbank, "test", _ws.Time.GetUtcNow());
+        }
+
+        await page.SearchNowAsync();
+        SearchResultRow aapl = page.Results[0];
+        Assert.Equal("≈ 2\u00A0350 kr", aapl.PriceSek);
+        Assert.False(aapl.CanAdd);
+        Assert.Equal("One share costs more than an order may (500,00 kr)", aapl.Why); // 250 USD = 2 350 kr > R6
+        Assert.Equal(("≈ 118 kr", true), (page.Results[1].PriceSek, page.Results[1].CanAdd));
+        Assert.Equal((string.Empty, true), (page.Results[2].PriceSek, page.Results[2].CanAdd)); // no CAD fixing stored
+        Assert.Contains("US and Canadian ones trade on paper", page.SearchHint, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OtherCurrencies_StayOut_WithTheReason()
+    {
+        var oslo = new InstrumentSearchHit(new OrderbookId("1"), "Equinor", "STOCK", "Oslo Børs", true, 250m, "NOK") { Ticker = "EQNR" };
+        Assert.Equal((false, false, "Trades in NOK: the program trades shares in SEK, USD, CAD"), InstrumentsViewModel.Verdict(oslo, Universe.Empty, 500m));
+        Assert.Equal(94.96m, InstrumentsViewModel.SekPrice(EricB, null)); // a SEK share needs no rate
+        Assert.Null(InstrumentsViewModel.SekPrice(EricHelsinki, null));
+        Assert.Equal(84.24m, InstrumentsViewModel.SekPrice(EricHelsinki, 10m));
+    }
+
+    [Fact]
     public void AFullList_TakesNoMoreNames_ButANameOnItStillShowsAsOnIt()
     {
         var full = new Universe(Enumerable.Range(1, Allowlist.MaxNames).Select(i => new UniverseEntry(new OrderbookId($"{i}"), $"T{i}", $"Name {i}")));

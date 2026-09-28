@@ -130,10 +130,19 @@ public sealed class FxCliTests : IDisposable
         Assert.Contains("FX fixings (ADR 0005): USD: ", output, StringComparison.Ordinal);
         Assert.Equal(("USD", new DateOnly(2026, 9, 14), new DateOnly(2026, 9, 25)), Assert.Single(_fx.Calls)); // 10 days' lead
 
-        using HistoryStore store = HistoryStore.Open(Store);
-        StoredInstrument aapl = store.GetInstrument(new OrderbookId("4478"))!;
-        Assert.Equal(("USD", TradingModel.Continuous), (aapl.Instrument.Currency, aapl.Instrument.TradingModel));
-        Assert.NotEmpty(store.GetFxRates("USD", RiksbankFxSource.Riksbank.Name));
+        using (HistoryStore store = HistoryStore.Open(Store))
+        {
+            StoredInstrument aapl = store.GetInstrument(new OrderbookId("4478"))!;
+            Assert.Equal(("USD", TradingModel.Continuous), (aapl.Instrument.Currency, aapl.Instrument.TradingModel));
+            Assert.NotEmpty(store.GetFxRates("USD", RiksbankFxSource.Riksbank.Name));
+        }
+
+        // The allowlist takes it (ADR 0005: foreign shares trade on paper only).
+        string config = Path.Combine(_root, "config");
+        Directory.CreateDirectory(config);
+        (code, output, error) = Qa("universe", "add", "AAPL", "--config-dir", config, "--store", Store);
+        Assert.True(code == 0, error);
+        Assert.Contains("added AAPL (4478", output, StringComparison.Ordinal);
     }
 
     [Fact]

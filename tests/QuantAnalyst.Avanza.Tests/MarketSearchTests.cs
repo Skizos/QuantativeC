@@ -9,6 +9,7 @@ using QuantAnalyst.Cli.Commands;
 using QuantAnalyst.Core;
 using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
+using QuantAnalyst.Core.Market;
 using QuantAnalyst.Trading.Risk;
 
 namespace QuantAnalyst.Avanza.Tests;
@@ -25,6 +26,7 @@ public sealed class MarketSearchTests : IDisposable
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "qa-market-search", Guid.NewGuid().ToString("N"));
     private readonly FakeAvanza _server = new();
+    private readonly StubFx _fx = new();
 
     public MarketSearchTests()
     {
@@ -71,6 +73,17 @@ public sealed class MarketSearchTests : IDisposable
     private static string Orderbook(string id)
     {
         JsonNode node = JsonNode.Parse(Body("033-orderbook"))!;
+        if (id == "4478")
+        {
+            node["id"] = "4478";
+            node["name"] = "Apple Inc";
+            node["isin"] = "US0378331005";
+            node["currency"] = "USD";
+            node["marketPlace"] = "XNAS";
+            node["countryCode"] = "US";
+            node["tickerSymbol"] = "AAPL";
+        }
+
         if (id == "61540")
         {
             node["id"] = "61540";
@@ -90,6 +103,7 @@ public sealed class MarketSearchTests : IDisposable
         _ => FakeSecrets.Store())
     {
         Cancellation = stop,
+        FxRates = () => _fx,
     };
 
     /// <summary>Runs the session the way the app does: on its own task, until Done, idle or a failure.</summary>
@@ -223,6 +237,22 @@ public sealed class MarketSearchTests : IDisposable
     }
 
     [Fact]
+    public async Task AUsShare_IsAdded_WithItsFxFixingsFirst()
+    {
+        var session = new MarketSearchSession();
+        Task<int> run = Start(session);
+
+        AddedShare added = await session.AddAsync(new OrderbookId("4478"), Store, Config, Today);
+        session.Close();
+        Assert.Equal(0, await run);
+
+        Assert.Equal(new UniverseEntry(new OrderbookId("4478"), "AAPL", "Apple Inc"), added.Entry);
+        Assert.Equal("USD", added.Import.Fx!.Currency);
+        Assert.Equal(("USD", Today.AddYears(-InstrumentImport.AppYears).AddDays(-InstrumentImport.FxLeadDays), Today), Assert.Single(_fx.Calls));
+        Assert.Contains(added.Entry, Universe.Load(UniverseFile).Entries);
+    }
+
+    [Fact]
     public async Task AFullList_IsRefusedBeforeAnyImport()
     {
         new Universe(Enumerable.Range(1, Allowlist.MaxNames).Select(i => new UniverseEntry(new OrderbookId($"{i}"), $"T{i}", $"Name {i}"))).Save(UniverseFile);
@@ -349,5 +379,23 @@ public sealed class MarketSearchTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
         Assert.True(session.HasEnded);
         await Assert.ThrowsAsync<InvalidOperationException>(() => session.SearchAsync("eric"));
+    }
+
+    /// <summary>A flat 9.40 SEK per unit on every weekday asked for.</summary>
+    private sealed class StubFx : IFxRateSource
+    {
+        public List<(string Currency, DateOnly First, DateOnly Last)> Calls { get; } = [];
+
+        public DataSourceInfo Source => Data.Fx.RiksbankFxSource.Riksbank;
+
+        public string SourceVersion => "test";
+
+        public Task<IReadOnlyList<FxRate>> GetDailyAsync(string currency, DateOnly first, DateOnly last, CancellationToken ct)
+        {
+            Calls.Add((currency, first, last));
+            IReadOnlyList<FxRate> rates = [.. Enumerable.Range(0, last.DayNumber - first.DayNumber + 1).Select(first.AddDays)
+                .Where(d => d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)).Select(d => new FxRate(d, 9.4m))];
+            return Task.FromResult(rates);
+        }
     }
 }

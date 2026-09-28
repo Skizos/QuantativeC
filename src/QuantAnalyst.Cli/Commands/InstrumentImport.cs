@@ -6,7 +6,6 @@ using QuantAnalyst.Core.Market;
 using QuantAnalyst.Data.Fx;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Store;
-using QuantAnalyst.Trading.Pipeline;
 using QuantAnalyst.Trading.Risk;
 
 namespace QuantAnalyst.Cli.Commands;
@@ -57,8 +56,8 @@ internal static class InstrumentImport
 }
 
 /// <summary>
-/// Changing the allowlist (R2, <c>config/universe.json</c>). A name joins only from the instrument master, only in SEK
-/// (v1), and only while there are fewer than <see cref="MaxNames"/>, because the Paper session streams every allowlisted
+/// Changing the allowlist (R2, <c>config/universe.json</c>). A name joins only from the instrument master, only in SEK,
+/// USD or CAD (ADR 0005: foreign shares trade on paper only), and only while there are fewer than <see cref="MaxNames"/>, because the Paper session streams every allowlisted
 /// name and refuses to start with more. Shared by <c>qa universe add|remove</c> and the app's share search.
 /// </summary>
 internal static class Allowlist
@@ -79,9 +78,9 @@ internal static class Allowlist
     public static void Check(Universe universe, OrderbookId id, string ticker, string currency)
     {
         ArgumentNullException.ThrowIfNull(universe);
-        if (!string.Equals(currency, OrderPreparation.Currency, StringComparison.Ordinal))
+        if (Markets.ForCurrency(currency) is null)
         {
-            throw new ArgumentException($"{ticker} trades in {currency}; v1 trades SEK instruments only.");
+            throw new ArgumentException($"{ticker} trades in {currency}; the program trades shares in {Markets.CurrencyList} (ADR 0005).");
         }
 
         if (!universe.Contains(id) && universe.Entries.Count >= MaxNames)

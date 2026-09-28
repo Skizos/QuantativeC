@@ -78,6 +78,9 @@
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <StackPanel MinWidth="96" Margin="0,0,16,0" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Price}" Style="{StaticResource Number}" HorizontalAlignment="Right" />
+                                        <TextBlock Text="{Binding PriceSek}" Style="{StaticResource Caption}" HorizontalAlignment="Right"
+                                                   Visibility="{Binding PriceSek, Converter={StaticResource NonEmptyToVisibility}}"
+                                                   ToolTip="In kronor at the latest Riksbank fixing stored (ADR 0005)." />
                                         <TextBlock Text="{Binding Change}" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Right"
                                                    Foreground="{Binding Direction, Converter={StaticResource MarkToBrush}}" />
                                     </StackPanel>

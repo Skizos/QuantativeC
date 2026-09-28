@@ -20,10 +20,11 @@ public sealed record InstrumentRow(string Ticker, string Name, string OrderbookI
 
 /// <summary>
 /// One share Avanza found: who it is ("ERIC B", "Ericsson B"), where it trades ("SE · Stockholmsbörsen"), its price
-/// and change today, its sector, and whether it can be added or why not ("On your list", "Trades in EUR …").
+/// (a US or Canadian one also in SEK, "≈ 1 715 kr", at the latest stored fixing) and change today, its sector, and
+/// whether it can be added or why not ("On your list", "Trades in EUR …").
 /// </summary>
 public sealed record SearchResultRow(
-    string OrderbookId, string Ticker, string Name, string Market, string Price, string Change, string Direction, string Sector,
+    string OrderbookId, string Ticker, string Name, string Market, string Price, string PriceSek, string Change, string Direction, string Sector,
     bool CanAdd, bool IsOnList, string Why);
 
 /// <summary>
@@ -339,7 +340,8 @@ public sealed class InstrumentsViewModel : PageViewModel
     /// Whether <paramref name="hit"/> may join <paramref name="universe"/>, or why not: the rules the allowlist and the
     /// Paper session enforce (R2, SEK only, 5 names, R6's limit per order), shown before you press Add.
     /// </summary>
-    internal static (bool CanAdd, bool OnList, string Why) Verdict(InstrumentSearchHit hit, Universe universe, decimal? orderLimit)
+    /// <param name="sekPerUnit">The latest FX fixing for a USD or CAD share (ADR 0005), or null when none is stored yet (then Add decides).</param>
+    internal static (bool CanAdd, bool OnList, string Why) Verdict(InstrumentSearchHit hit, Universe universe, decimal? orderLimit, decimal? sekPerUnit = null)
     {
         ArgumentNullException.ThrowIfNull(hit);
         ArgumentNullException.ThrowIfNull(universe);
@@ -353,9 +355,9 @@ public sealed class InstrumentsViewModel : PageViewModel
             return (false, false, "Not tradable at Avanza");
         }
 
-        if (hit.Currency is { } currency && !string.Equals(currency, "SEK", StringComparison.Ordinal))
+        if (hit.Currency is { } currency && Markets.ForCurrency(currency) is null)
         {
-            return (false, false, $"Trades in {currency}: the program trades Swedish shares in kronor");
+            return (false, false, $"Trades in {currency}: the program trades shares in {Markets.CurrencyList}");
         }
 
         if (hit.Ticker is null)
@@ -368,7 +370,7 @@ public sealed class InstrumentsViewModel : PageViewModel
             return (false, false, string.Create(CultureInfo.InvariantCulture, $"Your list is full ({Allowlist.MaxNames} names): remove one first"));
         }
 
-        if (orderLimit is { } limit && hit.LastPrice is { } price && price > limit)
+        if (orderLimit is { } limit && SekPrice(hit, sekPerUnit) is { } price && price > limit)
         {
             return (false, false, $"One share costs more than an order may ({Fmt.Sek(limit)})");
         }
@@ -376,9 +378,16 @@ public sealed class InstrumentsViewModel : PageViewModel
         return (true, false, string.Empty);
     }
 
+    /// <summary>A hit's last price in SEK: as it is for a SEK share, at <paramref name="sekPerUnit"/> for a foreign one (null when unknown).</summary>
+    internal static decimal? SekPrice(InstrumentSearchHit hit, decimal? sekPerUnit) =>
+        hit.LastPrice is not { } price ? null
+        : hit.Currency is null || !Markets.IsForeign(hit.Currency) ? price
+        : sekPerUnit is { } fx ? price * fx
+        : null;
+
     /// <summary>The hint under "Find a share", with R6's limit when the settings can be read.</summary>
     private static string Hint(decimal? orderLimit) =>
-        string.Create(CultureInfo.InvariantCulture, $"Search Avanza by name or ticker; searching needs no login. Add imports {InstrumentImport.AppYears} years of daily prices and allows the share: the first add logs in to Avanza (read-only) and that login serves every add until you press Done.")
+        string.Create(CultureInfo.InvariantCulture, $"Search Avanza by name or ticker; searching needs no login. Swedish, US and Canadian shares can be added (US and Canadian ones trade on paper, and the session then runs to 22:02). Add imports {InstrumentImport.AppYears} years of daily prices and allows the share: the first add logs in to Avanza (read-only) and that login serves every add until you press Done.")
         + (orderLimit is { } limit ? $" One order may be at most {Fmt.Sek(limit)}, so a share priced above that can't be bought." : string.Empty);
 
     /// <summary>Loads the selected name's closes once (the store is read only while no command runs), then draws.</summary>
@@ -584,17 +593,21 @@ public sealed class InstrumentsViewModel : PageViewModel
         }
 
         decimal? limit = OrderLimit();
+        Dictionary<string, decimal> fx = LatestFx([.. _hits.Select(h => h.Currency).OfType<string>().Where(c => Markets.ForCurrency(c) is not null && Markets.IsForeign(c)).Distinct()]);
         Results.Clear();
         foreach (InstrumentSearchHit hit in _hits)
         {
-            (bool canAdd, bool onList, string why) = Verdict(hit, universe, limit);
+            decimal? sekPerUnit = hit.Currency is { } ccy && fx.TryGetValue(ccy, out decimal rate) ? rate : null;
+            (bool canAdd, bool onList, string why) = Verdict(hit, universe, limit, sekPerUnit);
             decimal? change = hit.TodayChangePercent / 100m;
+            bool foreign = hit.Currency is { } cur && Markets.IsForeign(cur);
             Results.Add(new SearchResultRow(
                 hit.OrderbookId.Value,
                 hit.Ticker ?? string.Empty,
                 hit.Name,
                 string.Join(" · ", new[] { hit.FlagCode, hit.MarketPlaceName }.Where(p => !string.IsNullOrWhiteSpace(p))),
                 hit.LastPrice is { } price ? Fmt.Price(price) + " " + (hit.Currency == "SEK" ? "kr" : hit.Currency ?? string.Empty) : "–",
+                foreign && SekPrice(hit, sekPerUnit) is { } sek ? "≈ " + Fmt.Sek(decimal.Round(sek, 0)).Replace(",00 kr", " kr", StringComparison.Ordinal) : string.Empty,
                 change is { } c ? Fmt.Arrow(c) : string.Empty,
                 Tone.Direction(change ?? 0m),
                 hit.Sector ?? string.Empty,
@@ -604,6 +617,38 @@ public sealed class InstrumentsViewModel : PageViewModel
         }
 
         AddResultCommand.Refresh();
+    }
+
+    /// <summary>
+    /// The latest stored FX fixing (ADR 0005) of each currency, read only while the price store is free. A currency with
+    /// no fixing stored yet (no share in it added) is missing: its hits show no SEK value and Add decides.
+    /// </summary>
+    private Dictionary<string, decimal> LatestFx(IReadOnlyList<string> currencies)
+    {
+        var result = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        if (currencies.Count == 0 || !StoreFree || !File.Exists(_workspace.Store))
+        {
+            return result;
+        }
+
+        try
+        {
+            using HistoryStore store = HistoryStore.Open(_workspace.Store);
+            DateOnly today = DateOnly.FromDateTime(MarketTime.ToStockholm(_time.GetUtcNow()).DateTime);
+            foreach (string currency in currencies)
+            {
+                if (store.LatestFxRate(currency, Data.Fx.RiksbankFxSource.Riksbank.Name, today) is { } stored)
+                {
+                    result[currency] = stored.Rate.SekPerUnit;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is HistoryStoreException or IOException || Cli.Commands.DataCommands.IsStoreFailure(ex))
+        {
+            // The store is busy: the hits show no SEK value this time.
+        }
+
+        return result;
     }
 
     /// <summary>R6's limit for one order at the Paper account's size, or null when the settings can't be read.</summary>
