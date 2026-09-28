@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using QuantAnalyst.Cli.Commands;
 using QuantAnalyst.Core;
+using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Store;
@@ -8,6 +10,7 @@ using QuantAnalyst.Desktop.Core.Charts;
 using QuantAnalyst.Desktop.Core.Engine;
 using QuantAnalyst.Desktop.Core.Mvvm;
 using QuantAnalyst.Desktop.Core.Presentation;
+using QuantAnalyst.Trading.Paper;
 using QuantAnalyst.Trading.Risk;
 
 namespace QuantAnalyst.Desktop.Core.ViewModels;
@@ -16,16 +19,40 @@ namespace QuantAnalyst.Desktop.Core.ViewModels;
 public sealed record InstrumentRow(string Ticker, string Name, string OrderbookId, string History);
 
 /// <summary>
-/// The allowlist (risk check R2). <b>Add</b> runs what you would type: <c>qa history import</c> (one read-only
-/// Avanza login) and then <c>qa universe add</c>. <b>Remove</b> runs <c>qa universe remove</c>. The selected name's
-/// stored daily history is charted with ranges (1M … All) and, when the saved strategy is ma-cross, its two moving
-/// averages (docs/plans/11-app-redesign.md).
+/// One share Avanza found: who it is ("ERIC B", "Ericsson B"), where it trades ("SE · Stockholmsbörsen"), its price
+/// and change today, its sector, and whether it can be added or why not ("On your list", "Trades in EUR …").
+/// </summary>
+public sealed record SearchResultRow(
+    string OrderbookId, string Ticker, string Name, string Market, string Price, string Change, string Direction, string Sector,
+    bool CanAdd, bool IsOnList, string Why);
+
+/// <summary>
+/// The allowlist (risk check R2). <b>Find a share</b> searches Avanza's market as you type (one read-only login for
+/// every search until <b>Done</b>, docs/plans/15-share-search.md); each hit says whether it can be added or why not, and
+/// <b>Add</b> imports its daily prices and allows it. <b>Remove</b> runs <c>qa universe remove</c> (or, while the search
+/// is open, the same change in turn with its adds). The selected name's stored daily history is charted with ranges
+/// (1M … All) and, when the saved strategy is ma-cross, its two moving averages (docs/plans/11-app-redesign.md).
 /// </summary>
 public sealed class InstrumentsViewModel : PageViewModel
 {
+    /// <summary>How many characters a search needs.</summary>
+    public const int MinQueryLength = 2;
+
+    /// <summary>How long typing pauses before the search runs (Enter searches at once).</summary>
+    public static readonly TimeSpan TypingPause = TimeSpan.FromMilliseconds(400);
+
     private readonly Workspace _workspace;
     private readonly Func<string> _login;
-    private string _newTicker = string.Empty;
+    private readonly IMarketSearch _search;
+    private readonly TimeProvider _time;
+    private string _searchText = string.Empty;
+    private string _searchStatus = string.Empty;
+    private bool _searchStatusIsError;
+    private bool _isSearching;
+    private string _searchHint = string.Empty;
+    private IReadOnlyList<InstrumentSearchHit> _hits = [];
+    private CancellationTokenSource? _typing;
+    private int _searchSeq;
     private InstrumentRow? _selectedRow;
     private ChartRange _range = ChartRange.OneYear;
     private IReadOnlyList<ChartPoint> _history = [];
@@ -39,31 +66,78 @@ public sealed class InstrumentsViewModel : PageViewModel
     private string _rangeDirection = "flat";
     private string _chartNote = string.Empty;
 
-    public InstrumentsViewModel(Workspace workspace, QaEngine engine, Func<string> login)
+    public InstrumentsViewModel(Workspace workspace, QaEngine engine, Func<string> login, IMarketSearch search, TimeProvider time)
         : base(PageKind.Instruments, "Instruments", "The Swedish shares the strategy may trade (1–5 names).", engine)
     {
         _workspace = workspace;
         _login = login;
-        AddCommand = new AsyncCommand(AddAsync, () => !IsBusy && NewTicker.Trim().Length > 0, ex => Say(ex.Message, isError: true));
-        RemoveCommand = new AsyncCommand(p => RemoveAsync(p as InstrumentRow), p => !IsBusy && p is InstrumentRow, ex => Say(ex.Message, isError: true));
+        _search = search ?? throw new ArgumentNullException(nameof(search));
+        _time = time ?? throw new ArgumentNullException(nameof(time));
+        SearchCommand = new AsyncCommand(SearchNowAsync, () => SearchText.Trim().Length >= MinQueryLength && CanUseSearch, ex => SayInSearch(ex.Message, isError: true));
+        AddResultCommand = new AsyncCommand(p => AddResultAsync(p as SearchResultRow), p => p is SearchResultRow { CanAdd: true } && CanUseSearch, ex => SayInSearch(ex.Message, isError: true));
+        DoneCommand = new RelayCommand(CloseSearch, () => _search.IsOpen || Results.Count > 0 || SearchText.Length > 0);
+        RemoveCommand = new AsyncCommand(p => RemoveAsync(p as InstrumentRow), p => p is InstrumentRow && CanUseSearch && !AddResultCommand.IsRunning, ex => Say(ex.Message, isError: true));
+        _searchHint = Hint(OrderLimit());
     }
 
     public ObservableCollection<InstrumentRow> Rows { get; } = [];
 
-    /// <summary>Gets or sets the ticker to add, e.g. "ERIC-B" or "ERIC B".</summary>
-    public string NewTicker
+    /// <summary>Gets or sets what to look for at Avanza: a name or a ticker, e.g. "ericsson" or "ERIC B".</summary>
+    public string SearchText
     {
-        get => _newTicker;
+        get => _searchText;
         set
         {
-            if (Set(ref _newTicker, value ?? string.Empty))
+            if (Set(ref _searchText, value ?? string.Empty))
             {
-                AddCommand.Refresh();
+                SearchCommand.Refresh();
+                DoneCommand.Refresh();
+                _ = SearchAfterPauseAsync();
             }
         }
     }
 
-    public AsyncCommand AddCommand { get; }
+    /// <summary>Gets the shares Avanza found for <see cref="SearchText"/>, each with whether it can be added.</summary>
+    public ObservableCollection<SearchResultRow> Results { get; } = [];
+
+    /// <summary>Gets what the search is doing: "Searching …", "2 shares", "No shares match …", or what went wrong.</summary>
+    public string SearchStatus
+    {
+        get => _searchStatus;
+        private set => Set(ref _searchStatus, value);
+    }
+
+    public bool SearchStatusIsError
+    {
+        get => _searchStatusIsError;
+        private set => Set(ref _searchStatusIsError, value);
+    }
+
+    /// <summary>Gets a value indicating whether a search is on its way to Avanza.</summary>
+    public bool IsSearching
+    {
+        get => _isSearching;
+        private set => Set(ref _isSearching, value);
+    }
+
+    /// <summary>Gets a value indicating whether the search's Avanza login is open (Done lets it go).</summary>
+    public bool IsSearchOpen => _search.IsOpen;
+
+    /// <summary>Gets the line under "Find a share": what Add does, and the most one order may cost.</summary>
+    public string SearchHint
+    {
+        get => _searchHint;
+        private set => Set(ref _searchHint, value);
+    }
+
+    /// <summary>Gets the search box's Enter: search now instead of after the typing pause.</summary>
+    public AsyncCommand SearchCommand { get; }
+
+    /// <summary>Gets a hit's <b>Add</b>: import its daily prices and put it on the allowlist.</summary>
+    public AsyncCommand AddResultCommand { get; }
+
+    /// <summary>Gets <b>Done</b>: let the login go and clear the search.</summary>
+    public RelayCommand DoneCommand { get; }
 
     public AsyncCommand RemoveCommand { get; }
 
@@ -166,8 +240,11 @@ public sealed class InstrumentsViewModel : PageViewModel
 
             if (!MessageIsError && Message.Length == 0 && Rows.Count == 0)
             {
-                Say("No instruments yet: every order would be rejected. Type a ticker, e.g. ERIC-B, and press Add.");
+                Say("No instruments yet: every order would be rejected. Find a share above, e.g. Ericsson, and press Add.");
             }
+
+            SearchHint = Hint(OrderLimit());
+            ShowHits();
         }
         catch (Exception ex) when (ex is TradingConfigException or IOException or ArgumentException)
         {
@@ -175,11 +252,134 @@ public sealed class InstrumentsViewModel : PageViewModel
         }
     }
 
+    /// <summary>Lets the search's login go and clears the search (Done, or the page is no longer shown anywhere).</summary>
+    public void CloseSearch()
+    {
+        CancelTyping();
+        _search.Close();
+        _searchSeq++; // an answer still on its way is not shown
+        _hits = [];
+        Results.Clear();
+        _searchText = string.Empty;
+        OnPropertyChanged(nameof(SearchText));
+        SayInSearch(string.Empty);
+        IsSearching = false;
+        RefreshSearchCommands();
+    }
+
     protected override void OnBusyChanged()
     {
-        AddCommand.Refresh();
-        RemoveCommand.Refresh();
+        OnPropertyChanged(nameof(IsSearchOpen));
+        RefreshSearchCommands();
     }
+
+    /// <summary>Searches for <see cref="SearchText"/> now; an answer to an older search that comes later is dropped.</summary>
+    internal async Task SearchNowAsync()
+    {
+        CancelTyping();
+        string query = SearchText.Trim();
+        if (query.Length < MinQueryLength)
+        {
+            _searchSeq++;
+            _hits = [];
+            Results.Clear();
+            IsSearching = false;
+            SayInSearch(query.Length == 0 ? string.Empty : $"Type at least {MinQueryLength} characters.");
+            return;
+        }
+
+        if (!CanUseSearch)
+        {
+            SayInSearch($"'{Engine.CurrentCommand}' is running; search when it has finished.", isError: true);
+            return;
+        }
+
+        int seq = ++_searchSeq;
+        IsSearching = true;
+        SayInSearch(_search.IsOpen
+            ? $"Searching for “{query}” …"
+            : $"Searching for “{query}” … {(_login() == "bankid" ? "approve the Avanza login in BankID" : "logging in to Avanza")} (read-only; one login until you press Done).");
+        try
+        {
+            IReadOnlyList<InstrumentSearchHit> hits = await _search.SearchAsync(query);
+            if (seq != _searchSeq)
+            {
+                return;
+            }
+
+            _hits = hits;
+            ShowHits();
+            SayInSearch(hits.Count switch
+            {
+                0 => $"No shares match “{query}”.",
+                1 => "1 share.",
+                _ => string.Create(CultureInfo.InvariantCulture, $"{hits.Count} shares."),
+            });
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            if (seq == _searchSeq)
+            {
+                SayInSearch($"The search failed: {ex.Message}", isError: true);
+            }
+        }
+        finally
+        {
+            if (seq == _searchSeq)
+            {
+                IsSearching = false;
+            }
+
+            OnPropertyChanged(nameof(IsSearchOpen));
+            RefreshSearchCommands();
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="hit"/> may join <paramref name="universe"/>, or why not: the rules the allowlist and the
+    /// Paper session enforce (R2, SEK only, 5 names, R6's limit per order), shown before you press Add.
+    /// </summary>
+    internal static (bool CanAdd, bool OnList, string Why) Verdict(InstrumentSearchHit hit, Universe universe, decimal? orderLimit)
+    {
+        ArgumentNullException.ThrowIfNull(hit);
+        ArgumentNullException.ThrowIfNull(universe);
+        if (universe.Contains(hit.OrderbookId))
+        {
+            return (false, true, "On your list");
+        }
+
+        if (!hit.Tradeable)
+        {
+            return (false, false, "Not tradable at Avanza");
+        }
+
+        if (hit.Currency is { } currency && !string.Equals(currency, "SEK", StringComparison.Ordinal))
+        {
+            return (false, false, $"Trades in {currency}: the program trades Swedish shares in kronor");
+        }
+
+        if (hit.Ticker is null)
+        {
+            return (false, false, "Avanza shows no ticker for it");
+        }
+
+        if (universe.Entries.Count >= Allowlist.MaxNames)
+        {
+            return (false, false, string.Create(CultureInfo.InvariantCulture, $"Your list is full ({Allowlist.MaxNames} names): remove one first"));
+        }
+
+        if (orderLimit is { } limit && hit.LastPrice is { } price && price > limit)
+        {
+            return (false, false, $"One share costs more than an order may ({Fmt.Sek(limit)})");
+        }
+
+        return (true, false, string.Empty);
+    }
+
+    /// <summary>The hint under "Find a share", with R6's limit when the settings can be read.</summary>
+    private static string Hint(decimal? orderLimit) =>
+        string.Create(CultureInfo.InvariantCulture, $"Search Avanza by name or ticker. Add imports {InstrumentImport.AppYears} years of daily prices and allows the share; the first search logs in (read-only) and the login serves every search until you press Done.")
+        + (orderLimit is { } limit ? $" One order may be at most {Fmt.Sek(limit)}, so a share priced above that can't be bought." : string.Empty);
 
     /// <summary>Loads the selected name's closes once (the store is read only while no command runs), then draws.</summary>
     internal async Task LoadChartAsync()
@@ -200,7 +400,7 @@ public sealed class InstrumentsViewModel : PageViewModel
             return;
         }
 
-        if (IsBusy)
+        if (!StoreFree)
         {
             ChartNote = "The chart loads when nothing else runs (the price store is in use).";
             return;
@@ -274,27 +474,69 @@ public sealed class InstrumentsViewModel : PageViewModel
         RangeDirection = Tone.Direction(change);
     }
 
-    private async Task AddAsync()
+    /// <summary>The search may be used: nothing else runs, or what runs is the search's own login.</summary>
+    private bool CanUseSearch => !IsBusy || _search.IsOpen;
+
+    /// <summary>The price store may be read: nothing runs, or only the search's login, with no add writing to it.</summary>
+    private bool StoreFree => !IsBusy || (_search.IsOpen && !AddResultCommand.IsRunning);
+
+    private async Task SearchAfterPauseAsync()
     {
-        string ticker = NewTicker.Trim();
-        Say($"Importing the history of {ticker} (Avanza login) …");
-        CommandResult import = await Engine.RunAsync($"Import {ticker}", CommandLines.HistoryImport(_workspace, ticker, _login()));
-        if (!import.Succeeded)
+        CancelTyping();
+        var typing = new CancellationTokenSource();
+        _typing = typing;
+        try
         {
-            Say($"Could not import {ticker}: {Why(import)}", isError: true);
+            await Task.Delay(TypingPause, _time, typing.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // more was typed, or Enter searched already
+        }
+
+        await SearchNowAsync();
+    }
+
+    /// <summary>Drops the search waiting for the typing pause (its token is only cancelled here, then disposed).</summary>
+    private void CancelTyping()
+    {
+        CancellationTokenSource? typing = _typing;
+        _typing = null;
+        typing?.Cancel();
+        typing?.Dispose();
+    }
+
+    private async Task AddResultAsync(SearchResultRow? row)
+    {
+        if (row is null || !row.CanAdd)
+        {
             return;
         }
 
-        CommandResult add = await Engine.RunAsync($"Allow {ticker}", CommandLines.UniverseAdd(_workspace, ticker));
-        if (!add.Succeeded)
+        RemoveCommand.Refresh();
+        SayInSearch(string.Create(CultureInfo.InvariantCulture, $"Adding {row.Ticker}: importing {InstrumentImport.AppYears} years of daily prices …"));
+        ShareAdded added;
+        try
         {
-            Say($"Could not add {ticker}: {Why(add)}", isError: true);
+            added = await _search.AddAsync(new OrderbookId(row.OrderbookId));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            SayInSearch($"Could not add {row.Ticker}: {ex.Message}", isError: true);
             return;
         }
+        finally
+        {
+            OnPropertyChanged(nameof(IsSearchOpen));
+            RemoveCommand.Refresh();
+        }
 
-        NewTicker = string.Empty;
-        Say(add.Lines.FirstOrDefault(l => l.Text.StartsWith("added", StringComparison.Ordinal))?.Text ?? $"{ticker} added.");
+        string to = added.LastDate is { } last ? string.Create(CultureInfo.InvariantCulture, $" to {last:yyyy-MM-dd}") : string.Empty;
+        SayInSearch(string.Create(CultureInfo.InvariantCulture, $"{added.Ticker} added ({added.NewBars} new daily prices{to}). The next session trades it.")
+            + (added.CalendarNote is { } note ? " " + note : string.Empty));
+        Say(string.Empty);
         await RefreshAsync();
+        SelectedRow = Rows.FirstOrDefault(r => r.Ticker == added.Ticker) ?? SelectedRow;
     }
 
     private async Task RemoveAsync(InstrumentRow? row)
@@ -304,9 +546,90 @@ public sealed class InstrumentsViewModel : PageViewModel
             return;
         }
 
-        CommandResult result = await Engine.RunAsync($"Remove {row.Ticker}", CommandLines.UniverseRemove(_workspace, row.Ticker));
-        Say(result.Succeeded ? $"{row.Ticker} removed from the allowlist." : $"Could not remove {row.Ticker}: {Why(result)}", !result.Succeeded);
+        if (_search.IsOpen)
+        {
+            await _search.RemoveAsync(row.Ticker); // in turn with the search's adds, no second login
+            Say($"{row.Ticker} removed from the allowlist.");
+        }
+        else
+        {
+            CommandResult result = await Engine.RunAsync($"Remove {row.Ticker}", CommandLines.UniverseRemove(_workspace, row.Ticker));
+            Say(result.Succeeded ? $"{row.Ticker} removed from the allowlist." : $"Could not remove {row.Ticker}: {Why(result)}", !result.Succeeded);
+        }
+
         await RefreshAsync();
+    }
+
+    /// <summary>Rebuilds the hits' add-or-why from the allowlist as it is now (after an add or a remove, too).</summary>
+    private void ShowHits()
+    {
+        if (_hits.Count == 0)
+        {
+            Results.Clear();
+            return;
+        }
+
+        Universe universe;
+        try
+        {
+            universe = Universe.Load(Path.Combine(_workspace.ConfigDir, Universe.FileName));
+        }
+        catch (TradingConfigException ex)
+        {
+            SayInSearch(ex.Message, isError: true);
+            return;
+        }
+
+        decimal? limit = OrderLimit();
+        Results.Clear();
+        foreach (InstrumentSearchHit hit in _hits)
+        {
+            (bool canAdd, bool onList, string why) = Verdict(hit, universe, limit);
+            decimal? change = hit.TodayChangePercent / 100m;
+            Results.Add(new SearchResultRow(
+                hit.OrderbookId.Value,
+                hit.Ticker ?? string.Empty,
+                hit.Name,
+                string.Join(" · ", new[] { hit.FlagCode, hit.MarketPlaceName }.Where(p => !string.IsNullOrWhiteSpace(p))),
+                hit.LastPrice is { } price ? Fmt.Price(price) + " " + (hit.Currency == "SEK" ? "kr" : hit.Currency ?? string.Empty) : "–",
+                change is { } c ? Fmt.Arrow(c) : string.Empty,
+                Tone.Direction(change ?? 0m),
+                hit.Sector ?? string.Empty,
+                canAdd,
+                onList,
+                why));
+        }
+
+        AddResultCommand.Refresh();
+    }
+
+    /// <summary>R6's limit for one order at the Paper account's size, or null when the settings can't be read.</summary>
+    private decimal? OrderLimit()
+    {
+        try
+        {
+            RiskLimits limits = RiskLimits.Load(Path.Combine(_workspace.ConfigDir, RiskLimits.FileName));
+            PaperConfig paper = PaperConfig.Load(Path.Combine(_workspace.ConfigDir, PaperConfig.FileName));
+            return limits.MaxOrderValue(paper.Cash);
+        }
+        catch (Exception ex) when (ex is TradingConfigException or IOException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private void SayInSearch(string text, bool isError = false)
+    {
+        SearchStatus = text;
+        SearchStatusIsError = isError;
+    }
+
+    private void RefreshSearchCommands()
+    {
+        SearchCommand.Refresh();
+        AddResultCommand.Refresh();
+        DoneCommand.Refresh();
+        RemoveCommand.Refresh();
     }
 
     private IReadOnlyList<InstrumentRow> Load()
@@ -320,9 +643,9 @@ public sealed class InstrumentsViewModel : PageViewModel
     private Dictionary<string, string> HistoryOf(Universe universe)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (!File.Exists(_workspace.Store) || universe.Entries.Count == 0 || IsBusy)
+        if (!File.Exists(_workspace.Store) || universe.Entries.Count == 0 || !StoreFree)
         {
-            string text = IsBusy ? "(shown when idle)" : "none yet";
+            string text = !StoreFree ? "(shown when idle)" : "none yet";
             return universe.Entries.ToDictionary(e => e.OrderbookId.Value, _ => text, StringComparer.Ordinal);
         }
 

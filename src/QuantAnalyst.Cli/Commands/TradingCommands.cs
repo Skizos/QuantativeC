@@ -118,9 +118,7 @@ internal static partial class TradingCommands
             Universe u = Universe.Load(path);
             foreach (string ticker in parse.GetValue(removeTickers)!)
             {
-                UniverseEntry entry = u.Entries.FirstOrDefault(e => SameTicker(e.Ticker, ticker))
-                    ?? throw new ArgumentException($"{ticker} is not in the allowlist.");
-                u = u.Without(entry.OrderbookId);
+                (u, UniverseEntry entry) = Allowlist.Remove(u, ticker);
                 w.WriteLine($"removed {entry.Ticker} ({entry.OrderbookId})");
             }
 
@@ -134,11 +132,6 @@ internal static partial class TradingCommands
         command.Subcommands.Add(remove);
         return command;
     }
-
-    private static bool SameTicker(string a, string b) =>
-        string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
-
-    private static string Normalize(string t) => t.Trim().Replace('-', ' ').Replace('_', ' ');
 
     // ---- qa risk-limits ------------------------------------------------------------------------------
 

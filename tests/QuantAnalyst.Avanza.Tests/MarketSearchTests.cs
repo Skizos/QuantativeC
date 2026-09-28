@@ -217,6 +217,25 @@ public sealed class MarketSearchTests : IDisposable
     }
 
     [Fact]
+    public async Task AFullList_MakesRoomWithARemove_InTheSameLogin()
+    {
+        new Universe(Enumerable.Range(1, Allowlist.MaxNames).Select(i => new UniverseEntry(new OrderbookId($"{i}"), $"T{i} B", $"Name {i}"))).Save(UniverseFile);
+        var session = new MarketSearchSession();
+        Task<int> run = Start(session);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => session.RemoveAsync("NOPE", Config));
+        Assert.Equal("NOPE is not in the allowlist.", ex.Message);
+        Assert.Equal(new OrderbookId("1"), (await session.RemoveAsync("t1-b", Config)).OrderbookId); // written as on the command line
+        AddedShare added = await session.AddAsync(new OrderbookId("5240"), Store, Config, Today);
+        session.Close();
+        Assert.Equal(0, await run);
+
+        Assert.Equal(Allowlist.MaxNames, Universe.Load(UniverseFile).Entries.Count);
+        Assert.Contains(added.Entry, Universe.Load(UniverseFile).Entries);
+        Assert.Equal(1, Logins);
+    }
+
+    [Fact]
     public async Task ANameAlreadyOnTheList_IsAddedAgain_WithoutCountingTwice()
     {
         var session = new MarketSearchSession();

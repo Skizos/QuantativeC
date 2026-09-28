@@ -1,6 +1,6 @@
 # 15 — Find a share: search Avanza's market from the Instruments page
 
-- **Status:** planned 2026-09-28 at the owner's request: "make it more intuitive to add a share by making a search
+- **Status:** done 2026-09-28 (steps 1 and 2); waiting for the owner's first live search. Planned 2026-09-28 at the owner's request: "make it more intuitive to add a share by making a search
   feature using an api that drags Avanza's market to the search feature."
 - **Builds on:** the search route the CLI already uses to resolve tickers (`POST /_api/search/filtered-search`, Tier B,
   recorded live 2026-09-25), `qa history import` and `qa universe add`.
@@ -16,7 +16,7 @@
 
 | Question | Decision | Why |
 |---|---|---|
-| **Logins** | Searching opens **one** Avanza login (BankID, or TOTP when chosen) and keeps it while you search and add, until you press **Done**, 10 minutes pass without a search, or a problem ends it. Every search and every Add in that time uses the same login. | A BankID approval per keystroke would be unusable; one login per "I want to find shares" is the rule's spirit (at most one login per trigger, never a loop). The Go SDK says search works without a login, but that is unverified against the live site; it can come later after a read-only check you ask for. |
+| **Logins** | Searching opens **one** Avanza login (BankID, or TOTP when chosen) and keeps it while you search and add, until you press **Done**, 5 minutes pass without a search, the page is no longer shown, or a problem ends it. Every search and every Add in that time uses the same login. (Planned as 10 minutes; shortened in step 2 because nothing else can start while the login is open.) | A BankID approval per keystroke would be unusable; one login per "I want to find shares" is the rule's spirit (at most one login per trigger, never a loop). The Go SDK says search works without a login, but that is unverified against the live site; it can come later after a read-only check you ask for. |
 | **Search as you type** | From 2 characters, 0.4 s after you stop typing (Enter searches at once). At most 20 hits, stocks only. Requests go through the gateway's rate limiter like every read. | Feels like Avanza's own search without hammering it. |
 | **What a hit shows** | Name and ticker, country flag and marketplace, last price with currency, today's change (green/red), sector. | Enough to tell *Ericsson B (ERIC B)* on Stockholmsbörsen from its Helsinki listing. |
 | **Can it be added?** | Each hit says so, or why not: already on your list; not tradable at Avanza; not in kronor (the program trades Swedish shares in SEK); the list is full (5, the stream's limit); one share costs more than one order may (R6, 500 kr at 5 000 kr). | The same rules the session enforces, shown before you add instead of failing later. |
@@ -51,3 +51,26 @@
   asked of Avanza; euro and full-list refusals with no import; an add of a name already on the list; idle; a failed
   login, not retried; an expired session and a moved endpoint ending it; a stop); `qa universe add` refusing a 6th
   name; R6's limit. All 1120 tests pass (1 Windows-only skipped).
+
+### Step 2: the app (done 2026-09-28)
+
+- **Find a share** replaces the ticker box on the Instruments page: a search box with a placeholder and a search icon,
+  the status line (searching, how many, what went wrong), the hits, an **Avanza login open** chip and **Done** (Esc).
+- **Each hit** shows ticker and name, country and marketplace, last price with currency, today's change (green/red)
+  and sector, then **Add** or why not (`InstrumentsViewModel.Verdict`): on your list (a tick), not tradable, not in
+  kronor, the list full (5), one share above R6's limit at the Paper account's size. The hint under the title states
+  R6's limit (`RiskLimits.MaxOrderValue`, 500 kr at the 5 000 kr cap).
+- **Search as you type:** 0.4 s after the last keystroke from 2 characters; Enter searches at once and cancels the
+  pending one; an answer to an older search that arrives late is dropped.
+- **Add** runs in the open login (`EngineMarketSearch` → `MarketSearchSession`), then the list and the hits update
+  (the new name selected and charted, its hit "On your list").
+- **Remove while searching** goes through the same session (in turn with the adds, no second login), so a full list
+  can make room; otherwise it runs `qa universe remove` as before.
+- **The login** is let go on Done, after 5 minutes without a search, when the page is no longer shown anywhere (not
+  selected, not beside, not in a window), or by the header's Stop. While it is open the engine is busy, so nothing
+  else starts; while something else runs, a search says so instead of logging in.
+- **Tests (13 new):** typing pause and last-text-wins; Enter without a second search; each hit's fields and every
+  add-or-why; the full list; Add updating the list and the hit; a failed add; a failed search and a late older
+  answer; Done; leaving the page (beside and window kept it); remove through the open search; searching while a
+  Paper session runs; the real `EngineMarketSearch` with a login that fails (one attempt per search session, never a
+  loop). Plus the session's remove over the recorded answers. The WPF view builds; the XAML checks pass.

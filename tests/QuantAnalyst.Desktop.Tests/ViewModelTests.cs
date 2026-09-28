@@ -85,31 +85,6 @@ public sealed class ViewModelTests : IDisposable
     // ---- Instruments ------------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task AddingAnInstrument_ImportsItsHistoryThenAllowsIt_AndStopsAtTheFirstFailure()
-    {
-        var runner = new ScriptedRunner().Answer(0).Answer(0, ["added ERIC B (5240, Ericsson B)"]);
-        ShellViewModel shell = Shell(runner);
-        shell.LoginMethod = "totp";
-        shell.Instruments.NewTicker = " ERIC-B ";
-        await shell.Instruments.AddCommand.ExecuteAsync();
-
-        Assert.Equal(2, runner.Calls.Count);
-        Assert.Equal(["history", "import", "ERIC-B"], runner.Calls[0].Take(3));
-        Assert.Equal("totp", runner.Calls[0][^1]);
-        Assert.Equal(["universe", "add", "ERIC-B"], runner.Calls[1].Take(3));
-        Assert.Equal("added ERIC B (5240, Ericsson B)", shell.Instruments.Message);
-        Assert.Equal(string.Empty, shell.Instruments.NewTicker);
-
-        var failing = new ScriptedRunner().Answer(1, errors: ["error: No stock with ticker 'XYZ'"]);
-        ShellViewModel other = Shell(failing);
-        other.Instruments.NewTicker = "XYZ";
-        await other.Instruments.AddCommand.ExecuteAsync();
-        Assert.Single(failing.Calls);
-        Assert.True(other.Instruments.MessageIsError);
-        Assert.Contains("No stock with ticker 'XYZ'", other.Instruments.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task TheInstrumentList_ShowsTheAllowlist_AndRemoveRunsUniverseRemove()
     {
         _ws.AllowEricB();
@@ -119,7 +94,8 @@ public sealed class ViewModelTests : IDisposable
 
         InstrumentRow row = Assert.Single(shell.Instruments.Rows);
         Assert.Equal(("ERIC B", "Ericsson B", "5240", "none yet"), (row.Ticker, row.Name, row.OrderbookId, row.History));
-        Assert.False(shell.Instruments.AddCommand.CanExecute(null)); // no ticker typed
+        Assert.Empty(shell.Instruments.Results); // nothing searched yet
+        Assert.False(shell.Instruments.IsSearchOpen);
 
         await shell.Instruments.RemoveCommand.ExecuteAsync(row);
         Assert.Equal(["universe", "remove", "ERIC B"], runner.Calls.Single().Take(3));

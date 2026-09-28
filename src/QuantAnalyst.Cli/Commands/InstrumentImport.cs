@@ -45,9 +45,9 @@ internal static class InstrumentImport
 }
 
 /// <summary>
-/// Adding to the allowlist (R2, <c>config/universe.json</c>): only instruments in the instrument master, only SEK (v1),
-/// and at most <see cref="MaxNames"/>, because the Paper session streams every allowlisted name and refuses to start with
-/// more. Shared by <c>qa universe add</c> and the app's share search.
+/// Changing the allowlist (R2, <c>config/universe.json</c>). A name joins only from the instrument master, only in SEK
+/// (v1), and only while there are fewer than <see cref="MaxNames"/>, because the Paper session streams every allowlisted
+/// name and refuses to start with more. Shared by <c>qa universe add|remove</c> and the app's share search.
 /// </summary>
 internal static class Allowlist
 {
@@ -88,4 +88,27 @@ internal static class Allowlist
         universe.Save(path);
         return entry;
     }
+
+    /// <summary>The allowlist without <paramref name="ticker"/> ("ERIC-B", "eric b" and "ERIC B" are the same name).</summary>
+    public static (Universe Universe, UniverseEntry Entry) Remove(Universe universe, string ticker)
+    {
+        ArgumentNullException.ThrowIfNull(universe);
+        UniverseEntry entry = universe.Entries.FirstOrDefault(e => SameTicker(e.Ticker, ticker))
+            ?? throw new ArgumentException($"{ticker} is not in the allowlist.");
+        return (universe.Without(entry.OrderbookId), entry);
+    }
+
+    /// <summary>Removes <paramref name="ticker"/> from the allowlist file in <paramref name="configDir"/> and saves it.</summary>
+    public static UniverseEntry RemoveAndSave(string configDir, string ticker)
+    {
+        string path = Path.Combine(configDir, Universe.FileName);
+        (Universe universe, UniverseEntry entry) = Remove(Universe.Load(path), ticker);
+        universe.Save(path);
+        return entry;
+    }
+
+    private static bool SameTicker(string a, string b) =>
+        string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
+
+    private static string Normalize(string t) => t.Trim().Replace('-', ' ').Replace('_', ' ');
 }

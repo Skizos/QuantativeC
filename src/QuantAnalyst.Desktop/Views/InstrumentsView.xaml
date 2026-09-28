@@ -3,25 +3,106 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls">
     <DockPanel>
+        <!-- Find a share: search Avanza as you type; each hit says whether it can be added or why not. -->
         <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
-            <!-- The explanation, and the ticker box with Add; in a narrow pane the box moves under the text. -->
-            <c:AdaptiveRow FillMinWidth="260" Spacing="24">
-                <StackPanel c:AdaptiveRow.Fill="True">
-                    <TextBlock Text="Add an instrument" Style="{StaticResource H2}" />
-                    <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0"
-                               Text="Adding imports a year of daily prices (one Avanza login, read-only) and allows the share to be traded. With 5 000 kr the limit is 500 kr per order, so a share priced above that can't be bought." />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBox Text="{Binding NewTicker, UpdateSourceTrigger=PropertyChanged}" Width="180" Margin="0,0,10,0"
-                             ToolTip="The ticker as Avanza shows it, e.g. ERIC-B or VOLV-B." />
-                    <Button Style="{StaticResource Primary}" Command="{Binding AddCommand}" IsDefault="True" Margin="0">
-                        <StackPanel Orientation="Horizontal">
-                            <c:Icon Data="{StaticResource IconPlus}" Width="16" Height="16" StrokeThickness="2.2" Margin="0,0,6,0" />
-                            <TextBlock Text="Add" />
-                        </StackPanel>
-                    </Button>
-                </StackPanel>
-            </c:AdaptiveRow>
+            <DockPanel>
+                <!-- The explanation, and the open login with Done; in a narrow pane Done moves under the text. -->
+                <c:AdaptiveRow DockPanel.Dock="Top" FillMinWidth="260" Spacing="24">
+                    <StackPanel c:AdaptiveRow.Fill="True">
+                        <TextBlock Text="Find a share" Style="{StaticResource H2}" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0" Text="{Binding SearchHint}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border Style="{StaticResource Chip}" Background="{StaticResource AccentSoftBrush}" Margin="0,0,10,0"
+                                Visibility="{Binding IsSearchOpen, Converter={StaticResource Visibility}}"
+                                ToolTip="Searches and adds use this read-only login. Done lets it go; so do 5 minutes without a search or leaving this page.">
+                            <TextBlock Text="Avanza login open" Style="{StaticResource ChipText}" Foreground="{StaticResource AccentBrush}" />
+                        </Border>
+                        <Button Style="{StaticResource Ghost}" Command="{Binding DoneCommand}" Margin="0"
+                                ToolTip="Lets the Avanza login go and clears the search (Esc).">
+                            <StackPanel Orientation="Horizontal">
+                                <c:Icon Data="{StaticResource IconCheck}" Width="16" Height="16" StrokeThickness="2.2" Margin="0,0,6,0" />
+                                <TextBlock Text="Done" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                </c:AdaptiveRow>
+
+                <!-- The search box: a name or a ticker; it searches when you pause typing, Enter at once, Esc is Done. -->
+                <Grid DockPanel.Dock="Top" Margin="0,14,0,0">
+                    <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Padding="36,8,10,8"
+                             ToolTip="A name or a ticker as Avanza shows it, e.g. Ericsson, Volvo or ERIC B.">
+                        <TextBox.InputBindings>
+                            <KeyBinding Key="Return" Command="{Binding SearchCommand}" />
+                            <KeyBinding Key="Escape" Command="{Binding DoneCommand}" />
+                        </TextBox.InputBindings>
+                    </TextBox>
+                    <c:Icon Data="{StaticResource IconSearch}" Width="18" Height="18" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0"
+                            Foreground="{StaticResource InkMutedBrush}" IsHitTestVisible="False" />
+                    <TextBlock Text="Search Avanza: a name or a ticker, e.g. Ericsson, Volvo or ERIC B" Margin="38,0,12,0" VerticalAlignment="Center"
+                               Foreground="{StaticResource InkMutedBrush}" TextTrimming="CharacterEllipsis" IsHitTestVisible="False"
+                               Visibility="{Binding SearchText, Converter={StaticResource NonEmptyToVisibility}, ConverterParameter=inverse}" />
+                </Grid>
+
+                <!-- What the search is doing, or what went wrong. -->
+                <TextBlock DockPanel.Dock="Top" Text="{Binding SearchStatus}" Margin="2,8,0,0"
+                           Visibility="{Binding SearchStatus, Converter={StaticResource NonEmptyToVisibility}}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource Caption}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SearchStatusIsError}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource NegativeBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <!-- The hits: who, where, today's price and change, and Add or why not. At most ~4 rows high; it scrolls. -->
+                <ListBox ItemsSource="{Binding Results}" MaxHeight="290" Margin="-6,8,-6,0" BorderThickness="0" Background="Transparent"
+                         ItemContainerStyle="{StaticResource RowItem}" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         Visibility="{Binding Results.Count, Converter={StaticResource NonEmptyToVisibility}}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <c:AdaptiveRow FillMinWidth="200" Spacing="16">
+                                <StackPanel c:AdaptiveRow.Fill="True">
+                                    <WrapPanel>
+                                        <TextBlock Text="{Binding Ticker}" FontWeight="SemiBold" Margin="0,0,8,0" />
+                                        <TextBlock Text="{Binding Name}" />
+                                    </WrapPanel>
+                                    <WrapPanel>
+                                        <TextBlock Text="{Binding Market}" Style="{StaticResource Caption}" Margin="0,0,10,0" />
+                                        <TextBlock Text="{Binding Sector}" Style="{StaticResource Caption}" Foreground="{StaticResource InkMutedBrush}" />
+                                    </WrapPanel>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <StackPanel MinWidth="96" Margin="0,0,16,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Price}" Style="{StaticResource Number}" HorizontalAlignment="Right" />
+                                        <TextBlock Text="{Binding Change}" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Right"
+                                                   Foreground="{Binding Direction, Converter={StaticResource MarkToBrush}}" />
+                                    </StackPanel>
+                                    <Button Style="{StaticResource Primary}" Margin="0" VerticalAlignment="Center"
+                                            Command="{Binding DataContext.AddResultCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}"
+                                            Visibility="{Binding CanAdd, Converter={StaticResource Visibility}}"
+                                            ToolTip="Imports 3 years of daily prices (read-only, in the open login) and allows the share to be traded.">
+                                        <StackPanel Orientation="Horizontal">
+                                            <c:Icon Data="{StaticResource IconPlus}" Width="16" Height="16" StrokeThickness="2.2" Margin="0,0,6,0" />
+                                            <TextBlock Text="Add" />
+                                        </StackPanel>
+                                    </Button>
+                                    <!-- Why not: a DockPanel, so the text wraps within the 240 px (a horizontal StackPanel would not). -->
+                                    <DockPanel VerticalAlignment="Center" MaxWidth="240"
+                                               Visibility="{Binding CanAdd, Converter={StaticResource InverseVisibility}}">
+                                        <c:Icon DockPanel.Dock="Left" Data="{StaticResource IconCheck}" Width="16" Height="16" StrokeThickness="2.2" Margin="0,0,6,0" VerticalAlignment="Top"
+                                                Foreground="{StaticResource PositiveBrush}" Visibility="{Binding IsOnList, Converter={StaticResource Visibility}}" />
+                                        <TextBlock Text="{Binding Why}" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                    </DockPanel>
+                                </StackPanel>
+                            </c:AdaptiveRow>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
         </Border>
 
         <!-- The list and the chart side by side; in a narrow pane the list goes on top (it scrolls) and the chart below. -->

@@ -38,7 +38,9 @@ public sealed class ShellViewModel : ObservableObject
 
     /// <param name="accounts">Where the Accounts page loads your accounts (default: the CLI's reads, one login each).</param>
     /// <param name="environment">Your user environment (default: the real one; the live-trading account lives there).</param>
-    public ShellViewModel(Workspace workspace, QaEngine engine, TimeProvider time, IAccountSource? accounts = null, IUserEnvironment? environment = null)
+    /// <param name="search">Where the Instruments page searches Avanza's market (default: the CLI's search, one login until Done).</param>
+    public ShellViewModel(
+        Workspace workspace, QaEngine engine, TimeProvider time, IAccountSource? accounts = null, IUserEnvironment? environment = null, IMarketSearch? search = null)
     {
         Workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
         Engine = engine ?? throw new ArgumentNullException(nameof(engine));
@@ -47,7 +49,7 @@ public sealed class ShellViewModel : ObservableObject
         IUserEnvironment env = environment ?? new UserEnvironment();
 
         Status = new StatusViewModel(workspace, engine, time, Navigate, env);
-        Instruments = new InstrumentsViewModel(workspace, engine, () => LoginMethod);
+        Instruments = new InstrumentsViewModel(workspace, engine, () => LoginMethod, search ?? new EngineMarketSearch(engine, workspace, time, () => LoginMethod), time);
         Strategy = new StrategyViewModel(workspace, engine);
         Session = new SessionViewModel(workspace, engine, time, () => LoginMethod);
         Reports = new ReportsViewModel(workspace, engine, time);
@@ -113,6 +115,7 @@ public sealed class ShellViewModel : ObservableObject
         get => _selected;
         set
         {
+            PageViewModel before = _selected;
             if (value is not null && Set(ref _selected, value))
             {
                 if (ReferenceEquals(value, _beside))
@@ -120,6 +123,7 @@ public sealed class ShellViewModel : ObservableObject
                     SelectedBeside = BesideChoices[0]; // the page moved to the left
                 }
 
+                Release(before);
                 _ = value.RefreshAsync();
             }
         }
@@ -292,14 +296,29 @@ public sealed class ShellViewModel : ObservableObject
         }
     }
 
-    /// <summary>Disposes a chart of its own once nothing shows it any more; the app's own pages live as long as it does.</summary>
+    /// <summary>
+    /// A page is shown in one place less. Once nothing shows it: a chart of its own is disposed, and the Instruments
+    /// page's search lets its login go (nothing else can run while it is open). The app's own pages live as long as it does.
+    /// </summary>
     private void Release(PageViewModel page)
     {
-        if (page is ChartsViewModel charts && !ReferenceEquals(charts, Charts) && !ReferenceEquals(charts, _beside) && !_windowPages.Contains(charts))
+        if (Shows(page))
+        {
+            return;
+        }
+
+        if (page is ChartsViewModel charts && !ReferenceEquals(charts, Charts))
         {
             charts.Dispose();
         }
+        else if (ReferenceEquals(page, Instruments))
+        {
+            Instruments.CloseSearch();
+        }
     }
+
+    private bool Shows(PageViewModel page) =>
+        ReferenceEquals(page, _selected) || ReferenceEquals(page, _beside) || _windowPages.Contains(page);
 
     private void Kill()
     {

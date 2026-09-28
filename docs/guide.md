@@ -71,8 +71,22 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
     every startup check, in the terminal.
 - **Instruments:** your allowed names on the left; on the right the selected name's price chart with ranges (1M 3M 6M
   1Y 3Y All), last close, the change over the range and, with an ma-cross strategy saved, its two moving averages.
-  Type a ticker (`ERIC-B`) and press **Add**: it imports a year of prices (one BankID login) and allows the share.
-  **Remove** takes it off the list.
+  **Remove** takes a name off the list (its stored prices stay).
+  - **Find a share** (at the top): type a name or a ticker, e.g. `ericsson`, `volvo` or `ERIC B`. It searches Avanza
+    when you pause typing (from 2 characters; Enter searches at once) and lists up to 20 shares, each with its
+    country and marketplace, last price, today's change and sector.
+  - Each hit says **Add**, or why it can't be added:
+    - **On your list** (a green tick)
+    - **Trades in EUR** (or another currency): the program trades Swedish shares in kronor
+    - **Your list is full (5 names)**: a Paper session streams at most 5; remove one first (you can, while searching)
+    - **One share costs more than an order may (500,00 kr)**: R6 with the 5 000 kr account cap
+    - **Not tradable at Avanza**
+  - **Add** imports 3 years of daily prices and allows the share (the same code as `qa history import` and
+    `qa universe add`). The next Paper session trades it.
+  - **One login for all of it:** the first search logs in to Avanza (BankID, read-only); every search, add and remove
+    after it uses that login. The green **Avanza login open** chip shows it. **Done** (or Esc) lets it go, and so do
+    5 minutes without a search or leaving the page. Like every Avanza action, searching waits while something else
+    runs (a Paper session), and nothing else can start while the search is open: press **Done** first.
 - **Strategy:**
   - pick a strategy and fill in its named fields (e.g. fast 20, slow 100)
   - **Backtest on my instruments** shows how it did
@@ -107,12 +121,13 @@ or Auto, or promote the mode: those are your commands.
 
 1. **Build and check:** `.\qa status`. The first run builds everything (a few minutes). The "Native engine" line must be `ok`. Prerequisites are in `docs/setup.md`.
 2. **Log in once:** `.\qa login`. Scan the QR code with the BankID app and approve. This checks the connection; nothing is changed on your account.
-3. **Choose what may be traded** (the allowlist, 1–5 Swedish shares):
+3. **Choose what may be traded** (the allowlist, 1–5 Swedish shares). In the app: **Instruments → Find a share**, type a
+   name and press **Add** (§0). In the terminal:
    ```powershell
    .\qa history import ERIC-B       # adds it to the instrument master and imports a year of daily bars
    .\qa universe add ERIC-B         # allows it to be traded
    ```
-   Repeat for each name. `ERIC-B` and `"ERIC B"` are the same ticker.
+   Repeat for each name, at most 5 (`qa universe add` refuses a 6th). `ERIC-B` and `"ERIC B"` are the same ticker.
    - **With 5,000 SEK the limits are small:** at most 500 SEK per order and 1,000 SEK (20 %) per name (`.\qa risk-limits`).
      - A share priced above 500 SEK can't be bought at all.
      - With one name, at most 20 % of the account is ever invested. With five names, up to all of it.

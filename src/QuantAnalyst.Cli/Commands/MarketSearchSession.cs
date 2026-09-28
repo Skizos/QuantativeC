@@ -53,6 +53,13 @@ internal sealed class MarketSearchSession
         });
 
     /// <summary>
+    /// Takes <paramref name="ticker"/> off the allowlist, in turn with the adds (so a full list can make room without a
+    /// second login). Local only: nothing is asked of Avanza.
+    /// </summary>
+    public Task<UniverseEntry> RemoveAsync(string ticker, string configDir) =>
+        Enqueue((_, _) => Task.FromResult(Allowlist.RemoveAndSave(configDir, ticker)));
+
+    /// <summary>
     /// Runs the session on the caller's thread: the one login, then the requests as they come. Returns 0 when closed or
     /// idle; throws what ended it otherwise (the waiting requests fail with the same).
     /// </summary>
