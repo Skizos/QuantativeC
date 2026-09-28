@@ -55,3 +55,22 @@
    - `docs/guide.md`.
 
 ## Step notes
+### Step 1: markets and calendars (done 2026-09-28)
+
+- **Markets** (`Core/Market/Markets.cs`): SEK → XSTO (Europe/Stockholm), USD → XNYS (America/New_York), CAD → XTSE
+  (America/Toronto). `Markets.ForCurrency` returns null for any other currency. `MarketTime.Zone` and `TryLocalToUtc`
+  work in any of the three zones; the Windows ids are used as a fallback.
+- **Calendars in their own time:** `CalendarYear.TimeZoneId` and `MarketCalendar.TimeZone` / `LocalDate` / `ToUtc`.
+  `IsOpen` uses the market's clock. The loader requires each market's own zone and refuses unknown markets.
+- **The drafts:** `config/market-calendar.{XNYS,XTSE}.{2026,2027}.json`, UNVERIFIED, from exchange_calendars 4.13.2.
+  Session 09:30–16:00 and early closes 13:00, local time.
+- **`qa calendar --market XNYS|XTSE`:** local times, and a foreign day's session in Stockholm time too, e.g. 15:30–19:00
+  on the day after Thanksgiving.
+- **Tests (23 new):**
+  - the registry
+  - every day of both years classified
+  - the drafts recomputed from the US and Canadian holiday rules (observed days, early closes)
+  - open/closed across both DST changes (New York opens 14:30 Stockholm on 9 March and 26 October 2026)
+  - wrong time zone and unknown market refused
+  - the CLI
+

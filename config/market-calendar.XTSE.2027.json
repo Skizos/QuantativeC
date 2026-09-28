@@ -1,0 +1,65 @@
+{
+  "format": "qa-market-calendar/1",
+  "mic": "XTSE",
+  "year": 2027,
+  "timeZone": "America/Toronto",
+  "regularSession": {
+    "open": "09:30",
+    "close": "16:00"
+  },
+  "halfDaySession": {
+    "open": "09:30",
+    "close": "13:00"
+  },
+  "source_url": "https://www.tsx.com/trading/calendars-and-trading-hours/calendar",
+  "verified_on": null,
+  "draft_basis": "UNVERIFIED DRAFT (2026-09-28, ADR 0005): Toronto Stock Exchange; TSX Venture keeps the same holidays. Weekday closures and early closes computed with the open-source exchange_calendars 4.13.2 package (XTSE calendar, https://github.com/gerrymanoim/exchange_calendars/blob/main/exchange_calendars/exchange_calendar_xtse.py, Apache-2.0), the library the XSTO draft was checked against; the exchange's own page was not reachable from the development container. Session times are America/Toronto local time. Check every date against the exchange's page at source_url, then set verified_on.",
+  "closed": [
+    {
+      "date": "2027-01-01",
+      "name": "New Year's Day"
+    },
+    {
+      "date": "2027-02-15",
+      "name": "Family Day"
+    },
+    {
+      "date": "2027-03-26",
+      "name": "Good Friday"
+    },
+    {
+      "date": "2027-05-24",
+      "name": "Victoria Day"
+    },
+    {
+      "date": "2027-07-01",
+      "name": "Canada Day"
+    },
+    {
+      "date": "2027-08-02",
+      "name": "Civic Holiday"
+    },
+    {
+      "date": "2027-09-06",
+      "name": "Labour Day"
+    },
+    {
+      "date": "2027-10-11",
+      "name": "Thanksgiving Day"
+    },
+    {
+      "date": "2027-12-27",
+      "name": "Christmas Day (observed)"
+    },
+    {
+      "date": "2027-12-28",
+      "name": "Boxing Day (observed)"
+    }
+  ],
+  "halfDays": [
+    {
+      "date": "2027-12-24",
+      "name": "Christmas Eve"
+    }
+  ]
+}

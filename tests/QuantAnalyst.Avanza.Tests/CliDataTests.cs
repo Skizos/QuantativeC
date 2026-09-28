@@ -191,6 +191,26 @@ public sealed class CliDataTests : IDisposable
         Assert.Contains("No XSTO calendar is loaded for 2031", error, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Calendar_ShowsTheUsAndCanadianMarkets_InTheirOwnTime_AndInStockholmTime()
+    {
+        string config = Path.Combine(AppContext.BaseDirectory, "config");
+        (int code, string output, string error) = Qa(false, "calendar", "--market", "XNYS", "--date", "2026-11-27", "--config-dir", config);
+        Assert.True(code == 0, error);
+        Assert.Contains("2026-11-27 (Friday): Half trading day, 09:30–13:00 New York (Day after Thanksgiving) (15:30–19:00 Stockholm).", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa(false, "calendar", "--market", "xtse", "--year", "2026", "--config-dir", config);
+        Assert.Equal(0, code);
+        Assert.Contains("XTSE 2026: ", output, StringComparison.Ordinal);
+        Assert.Contains("regular session 09:30–16:00 Toronto.", output, StringComparison.Ordinal);
+        Assert.Contains("Boxing Day (observed)", output, StringComparison.Ordinal);
+        Assert.Contains("NOT VERIFIED", output, StringComparison.Ordinal);
+
+        (code, _, error) = Qa(false, "calendar", "--market", "XOSL", "--config-dir", config);
+        Assert.Equal(1, code);
+        Assert.Contains("XOSL is not a market the program trades on; use XSTO, XNYS, XTSE.", error, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("2026-09-25T18:00:00Z", "2026-09-25T18:00:00+00:00")]
     [InlineData("2026-09-25T20:00:00+02:00", "2026-09-25T18:00:00+00:00")]

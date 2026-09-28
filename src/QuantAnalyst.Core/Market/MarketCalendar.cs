@@ -15,7 +15,7 @@ public enum TradingDayKind
     Weekend,
 }
 
-/// <summary>One calendar day. <see cref="Open"/>/<see cref="Close"/> are exchange local time (Europe/Stockholm).</summary>
+/// <summary>One calendar day. <see cref="Open"/>/<see cref="Close"/> are exchange local time (the calendar's time zone).</summary>
 public sealed record TradingDay(DateOnly Date, TradingDayKind Kind, TimeOnly? Open, TimeOnly? Close, string? Name)
 {
     public bool IsTradingDay => Kind is TradingDayKind.Full or TradingDayKind.Half;
@@ -38,10 +38,15 @@ public sealed record CalendarYear(
     IReadOnlyList<CalendarEntry> Closed,
     IReadOnlyList<CalendarEntry> HalfDays,
     string SourceUrl,
-    DateOnly? VerifiedOn);
+    DateOnly? VerifiedOn)
+{
+    /// <summary>Gets the IANA time zone the session times are in (ADR 0005): Europe/Stockholm unless the market's is another.</summary>
+    public string TimeZoneId { get; init; } = Markets.Stockholm.TimeZoneId;
+}
 
 /// <summary>
-/// Trading calendar of one exchange (CLAUDE.md: trading calendar = Nasdaq Stockholm). Pure: built from
+/// Trading calendar of one exchange (CLAUDE.md: trading calendar = Nasdaq Stockholm; ADR 0005 adds the US and Canadian
+/// ones). Dates and session times are the exchange's local ones, in <see cref="TimeZone"/>. Pure: built from
 /// <see cref="CalendarYear"/> data, no I/O. Dates outside the loaded years throw instead of being guessed.
 /// </summary>
 public sealed class MarketCalendar
@@ -60,10 +65,16 @@ public sealed class MarketCalendar
         }
 
         Mic = all[0].Mic;
+        TimeZoneId = all[0].TimeZoneId;
         _years = [];
         foreach (CalendarYear y in all)
         {
             Validate(y, Mic);
+            if (!string.Equals(y.TimeZoneId, TimeZoneId, StringComparison.Ordinal))
+            {
+                throw new ArgumentException($"{Mic} calendar years mix time zones ({TimeZoneId} and {y.TimeZoneId}).", nameof(years));
+            }
+
             if (!_years.TryAdd(y.Year, y))
             {
                 throw new ArgumentException($"Calendar year {y.Year} is given twice.", nameof(years));
@@ -87,6 +98,12 @@ public sealed class MarketCalendar
     }
 
     public string Mic { get; }
+
+    /// <summary>Gets the IANA id of the exchange's time zone, e.g. America/New_York.</summary>
+    public string TimeZoneId { get; }
+
+    /// <summary>Gets the exchange's time zone (its dates and session times are in it).</summary>
+    public TimeZoneInfo TimeZone => MarketTime.Zone(TimeZoneId);
 
     public IReadOnlyCollection<int> Years => _years.Keys;
 
@@ -121,10 +138,22 @@ public sealed class MarketCalendar
         return new TradingDay(date, TradingDayKind.Full, y.RegularOpen, y.RegularClose, null);
     }
 
+    /// <summary>The exchange's local date at <paramref name="utc"/>.</summary>
+    public DateOnly LocalDate(DateTimeOffset utc) => DateOnly.FromDateTime(MarketTime.ToZone(utc, TimeZone).DateTime);
+
+    /// <summary>
+    /// The UTC instant of <paramref name="time"/> on <paramref name="date"/> in the exchange's time zone. Throws for a time a
+    /// DST change skips or repeats (never guessed; no session time is near one).
+    /// </summary>
+    public DateTimeOffset ToUtc(DateOnly date, TimeOnly time) =>
+        MarketTime.TryLocalToUtc(date.ToDateTime(time), TimeZone, out DateTimeOffset utc)
+            ? utc
+            : throw new InvalidOperationException($"{date:yyyy-MM-dd} {time:HH\\:mm} does not exist in {TimeZoneId} time (DST change).");
+
     /// <summary>True while the regular or half-day session is running at <paramref name="utc"/> (open inclusive, close exclusive).</summary>
     public bool IsOpen(DateTimeOffset utc)
     {
-        DateTimeOffset local = MarketTime.ToStockholm(utc);
+        DateTimeOffset local = MarketTime.ToZone(utc, TimeZone);
         TradingDay day = Classify(DateOnly.FromDateTime(local.DateTime));
         if (!day.IsTradingDay)
         {

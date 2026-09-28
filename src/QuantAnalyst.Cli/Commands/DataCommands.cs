@@ -87,20 +87,30 @@ internal static class DataCommands
     {
         var year = new Option<int?>("--year") { Description = "Year to list (default: this year)" };
         var date = new Option<string?>("--date") { Description = "Classify one date, yyyy-MM-dd" };
+        var market = new Option<string>("--market")
+        {
+            Description = $"Which market: {string.Join(", ", Markets.All.Select(m => $"{m.Mic} ({m.Name}, {m.Currency})"))}",
+            DefaultValueFactory = _ => Markets.Stockholm.Mic,
+        };
         var configDir = ConfigDirOption();
-        var command = new Command("calendar", "Nasdaq Stockholm (XSTO) trading calendar: closed days, half days and verification status. Offline.");
+        var command = new Command("calendar", "A market's trading calendar (Nasdaq Stockholm unless --market): closed days, half days and verification status. Offline.");
         command.Options.Add(year);
         command.Options.Add(date);
+        command.Options.Add(market);
         command.Options.Add(configDir);
         command.SetAction(parse => Execute(parse, w =>
         {
             string dir = ResolveConfigDir(parse.GetValue(configDir));
-            MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(dir);
+            string mic = parse.GetValue(market)!.Trim().ToUpperInvariant();
+            MarketInfo info = Markets.ForMic(mic)
+                ?? throw new ArgumentException($"--market: {mic} is not a market the program trades on; use {string.Join(", ", Markets.All.Select(m => m.Mic))}.");
+            MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(dir, info.Mic);
+            string local = LocalName(info);
             if (ParseDate(parse.GetValue(date), "--date") is { } d)
             {
                 TradingDay day = calendar.Classify(d);
                 w.WriteLine(day.IsTradingDay
-                    ? $"{d:yyyy-MM-dd} ({d.DayOfWeek}): {day.Kind} trading day, {day.Open:HH\\:mm}–{day.Close:HH\\:mm} Stockholm{(day.Name is null ? string.Empty : $" ({day.Name})")}."
+                    ? $"{d:yyyy-MM-dd} ({d.DayOfWeek}): {day.Kind} trading day, {day.Open:HH\\:mm}–{day.Close:HH\\:mm} {local}{(day.Name is null ? string.Empty : $" ({day.Name})")}{StockholmTimes(calendar, d, day)}."
                     : $"{d:yyyy-MM-dd} ({d.DayOfWeek}): {day.Kind}{(day.Name is null ? string.Empty : $" ({day.Name})")}.");
             }
             else
@@ -119,7 +129,7 @@ internal static class DataCommands
                     }
                 }
 
-                w.WriteLine($"{calendar.Mic} {y}: {full} full days, {half} half days (close {cy.HalfDayClose:HH\\:mm}), {closed} weekday closures; regular session {cy.RegularOpen:HH\\:mm}–{cy.RegularClose:HH\\:mm} Stockholm.");
+                w.WriteLine($"{calendar.Mic} {y}: {full} full days, {half} half days (close {cy.HalfDayClose:HH\\:mm}), {closed} weekday closures; regular session {cy.RegularOpen:HH\\:mm}–{cy.RegularClose:HH\\:mm} {local}.");
                 var table = new TextTable(("date", false), ("day", false), ("kind", false), ("name", false));
                 foreach (CalendarEntry e in cy.Closed.Select(e => (e, TradingDayKind.Closed)).Concat(cy.HalfDays.Select(e => (e, TradingDayKind.Half)))
                              .OrderBy(x => x.e.Date).Select(x => x.e))
@@ -254,6 +264,15 @@ internal static class DataCommands
             return null;
         }
     }
+
+    /// <summary>"Stockholm", "New York" or "Toronto": whose clock a market's session times are on.</summary>
+    private static string LocalName(MarketInfo market) => market.TimeZoneId[(market.TimeZoneId.IndexOf('/', StringComparison.Ordinal) + 1)..].Replace('_', ' ');
+
+    /// <summary>For another market's trading day: its session in Stockholm time, e.g. " (15:30–22:00 Stockholm)".</summary>
+    private static string StockholmTimes(MarketCalendar calendar, DateOnly date, TradingDay day) =>
+        calendar.TimeZoneId == Markets.Stockholm.TimeZoneId
+            ? string.Empty
+            : $" ({MarketTime.ToStockholm(calendar.ToUtc(date, day.Open!.Value)):HH\\:mm}–{MarketTime.ToStockholm(calendar.ToUtc(date, day.Close!.Value)):HH\\:mm} Stockholm)";
 
     private static string Local(DateTimeOffset utc) =>
         MarketTime.ToStockholm(utc).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
