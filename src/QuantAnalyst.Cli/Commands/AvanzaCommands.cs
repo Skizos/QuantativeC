@@ -670,6 +670,24 @@ internal static partial class AvanzaCommands
         return await body(connection, services.Cancellation).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// A read that needs no login (the app's share search: Avanza's own site searches logged out, and the Go SDK lists
+    /// search as public; docs/research/avanza-endpoints.md). The same plumbing as <see cref="QueryAsync{T}"/>, but it
+    /// never logs in: an answer of 401/403 comes back as <see cref="SessionExpiredException"/> and the caller decides
+    /// whether a login is worth it. The login lock still applies.
+    /// </summary>
+    internal static async Task<T> PublicQueryAsync<T>(AvanzaCliServices services, string stateDirectory, Func<AvanzaConnection, CancellationToken, Task<T>> body)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(body);
+        var redactor = new Redactor();
+        var logger = new RedactingLogger(TextWriter.Null, redactor, LogLevel.Warning);
+        ISecretStore secrets = services.SecretStoreFactory(OperatingSystem.IsWindows() ? "credman" : "env");
+        var options = new AvanzaOptions { StateDirectory = stateDirectory };
+        using AvanzaConnection connection = services.ConnectionFactory(options, secrets, new ConsoleBankIdPrompt(TextWriter.Null, false), logger, redactor);
+        return await body(connection, services.Cancellation).ConfigureAwait(false);
+    }
+
     private static void Flush(TextWriter buffer, TextWriter output, Redactor redactor)
     {
         if (buffer is StringWriter sw)

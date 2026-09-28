@@ -74,3 +74,21 @@
   answer; Done; leaving the page (beside and window kept it); remove through the open search; searching while a
   Paper session runs; the real `EngineMarketSearch` with a login that fails (one attempt per search session, never a
   loop). Plus the session's remove over the recorded answers. The WPF view builds; the XAML checks pass.
+
+### Step 3: searching without a login (done 2026-09-28)
+
+- **Why:** the owner asked for no BankID between searches. The login was kept for the search session, but it still
+  came back after Done, 5 idle minutes or leaving the page.
+- **How:** a search now goes to Avanza **without a login** (`AvanzaCommands.PublicQueryAsync`,
+  `MarketSearchSession.SearchPublicAsync`): no session, no security token, never a login. Avanza's own site searches
+  logged out, and the Go SDK lists search as public (docs/research/avanza-endpoints.md). It runs alongside whatever
+  the app is doing (`QaEngine.ReadPublicAsync`: no busy flag), so searching works during a Paper session too.
+- **Only Add and Remove** (while the login is open) use the login, as before: one BankID for any number of adds.
+- **If Avanza refuses** a search without a login (401/403), the search falls back to the login session and later
+  searches go straight there for the rest of the run: one login, never a login per search, never a retry loop. Any
+  other problem (Avanza unavailable) is shown and nothing logs in.
+- **Unverified live:** the first search in the app is the check. I made no live call.
+- **Tests (5 new, 3 changed):** a public search sends no login and no token; a refusal surfaces without a login; the
+  page searches while a Paper session runs but Add waits; the fallback logs in once and then goes straight to the
+  login; another problem logs nothing in; remove through the open login and without it.
+

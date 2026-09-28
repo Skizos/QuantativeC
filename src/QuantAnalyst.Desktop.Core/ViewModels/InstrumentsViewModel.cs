@@ -27,9 +27,9 @@ public sealed record SearchResultRow(
     bool CanAdd, bool IsOnList, string Why);
 
 /// <summary>
-/// The allowlist (risk check R2). <b>Find a share</b> searches Avanza's market as you type (one read-only login for
-/// every search until <b>Done</b>, docs/plans/15-share-search.md); each hit says whether it can be added or why not, and
-/// <b>Add</b> imports its daily prices and allows it. <b>Remove</b> runs <c>qa universe remove</c> (or, while the search
+/// The allowlist (risk check R2). <b>Find a share</b> searches Avanza's market as you type, without a login
+/// (docs/plans/15-share-search.md); each hit says whether it can be added or why not, and <b>Add</b> imports its daily
+/// prices and allows it (one read-only login for every add until <b>Done</b>). <b>Remove</b> runs <c>qa universe remove</c> (or, while the search
 /// is open, the same change in turn with its adds). The selected name's stored daily history is charted with ranges
 /// (1M … All) and, when the saved strategy is ma-cross, its two moving averages (docs/plans/11-app-redesign.md).
 /// </summary>
@@ -73,10 +73,10 @@ public sealed class InstrumentsViewModel : PageViewModel
         _login = login;
         _search = search ?? throw new ArgumentNullException(nameof(search));
         _time = time ?? throw new ArgumentNullException(nameof(time));
-        SearchCommand = new AsyncCommand(SearchNowAsync, () => SearchText.Trim().Length >= MinQueryLength && CanUseSearch, ex => SayInSearch(ex.Message, isError: true));
-        AddResultCommand = new AsyncCommand(p => AddResultAsync(p as SearchResultRow), p => p is SearchResultRow { CanAdd: true } && CanUseSearch, ex => SayInSearch(ex.Message, isError: true));
+        SearchCommand = new AsyncCommand(SearchNowAsync, () => SearchText.Trim().Length >= MinQueryLength && CanSearch, ex => SayInSearch(ex.Message, isError: true));
+        AddResultCommand = new AsyncCommand(p => AddResultAsync(p as SearchResultRow), p => p is SearchResultRow { CanAdd: true } && CanUseLogin, ex => SayInSearch(ex.Message, isError: true));
         DoneCommand = new RelayCommand(CloseSearch, () => _search.IsOpen || Results.Count > 0 || SearchText.Length > 0);
-        RemoveCommand = new AsyncCommand(p => RemoveAsync(p as InstrumentRow), p => p is InstrumentRow && CanUseSearch && !AddResultCommand.IsRunning, ex => Say(ex.Message, isError: true));
+        RemoveCommand = new AsyncCommand(p => RemoveAsync(p as InstrumentRow), p => p is InstrumentRow && CanUseLogin && !AddResultCommand.IsRunning, ex => Say(ex.Message, isError: true));
         _searchHint = Hint(OrderLimit());
     }
 
@@ -288,17 +288,17 @@ public sealed class InstrumentsViewModel : PageViewModel
             return;
         }
 
-        if (!CanUseSearch)
+        if (!CanSearch)
         {
-            SayInSearch($"'{Engine.CurrentCommand}' is running; search when it has finished.", isError: true);
+            SayInSearch($"'{Engine.CurrentCommand}' is running; search when it has finished (Avanza wants a login to search).", isError: true);
             return;
         }
 
         int seq = ++_searchSeq;
         IsSearching = true;
-        SayInSearch(_search.IsOpen
-            ? $"Searching for “{query}” …"
-            : $"Searching for “{query}” … {(_login() == "bankid" ? "approve the Avanza login in BankID" : "logging in to Avanza")} (read-only; one login until you press Done).");
+        SayInSearch(_search.SearchNeedsLogin
+            ? $"Searching for “{query}” … Avanza wants a login to search: {(_login() == "bankid" ? "approve it in BankID" : "logging in")} (read-only; one login until you press Done)."
+            : $"Searching for “{query}” …");
         try
         {
             IReadOnlyList<InstrumentSearchHit> hits = await _search.SearchAsync(query);
@@ -378,7 +378,7 @@ public sealed class InstrumentsViewModel : PageViewModel
 
     /// <summary>The hint under "Find a share", with R6's limit when the settings can be read.</summary>
     private static string Hint(decimal? orderLimit) =>
-        string.Create(CultureInfo.InvariantCulture, $"Search Avanza by name or ticker. Add imports {InstrumentImport.AppYears} years of daily prices and allows the share; the first search logs in (read-only) and the login serves every search until you press Done.")
+        string.Create(CultureInfo.InvariantCulture, $"Search Avanza by name or ticker; searching needs no login. Add imports {InstrumentImport.AppYears} years of daily prices and allows the share: the first add logs in to Avanza (read-only) and that login serves every add until you press Done.")
         + (orderLimit is { } limit ? $" One order may be at most {Fmt.Sek(limit)}, so a share priced above that can't be bought." : string.Empty);
 
     /// <summary>Loads the selected name's closes once (the store is read only while no command runs), then draws.</summary>
@@ -475,7 +475,10 @@ public sealed class InstrumentsViewModel : PageViewModel
     }
 
     /// <summary>The search may be used: nothing else runs, or what runs is the search's own login.</summary>
-    private bool CanUseSearch => !IsBusy || _search.IsOpen;
+    private bool CanUseLogin => !IsBusy || _search.IsOpen;
+
+    /// <summary>A search needs no login and runs alongside anything, unless Avanza wanted a login for it this run.</summary>
+    private bool CanSearch => !_search.SearchNeedsLogin || CanUseLogin;
 
     /// <summary>The price store may be read: nothing runs, or only the search's login, with no add writing to it.</summary>
     private bool StoreFree => !IsBusy || (_search.IsOpen && !AddResultCommand.IsRunning);

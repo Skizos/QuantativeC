@@ -140,6 +140,28 @@ public sealed class MarketSearchTests : IDisposable
         Assert.Equal((name, ticker), AvanzaMapper.SplitTitle(title));
 
     [Fact]
+    public async Task ASearchWithoutALogin_SendsNoLoginAndNoToken()
+    {
+        IReadOnlyList<InstrumentSearchHit> hits = await MarketSearchSession.SearchPublicAsync(Services(Ct), State, "eric");
+
+        Assert.Equal(["ERIC B", "ERIBR"], hits.Select(h => h.Ticker));
+        Assert.Equal(0, Logins);
+        RecordedRequest request = Assert.Single(_server.Requests);
+        Assert.StartsWith(AvanzaRoutes.Search.Path(), request.PathAndQuery, StringComparison.Ordinal);
+        Assert.DoesNotContain(request.Headers.Keys, k => string.Equals(k, "X-SecurityToken", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ASearchAvanzaRefusesWithoutALogin_SaysSo_AndNothingLogsIn()
+    {
+        _server.On(AvanzaRoutes.Search, _ => FakeAvanza.Status(HttpStatusCode.Unauthorized));
+
+        await Assert.ThrowsAsync<SessionExpiredException>(() => MarketSearchSession.SearchPublicAsync(Services(Ct), State, "eric"));
+        Assert.Equal(0, Logins);
+        Assert.Single(_server.Requests);
+    }
+
+    [Fact]
     public async Task OneLogin_ServesEverySearchAndTheAdd_ThenDoneEndsIt()
     {
         var session = new MarketSearchSession();

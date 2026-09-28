@@ -11,8 +11,8 @@ namespace QuantAnalyst.Cli.Commands;
 internal sealed record AddedShare(UniverseEntry Entry, InstrumentImportResult Import);
 
 /// <summary>
-/// The Windows app's share search (docs/plans/15-share-search.md): <b>one</b> Avanza login, then any number of searches
-/// and adds, one at a time in the order asked, until <see cref="Close"/>, <see cref="IdleTimeout"/> without a request, or
+/// The Windows app's share search (docs/plans/15-share-search.md): <b>one</b> Avanza login, then any number of adds,
+/// removes and (when Avanza wants a login to search, see <see cref="SearchPublicAsync"/>) searches, one at a time in the order asked, until <see cref="Close"/>, <see cref="IdleTimeout"/> without a request, or
 /// a failure. A request that fails on its own (no such ticker, not in kronor, the list full) fails alone; a session-level
 /// failure (the login, an expired session, a stop) ends the session and every waiting request fails with it. A new
 /// search after that is a new session with its own login: never a login loop. Read-only at Avanza (search, orderbook,
@@ -33,6 +33,13 @@ internal sealed class MarketSearchSession
     /// <summary>Stocks matching <paramref name="query"/> (name or ticker), at most <paramref name="maxHits"/>.</summary>
     public Task<IReadOnlyList<InstrumentSearchHit>> SearchAsync(string query, int maxHits = 20) =>
         Enqueue((connection, ct) => connection.Gateway.SearchStocksAsync(query, maxHits, ct));
+
+    /// <summary>
+    /// The same search <b>without a login</b> (no session needed, no BankID). Throws <see cref="SessionExpiredException"/>
+    /// when Avanza wants a login for it after all; the app then searches in a session instead.
+    /// </summary>
+    public static Task<IReadOnlyList<InstrumentSearchHit>> SearchPublicAsync(AvanzaCliServices services, string stateDirectory, string query, int maxHits = 20) =>
+        AvanzaCommands.PublicQueryAsync(services, stateDirectory, (connection, ct) => connection.Gateway.SearchStocksAsync(query, maxHits, ct));
 
     /// <summary>
     /// Imports <paramref name="id"/>'s daily prices for <see cref="InstrumentImport.AppYears"/> years up to

@@ -83,7 +83,7 @@ public sealed class SearchPageTests : IDisposable
         Assert.Equal(["eric"], _search.Queries);
         Assert.Equal("2 shares.", page.SearchStatus);
         Assert.False(page.SearchStatusIsError);
-        Assert.True(page.IsSearchOpen);
+        Assert.False(page.IsSearchOpen); // searching needs no login
 
         // One character is not searched; an empty box clears the hits.
         page.SearchText = "e";
@@ -178,7 +178,7 @@ public sealed class SearchPageTests : IDisposable
         Assert.Equal("ERIC B", row.Ticker);
         Assert.Same(row, page.SelectedRow);
         Assert.Equal((false, true, "On your list"), (page.Results[0].CanAdd, page.Results[0].IsOnList, page.Results[0].Why));
-        Assert.True(page.IsSearchOpen); // the login stays for the next search
+        Assert.True(page.IsSearchOpen); // the add's login stays for the next add
     }
 
     [Fact]
@@ -257,7 +257,7 @@ public sealed class SearchPageTests : IDisposable
         await page.SearchCommand.ExecuteAsync();
         shell.SelectedPage = shell.Accounts;
         Assert.Equal(0, _search.Closes);
-        Assert.True(page.IsSearchOpen);
+        Assert.Single(page.Results); // the search is kept
 
         // In a window of its own while the beside pane closes: still shown.
         shell.OpenInWindow(page);
@@ -278,15 +278,14 @@ public sealed class SearchPageTests : IDisposable
     }
 
     [Fact]
-    public async Task WhileTheSearchIsOpen_RemoveGoesThroughIt_NotAsASecondCommand()
+    public async Task WhileTheAddLoginIsOpen_RemoveGoesThroughIt_NotAsASecondCommand()
     {
-        _ws.AllowEricB();
         var runner = new ScriptedRunner();
         InstrumentsViewModel page = Shell(runner).Instruments;
-        await page.RefreshAsync();
         _search.Answer("eric", [EricB]);
         page.SearchText = "eric";
         await page.SearchCommand.ExecuteAsync();
+        await page.AddResultCommand.ExecuteAsync(page.Results[0]); // opens the login
         Assert.False(page.Results[0].CanAdd);
 
         await page.RemoveCommand.ExecuteAsync(page.Rows[0]);
@@ -299,7 +298,24 @@ public sealed class SearchPageTests : IDisposable
     }
 
     [Fact]
-    public async Task WhileAnotherCommandRuns_TheSearchWaitsForIt()
+    public async Task WithoutAnOpenLogin_RemoveRunsUniverseRemove()
+    {
+        _ws.AllowEricB();
+        var runner = new ScriptedRunner();
+        InstrumentsViewModel page = Shell(runner).Instruments;
+        await page.RefreshAsync();
+        _search.Answer("eric", [EricB]);
+        page.SearchText = "eric";
+        await page.SearchCommand.ExecuteAsync();
+
+        await page.RemoveCommand.ExecuteAsync(page.Rows[0]);
+
+        Assert.Empty(_search.Removes);
+        Assert.Equal(["universe", "remove", "ERIC B"], runner.Calls.Single().Take(3));
+    }
+
+    [Fact]
+    public async Task WhileAnotherCommandRuns_SearchingStillWorks_ButAddWaits()
     {
         var started = new TaskCompletionSource();
         int Blocking(string[] args, TextWriter output, TextWriter error, AvanzaCliServices services)
@@ -315,41 +331,82 @@ public sealed class SearchPageTests : IDisposable
         await started.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
 
         InstrumentsViewModel page = shell.Instruments;
+        _search.Answer("eric", [EricB]);
         page.SearchText = "eric";
-        Assert.False(page.SearchCommand.CanExecute(null));
-        await page.SearchNowAsync(); // the typing pause's search
-        Assert.Empty(_search.Queries);
+        Assert.True(page.SearchCommand.CanExecute(null));
+        await page.SearchCommand.ExecuteAsync();
+        Assert.Equal(["eric"], _search.Queries);
+        Assert.True(page.Results[0].CanAdd);
+        Assert.False(page.AddResultCommand.CanExecute(page.Results[0])); // adding logs in: after the session
+
+        // Had Avanza wanted a login to search, the search would wait too.
+        _search.NeedsLogin = true;
+        await page.SearchNowAsync();
+        Assert.Equal(["eric"], _search.Queries);
         Assert.True(page.SearchStatusIsError);
-        Assert.Equal("'Paper session' is running; search when it has finished.", page.SearchStatus);
+        Assert.Equal("'Paper session' is running; search when it has finished (Avanza wants a login to search).", page.SearchStatus);
 
         engine.Cancel();
         await running.WaitAsync(TimeSpan.FromSeconds(10), Ct);
     }
 
     [Fact]
-    public async Task TheRealSearch_LogsInOncePerSearchSession_AndAFailedLoginFailsTheSearchWithoutRetrying()
+    public async Task TheRealSearch_TriesWithoutALogin_AndLogsInOnceOnlyWhenAvanzaRefuses()
     {
+        int publicTries = 0;
         int logins = 0;
         var services = new AvanzaCliServices(
-            (_, _, _, _, _) =>
+            (options, _, _, _, _) =>
             {
-                Interlocked.Increment(ref logins);
-                throw new LoginFailedException("rejected");
+                if (options.LoginMethod == Avanza.Auth.AvanzaLoginMethod.Totp)
+                {
+                    Interlocked.Increment(ref logins);
+                    throw new LoginFailedException("rejected");
+                }
+
+                Interlocked.Increment(ref publicTries);
+                throw new SessionExpiredException("search", 401); // Avanza wants a login to search
             },
-            _ => null!); // the login fails before any secret is read
+            _ => null!); // no secret is read
         var engine = new QaEngine(new ImmediateDispatcher(), null, services);
         var search = new EngineMarketSearch(engine, _ws.Workspace, _ws.Time, () => "totp");
+        Assert.False(search.SearchNeedsLogin);
 
         var ex = await Assert.ThrowsAsync<LoginFailedException>(() => search.SearchAsync("eric").WaitAsync(TimeSpan.FromSeconds(10), Ct));
         Assert.Contains("rejected", ex.Message, StringComparison.Ordinal);
-        Assert.Equal(1, logins);
+        Assert.Equal((1, 1), (publicTries, logins));
         await Until(() => !engine.IsBusy);
         Assert.False(search.IsOpen);
+        Assert.True(search.SearchNeedsLogin);
 
-        // The next search is a new session with its own single login attempt.
+        // For the rest of the run a search goes straight to one login attempt: no second anonymous try, no retry loop.
         await Assert.ThrowsAsync<LoginFailedException>(() => search.SearchAsync("eric").WaitAsync(TimeSpan.FromSeconds(10), Ct));
-        Assert.Equal(2, logins);
+        Assert.Equal((1, 2), (publicTries, logins));
         await Assert.ThrowsAsync<InvalidOperationException>(() => search.RemoveAsync("ERIC B"));
+    }
+
+    [Fact]
+    public async Task TheRealSearch_AnyOtherProblemWithoutALogin_IsShown_AndNothingLogsIn()
+    {
+        int logins = 0;
+        var services = new AvanzaCliServices(
+            (options, _, _, _, _) =>
+            {
+                if (options.LoginMethod == Avanza.Auth.AvanzaLoginMethod.Totp)
+                {
+                    Interlocked.Increment(ref logins);
+                }
+
+                throw new BrokerUnavailableException("search", "Avanza returned HTTP 503 for 'search'.", 503);
+            },
+            _ => null!);
+        var engine = new QaEngine(new ImmediateDispatcher(), null, services);
+        var search = new EngineMarketSearch(engine, _ws.Workspace, _ws.Time, () => "totp");
+
+        await Assert.ThrowsAsync<BrokerUnavailableException>(() => search.SearchAsync("eric").WaitAsync(TimeSpan.FromSeconds(10), Ct));
+        Assert.Equal(0, logins);
+        Assert.False(search.SearchNeedsLogin);
+        Assert.False(engine.IsBusy); // a search without a login never occupies the app
     }
 
     /// <summary>Answers searches from a script; an add writes the allowlist the way the real one does.</summary>
@@ -369,6 +426,11 @@ public sealed class SearchPageTests : IDisposable
 
         public bool IsOpen { get; private set; }
 
+        /// <summary>Gets or sets whether Avanza wanted a login to search (then a search opens the login too).</summary>
+        public bool NeedsLogin { get; set; }
+
+        public bool SearchNeedsLogin => NeedsLogin && !IsOpen;
+
         public void Answer(string query, IReadOnlyList<InstrumentSearchHit> hits) => _answers[query] = Task.FromResult(hits);
 
         public void Answer(string query, Task<IReadOnlyList<InstrumentSearchHit>> hits) => _answers[query] = hits;
@@ -378,13 +440,14 @@ public sealed class SearchPageTests : IDisposable
         public Task<IReadOnlyList<InstrumentSearchHit>> SearchAsync(string query)
         {
             Queries.Add(query);
-            IsOpen = true;
+            IsOpen |= NeedsLogin;
             return _answers[query];
         }
 
         public Task<ShareAdded> AddAsync(OrderbookId id)
         {
             Adds.Add(id);
+            IsOpen = true;
             if (AddFails is { } fail)
             {
                 return Task.FromException<ShareAdded>(fail);
@@ -398,6 +461,7 @@ public sealed class SearchPageTests : IDisposable
         public Task RemoveAsync(string ticker)
         {
             Removes.Add(ticker);
+            IsOpen = true;
             string path = Path.Combine(ws.Workspace.ConfigDir, Universe.FileName);
             Universe u = Universe.Load(path);
             u.Without(u.Entries.Single(e => e.Ticker == ticker).OrderbookId).Save(path);

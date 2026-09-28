@@ -15,7 +15,7 @@
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                         <Border Style="{StaticResource Chip}" Background="{StaticResource AccentSoftBrush}" Margin="0,0,10,0"
                                 Visibility="{Binding IsSearchOpen, Converter={StaticResource Visibility}}"
-                                ToolTip="Searches and adds use this read-only login. Done lets it go; so do 5 minutes without a search or leaving this page.">
+                                ToolTip="Adds and removes use this read-only login (searching needs none). Done lets it go; so do 5 minutes without a request or leaving this page.">
                             <TextBlock Text="Avanza login open" Style="{StaticResource ChipText}" Foreground="{StaticResource AccentBrush}" />
                         </Border>
                         <Button Style="{StaticResource Ghost}" Command="{Binding DoneCommand}" Margin="0"

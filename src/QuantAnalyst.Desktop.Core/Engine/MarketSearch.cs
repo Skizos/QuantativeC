@@ -1,5 +1,6 @@
 using QuantAnalyst.Cli.Commands;
 using QuantAnalyst.Core;
+using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
 
@@ -10,13 +11,16 @@ public sealed record ShareAdded(string Ticker, string Name, int NewBars, DateOnl
 
 /// <summary>
 /// Where the Instruments page searches Avanza's market and adds a share (docs/plans/15-share-search.md); tests pass a
-/// fake. The first request opens one login that every later one uses, until <see cref="Close"/>, a few idle minutes or
-/// a problem.
+/// fake. Searching needs no login. The first add opens one login that every later add and remove uses, until
+/// <see cref="Close"/>, a few idle minutes or a problem.
 /// </summary>
 public interface IMarketSearch
 {
-    /// <summary>Gets a value indicating whether a search login is open (so the page's buttons stay on while it runs).</summary>
+    /// <summary>Gets a value indicating whether the login for adds is open (so the page's buttons stay on while it runs).</summary>
     bool IsOpen { get; }
+
+    /// <summary>Gets a value indicating whether a search would log in (Avanza refused a search without one this run).</summary>
+    bool SearchNeedsLogin { get; }
 
     /// <summary>Stocks whose name or ticker matches <paramref name="query"/>.</summary>
     Task<IReadOnlyList<InstrumentSearchHit>> SearchAsync(string query);
@@ -32,9 +36,11 @@ public interface IMarketSearch
 }
 
 /// <summary>
-/// The real search: the CLI's <see cref="MarketSearchSession"/>, run in-process by the engine like any Avanza read (one
-/// thing at a time, the BankID QR code in the window, <b>Stop</b> ends it). Read-only at Avanza; locally it writes
-/// the price store and <c>config/universe.json</c>.
+/// The real search. A search goes to Avanza <b>without a login</b> (<see cref="MarketSearchSession.SearchPublicAsync"/>),
+/// alongside whatever runs. Adds and removes go through the CLI's <see cref="MarketSearchSession"/>, run in-process by the
+/// engine like any Avanza read (one thing at a time, the BankID QR code in the window, <b>Stop</b> ends it). Should
+/// Avanza answer a search without a login with 401/403, searches use that session too for the rest of the run (one
+/// login, never a retry loop). Read-only at Avanza; locally it writes the price store and <c>config/universe.json</c>.
 /// </summary>
 public sealed class EngineMarketSearch(QaEngine engine, Workspace workspace, TimeProvider time, Func<string> login) : IMarketSearch
 {
@@ -43,9 +49,28 @@ public sealed class EngineMarketSearch(QaEngine engine, Workspace workspace, Tim
 
     private MarketSearchSession? _session;
 
+    private bool _publicRefused;
+
     public bool IsOpen => _session is { HasEnded: false };
 
-    public Task<IReadOnlyList<InstrumentSearchHit>> SearchAsync(string query) => Ask(session => session.SearchAsync(query));
+    public bool SearchNeedsLogin => _publicRefused && !IsOpen;
+
+    public async Task<IReadOnlyList<InstrumentSearchHit>> SearchAsync(string query)
+    {
+        if (!_publicRefused)
+        {
+            try
+            {
+                return await engine.ReadPublicAsync(services => MarketSearchSession.SearchPublicAsync(services, workspace.StateDir, query)).ConfigureAwait(true);
+            }
+            catch (SessionExpiredException)
+            {
+                _publicRefused = true; // Avanza wants a login to search: use the session from now on
+            }
+        }
+
+        return await Ask(session => session.SearchAsync(query)).ConfigureAwait(true);
+    }
 
     public async Task<ShareAdded> AddAsync(OrderbookId id)
     {

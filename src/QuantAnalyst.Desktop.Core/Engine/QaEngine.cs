@@ -175,6 +175,18 @@ public sealed class QaEngine : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Runs a read that needs no login and changes nothing (the share search), <b>alongside</b> whatever runs: no busy
+    /// flag, no BankID prompt, no activity line per keystroke. Anything that logs in or writes goes through
+    /// <see cref="RunAsync"/> or <see cref="QueryAsync{T}"/>, one at a time.
+    /// </summary>
+    internal Task<T> ReadPublicAsync<T>(Func<AvanzaCliServices, Task<T>> body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        AvanzaCliServices services = _services with { Cancellation = CancellationToken.None, BankIdPrompt = null, Input = TextReader.Null, SessionObserver = null };
+        return Task.Run(() => body(services), CancellationToken.None);
+    }
+
     /// <summary>Stops the running command the way Ctrl+C does (a Paper session cancels its orders and writes its report).</summary>
     public void Cancel() => _cts?.Cancel();
 }

@@ -83,10 +83,14 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
     - **Not tradable at Avanza**
   - **Add** imports 3 years of daily prices and allows the share (the same code as `qa history import` and
     `qa universe add`). The next Paper session trades it.
-  - **One login for all of it:** the first search logs in to Avanza (BankID, read-only); every search, add and remove
-    after it uses that login. The green **Avanza login open** chip shows it. **Done** (or Esc) lets it go, and so do
-    5 minutes without a search or leaving the page. Like every Avanza action, searching waits while something else
-    runs (a Paper session), and nothing else can start while the search is open: press **Done** first.
+  - **Searching needs no BankID:** searches go to Avanza without a login, as its own website does, even while a Paper
+    session runs.
+  - **One login for adding:** the first **Add** logs in (BankID, read-only); every add and remove after it uses that
+    login. The green **Avanza login open** chip shows it. **Done** (or Esc) lets it go, and so do 5 minutes without an
+    add or leaving the page. Adding waits while something else runs (a Paper session), and nothing else can start while
+    the login is open: press **Done** first.
+  - Should Avanza ever refuse a search without a login, the app says so and searches in one login instead for the rest
+    of that run (never a login per search).
 - **Strategy:**
   - pick a strategy and fill in its named fields (e.g. fast 20, slow 100)
   - **Backtest on my instruments** shows how it did
