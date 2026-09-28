@@ -92,7 +92,7 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
 
     private RiskCheckResult R6(PreparedOrder o, RiskContext c)
     {
-        decimal cap = Math.Min(Limits.MaxOrderValueSek, Limits.MaxOrderValuePctOfAccount * Limits.SizingValue(c.AccountValue));
+        decimal cap = Limits.MaxOrderValue(c.AccountValue);
         return Check("R6", "max order value", o.Value <= cap, Sek(o.Value),
             $"{Sek(cap)} = min({Sek(Limits.MaxOrderValueSek)}, {Pct(Limits.MaxOrderValuePctOfAccount)} of {Sek(Limits.SizingValue(c.AccountValue))}){CapNote(c.AccountValue)}",
             "the order is too large");

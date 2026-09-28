@@ -60,29 +60,27 @@ internal static partial class AvanzaCommands
                 throw new ArgumentException("Give either a ticker or --id <orderbookId>.");
             }
 
-            MarketCalendar? calendar = DataCommands.TryLoadCalendar(parse.GetValue(configDir), out string? calendarNote);
             await ctx.Connection.Authenticator.LoginAsync(ctx.Ct).ConfigureAwait(false);
             InstrumentTradingParams p = idText is not null
                 ? await ctx.Connection.Gateway.GetTradingParamsAsync(new OrderbookId(idText), ctx.Ct).ConfigureAwait(false)
                 : await TickerResolver.ResolveAsync(ctx.Connection.Gateway, tickerText!, ctx.Ct).ConfigureAwait(false);
 
-            using HistoryStore history = HistoryStore.Open(parse.GetValue(store)!);
-            WriteCounts instrument = history.UpsertInstrument(
-                InstrumentRecord.FromTradingParams(p), "avanza-orderbook", AvanzaConnection.OrderbookSourceVersion, p.KnownAtUtc);
-            var provider = new AvanzaChartImporter(ctx.Connection.Gateway, TimeProvider.System, AvanzaConnection.PriceChartSourceVersion);
-            ImportReport report = await new HistoryImporter(history, TimeProvider.System, calendar)
-                .ImportAsync(provider, p.OrderbookId, fromDate, toDate, ctx.Ct).ConfigureAwait(false);
+            string storePath = parse.GetValue(store)!;
+            InstrumentImportResult result = await InstrumentImport.ImportAsync(
+                ctx.Connection.Gateway, p, storePath, parse.GetValue(configDir), fromDate, toDate, ctx.Ct).ConfigureAwait(false);
+            WriteCounts instrument = result.Instrument;
+            ImportReport report = result.Report;
 
             output.WriteLine($"{p.TickerSymbol} {p.Name} (orderbook {p.OrderbookId}, {p.Isin}, {p.MarketPlace}, {p.Currency})");
             output.WriteLine($"Instrument master: {(instrument.New > 0 ? "added" : instrument.Restated > 0 ? "new version stored (attributes changed)" : "unchanged")}.");
             output.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"Daily bars {report.FirstDate:yyyy-MM-dd}..{report.LastDate:yyyy-MM-dd}: {report.Bars.New} new, {report.Bars.Restated} restated, {report.Bars.Unchanged} unchanged."));
-            output.WriteLine($"Stored in {history.Path}, known at {Local(report.KnownAtUtc)} (Europe/Stockholm).");
+            output.WriteLine($"Stored in {storePath}, known at {Local(report.KnownAtUtc)} (Europe/Stockholm).");
             output.WriteLine($"Source: {report.Source.Label}.");
             output.WriteLine(report.Source.Notes);
-            if (calendarNote is not null)
+            if (result.CalendarNote is not null)
             {
-                output.WriteLine(calendarNote);
+                output.WriteLine(result.CalendarNote);
             }
 
             foreach (string warning in report.Warnings)

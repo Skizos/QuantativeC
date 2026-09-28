@@ -87,7 +87,7 @@ internal static partial class TradingCommands
         var addTickers = new Argument<string[]>("tickers") { Description = "Tickers from the instrument master, e.g. ERIC-B VOLV-B", Arity = ArgumentArity.OneOrMore };
         var addConfig = ConfigDirOption();
         var store = DataCommands.StoreOption();
-        var add = new Command("add", "Add instruments by ticker, looked up offline in the instrument master (run 'qa history import <TICKER>' first). SEK only in v1.");
+        var add = new Command("add", "Add instruments by ticker, looked up offline in the instrument master (run 'qa history import <TICKER>' first). SEK only in v1; at most 5 names (a Paper session streams them all).");
         add.Arguments.Add(addTickers);
         add.Options.Add(addConfig);
         add.Options.Add(store);
@@ -98,15 +98,8 @@ internal static partial class TradingCommands
             using HistoryStore history = DataCommands.OpenExisting(parse.GetValue(store)!);
             foreach (string ticker in parse.GetValue(addTickers)!)
             {
-                StoredInstrument found = DataCommands.FindInstrument(history, ticker, null, null);
-                InstrumentRecord r = found.Instrument;
-                if (!string.Equals(r.Currency, OrderPreparationCurrency, StringComparison.Ordinal))
-                {
-                    throw new ArgumentException($"{r.Ticker} trades in {r.Currency}; v1 trades SEK instruments only.");
-                }
-
-                u = u.With(new UniverseEntry(r.OrderbookId, r.Ticker, r.Name));
-                w.WriteLine($"added {r.Ticker} ({r.OrderbookId}, {r.Name})");
+                (u, UniverseEntry entry) = Allowlist.Add(u, history, ticker);
+                w.WriteLine($"added {entry.Ticker} ({entry.OrderbookId}, {entry.Name})");
             }
 
             u.Save(path);
@@ -141,8 +134,6 @@ internal static partial class TradingCommands
         command.Subcommands.Add(remove);
         return command;
     }
-
-    private const string OrderPreparationCurrency = Trading.Pipeline.OrderPreparation.Currency;
 
     private static bool SameTicker(string a, string b) =>
         string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);

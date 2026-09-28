@@ -180,15 +180,65 @@ internal static partial class AvanzaMapper
             now);
     }
 
+    /// <summary>
+    /// Search hits. The title carries the ticker in its last parentheses ("Ericsson B (ERIC B)", live 2026-09-25); the
+    /// name is the title without them. The sector is the level-1 entry of <c>stockSectors</c> (Go SDK <c>StockSector</c>).
+    /// </summary>
     public static IReadOnlyList<InstrumentSearchHit> ToSearchHits(SearchResponseDto dto) =>
-        [.. dto.Hits.Select(h => new InstrumentSearchHit(
-            new OrderbookId(h.OrderBookId),
-            h.Title,
-            h.Type ?? string.Empty,
-            h.MarketPlaceName ?? string.Empty,
-            h.Tradeable ?? false,
-            ParseLooseDecimal(h.Price?.Last),
-            h.Price?.Currency))];
+        [.. dto.Hits.Select(h =>
+        {
+            (string name, string? ticker) = SplitTitle(h.Title);
+            return new InstrumentSearchHit(
+                new OrderbookId(h.OrderBookId),
+                name,
+                h.Type ?? string.Empty,
+                h.MarketPlaceName ?? string.Empty,
+                h.Tradeable ?? false,
+                ParseLooseDecimal(h.Price?.Last),
+                h.Price?.Currency)
+            {
+                Ticker = ticker,
+                FlagCode = h.FlagCode,
+                TodayChangePercent = ParseLooseDecimal(h.Price?.TodayChangePercent),
+                Sector = TopSector(h.StockSectors),
+            };
+        })];
+
+    /// <summary>"Ericsson B (ERIC B)" → ("Ericsson B", "ERIC B"); a title without a trailing "(…)" has no ticker.</summary>
+    internal static (string Name, string? Ticker) SplitTitle(string title)
+    {
+        string t = title.Trim();
+        int open = t.LastIndexOf('(');
+        if (!t.EndsWith(')') || open <= 0)
+        {
+            return (t, null);
+        }
+
+        string ticker = t[(open + 1)..^1].Trim();
+        return ticker.Length == 0 ? (t, null) : (t[..open].TrimEnd(), ticker);
+    }
+
+    /// <summary>The English name of the level-1 sector, or null when the hit has none (or an unexpected shape).</summary>
+    private static string? TopSector(JsonElement? sectors)
+    {
+        if (sectors is not { ValueKind: JsonValueKind.Array } list)
+        {
+            return null;
+        }
+
+        foreach (JsonElement s in list.EnumerateArray())
+        {
+            if (s.ValueKind == JsonValueKind.Object
+                && s.TryGetProperty("level", out JsonElement level) && level.ValueKind == JsonValueKind.Number
+                && level.TryGetInt32(out int depth) && depth == 1
+                && s.TryGetProperty("englishName", out JsonElement name) && name.ValueKind == JsonValueKind.String)
+            {
+                return name.GetString();
+            }
+        }
+
+        return null;
+    }
 
     public static IReadOnlyList<Bar> ToBars(PriceChartDto dto)
     {

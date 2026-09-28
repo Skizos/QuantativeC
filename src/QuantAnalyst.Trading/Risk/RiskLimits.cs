@@ -47,6 +47,9 @@ public sealed record RiskLimits(
     /// <summary>The value the limits are sized on (R6–R8, R19) and the plan invests: the account's value, at most the cap.</summary>
     public decimal SizingValue(decimal accountValue) => Math.Min(accountValue, MaxAccountValueSek);
 
+    /// <summary>R6's limit for one order: the smaller of the fixed SEK limit and the share of the (capped) account value.</summary>
+    public decimal MaxOrderValue(decimal accountValue) => Math.Min(MaxOrderValueSek, MaxOrderValuePctOfAccount * SizingValue(accountValue));
+
     /// <summary>Whether the account cap lowers the sizing of an account of this value.</summary>
     public bool Capped(decimal accountValue) => accountValue > MaxAccountValueSek;
 

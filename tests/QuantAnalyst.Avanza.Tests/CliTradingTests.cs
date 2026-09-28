@@ -89,6 +89,26 @@ public sealed class CliTradingTests : IDisposable
     }
 
     [Fact]
+    public void Universe_RefusesASixthName_ThePaperSessionCouldNotStreamIt()
+    {
+        string file = Path.Combine(Config, Trading.Risk.Universe.FileName);
+        new Trading.Risk.Universe(Enumerable.Range(1, 5).Select(i => new Trading.Risk.UniverseEntry(new Core.OrderbookId($"{i}"), $"T{i}", $"Name {i}"))).Save(file);
+        Assert.Equal(0, Qa("history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store,
+            "--state-dir", State, "--login", "totp").Code);
+
+        (int code, _, string error) = Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store);
+        Assert.Equal(1, code);
+        Assert.Contains("already has 5 names, the most a Paper session can stream (5). Remove one first.", error, StringComparison.Ordinal);
+        Assert.Equal(5, Trading.Risk.Universe.Load(file).Entries.Count);
+
+        // A name already on the list may be added again (nothing changes).
+        Assert.Equal(0, Qa("universe", "remove", "T1", "--config-dir", Config).Code);
+        Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
+        Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
+        Assert.Equal(5, Trading.Risk.Universe.Load(file).Entries.Count);
+    }
+
+    [Fact]
     public void RiskLimits_AreSizedForThePaperAccount()
     {
         (int code, string output, string error) = Qa("risk-limits", "--config-dir", Config);

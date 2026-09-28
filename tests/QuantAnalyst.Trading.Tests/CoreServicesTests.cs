@@ -186,6 +186,16 @@ public sealed class TradingConfigTests
     }
 
     [Fact]
+    public void MaxOrderValue_IsR6sLimit_TheSmallerOfTheFixedCapAndTheShareOfTheSizingValue()
+    {
+        RiskLimits capped = RiskLimits.AdrDefaults with { MaxOrderValueSek = 10_000m, MaxOrderValuePctOfAccount = 0.10m, MaxAccountValueSek = 5_000m };
+        Assert.Equal(500m, capped.MaxOrderValue(45_000m)); // 10 % of the 5 000 cap, not of the paper cash
+        Assert.Equal(300m, capped.MaxOrderValue(3_000m));
+        Assert.Equal(2_000m, (capped with { MaxAccountValueSek = decimal.MaxValue }).MaxOrderValue(20_000m));
+        Assert.Equal(10_000m, (capped with { MaxAccountValueSek = decimal.MaxValue }).MaxOrderValue(1_000_000m));
+    }
+
+    [Fact]
     public void Universe_RoundTrips_RejectsDuplicates_AndMissingMeansEmpty()
     {
         using var dir = new TempDir();

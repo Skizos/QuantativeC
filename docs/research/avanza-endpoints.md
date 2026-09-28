@@ -15,6 +15,18 @@
 
 Base URL for everything: `https://www.avanza.se`.
 
+**Re-checked 2026-09-28 (share search in the app, `docs/plans/15-share-search.md`):** the Qluxzz commit list still ends
+at `a6a18a9` (2026-09-21). Its [`constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py)
+still has `INSTRUMENT_SEARCH_PATH = "/_api/search/filtered-search"`. The Go SDK's
+[`market/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/types.go)
+`SearchHit` (`type`, `title`, `description`, `flagCode`, `orderBookId`, `urlSlugName`, `tradeable`, `sellable`,
+`buyable`, `price`, `stockSectors`, `fundTags`, `marketPlaceName`, `subType`), `SearchHitPrice` (`last`, `currency`,
+`todayChangePercent`, `todayChangeValue`, `todayChangeDirection`, `threeMonthsAgoChangePercent`,
+`threeMonthsAgoChangeDirection`, `spread`; strings) and `StockSector` (`id`, `level`, `name`, `englishName`) match
+our live recording of 2026-09-25 field for field. The app's search uses the same route and body as `qa history
+import`; it only maps more of the answer: the ticker (in the title's last parentheses, e.g. `Ericsson B (ERIC B)`, as
+recorded live), `flagCode`, `todayChangePercent` and the level-1 sector's `englishName`. No new endpoint.
+
 **Re-checked 2026-09-26 (Phase 7 step 1, pre-trade checks):** still no newer commits (Qluxzz `a6a18a9`, avanza-sdk-go `43f3902`). Qluxzz `constants.py` has **no** validate or preliminary-fee route. The two routes and their shapes were re-read from the Go SDK: [`trading/service.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/service.go) (`ValidateOrder`, `GetPreliminaryFee`: POST, non-200 is an error) and [`trading/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/types.go):
 - **Validate request** (`ValidateOrderRequest`): `isDividendReinvestment`, `requestId` (nullable), `orderRequestParameters`, `price` (number), `volume` (number), `openVolume`, `accountId`, `side` (`BUY`/`SELL`), `orderbookId`, `validUntil`, `metadata`, `condition` (`NORMAL`/`FILL_OR_KILL`), `isin`, `currency`, `marketPlace`.
 - **Validate response** (`ValidateOrderResponse`): `commissionWarning`, `employeeValidation`, `largeInScaleWarning`, `orderValueLimitWarning`, `priceRampingWarning`, `canadaOddLotWarning`, each `{valid: bool}`.
