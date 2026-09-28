@@ -3,6 +3,7 @@ using QuantAnalyst.Avanza;
 using QuantAnalyst.Core;
 using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
+using QuantAnalyst.Core.Market;
 using QuantAnalyst.Trading.Risk;
 
 namespace QuantAnalyst.Cli.Commands;
@@ -23,6 +24,7 @@ internal sealed class MarketSearchSession
 {
     private readonly Channel<Job> _jobs = Channel.CreateUnbounded<Job>(new UnboundedChannelOptions { SingleReader = true });
     private volatile bool _ended;
+    private IFxRateSource? _fx;
 
     /// <summary>Gets how long the login is kept without a request.</summary>
     public TimeSpan IdleTimeout { get; init; } = TimeSpan.FromMinutes(10);
@@ -54,7 +56,8 @@ internal sealed class MarketSearchSession
             string ticker = p.TickerSymbol ?? throw new ArgumentException($"{p.Name} has no ticker at Avanza, so it can't be added.");
             Allowlist.Check(Universe.Load(Path.Combine(configDir, Universe.FileName)), p.OrderbookId, ticker, p.Currency);
             InstrumentImportResult imported = await InstrumentImport.ImportAsync(
-                gateway, p, storePath, configDir, today.AddYears(-InstrumentImport.AppYears), today, ct).ConfigureAwait(false);
+                gateway, _fx ?? throw new InvalidOperationException("The search session has not started."), p, storePath, configDir,
+                today.AddYears(-InstrumentImport.AppYears), today, ct).ConfigureAwait(false);
             UniverseEntry entry = Allowlist.AddAndSave(configDir, storePath, ticker);
             return new AddedShare(entry, imported);
         });
@@ -72,6 +75,8 @@ internal sealed class MarketSearchSession
     /// </summary>
     public async Task<int> RunAsync(AvanzaCliServices services, string stateDirectory, string login)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        _fx = services.FxRates();
         try
         {
             return await AvanzaCommands.QueryAsync(services, stateDirectory, login, async (connection, ct) =>

@@ -161,7 +161,7 @@ internal static class DataCommands
         {
             return body(w);
         }
-        catch (Exception ex) when (ex is HistoryStoreException or CalendarConfigException || IsStoreFailure(ex))
+        catch (Exception ex) when (ex is HistoryStoreException or CalendarConfigException or FxUnavailableException || IsStoreFailure(ex))
         {
             throw new InvalidDataException(StoreFailureMessage(ex), ex);
         }

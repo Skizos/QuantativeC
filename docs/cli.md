@@ -168,7 +168,7 @@ These verbs never talk to Avanza.
 |---|---|
 | `qa history show ERIC-B [--from] [--to] [--as-of <time>] [--json]` | Stored daily bars with their source labels. Avanza history is labelled **NOT survivorship-free, NOT point-in-time**. `--as-of` shows what the store knew at that time: ISO 8601, and without an offset it is read as Stockholm time. |
 | `qa instruments [--as-of <time>] [--json]` | The instrument master: orderbook id, ISIN, ticker, market, currency, trading model and tick table. |
-| `qa calendar [--year 2026] [--date yyyy-MM-dd]` | The Nasdaq Stockholm (XSTO) calendar from `config/market-calendar.XSTO.<year>.json`: closed days, half days, and whether each year has been verified (`verified_on`). |
+| `qa calendar [--market XSTO\|XNYS\|XTSE] [--year 2026] [--date yyyy-MM-dd]` | A market's calendar from `config/market-calendar.<MIC>.<year>.json` (Nasdaq Stockholm unless `--market`; the US and Canadian ones for USD and CAD shares, ADR 0005): closed days, half days in the market's own time (and in Stockholm time for a foreign day), and whether each year has been verified (`verified_on`). |
 
 - **Store:** `data/quant.duckdb` by default (git-ignored). Change it with `--store`.
 - **Calendar files:** read from `./config`, else from next to `qa`. Change the folder with `--config-dir`.
@@ -221,6 +221,7 @@ only. Confirm and Auto cannot start in Phase 6.
 
 | Verb | What it does |
 |---|---|
+| `qa fx import USD [CAD] --from yyyy-MM-dd [--to …]` / `qa fx show USD [--from … --to …]` | FX rates for foreign shares (ADR 0005): the Riksbank's daily fixing, SEK per unit, stored in the history store with the time it became known. Import calls the Riksbank, never Avanza; show is offline. `qa history import` of a USD or CAD share imports its fixings first (from 10 days before its first bar). |
 | `qa universe list` / `qa universe add ERIC-B [VOLV-B …]` / `qa universe remove ERIC-B` | The instrument allowlist (risk check R2), `config/universe.json`, by orderbook id. It starts **empty**, so every order is rejected until you add names. `add` looks the ticker up offline in the instrument master (`qa history import` first). SEK instruments only, and at most 5 names (a Paper session streams each; `add` refuses a 6th). The app's **Find a share** does the import and the add in one click. |
 | `qa risk-limits [--account-value 100000]` | Every limit with its R number, sized for the paper cash (5,000 SEK allows **500 SEK per order** and **1,000 SEK per instrument**) or the value you give. The first row is the **account cap** (`max_account_value_sek`, 5,000 SEK): the limits are sized on the account's value, but never on more than this, so `--account-value 100000` still gives 500 SEK per order. |
 | `qa paper strategy ma-cross --param fast=20 --param slow=100` | Saves the strategy Paper trades in `config/paper.json`, after checking its name and parameters. Without a name it shows the saved one; `--clear` removes it. It notes when the trial ledger has no backtest of exactly that strategy on imported history. |

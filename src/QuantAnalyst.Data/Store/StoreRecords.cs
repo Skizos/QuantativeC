@@ -30,7 +30,8 @@ public sealed record InstrumentRecord(
 {
     /// <summary>
     /// Builds the master row from the broker's orderbook parameters. Nasdaq Stockholm main market (XSTO) trades
-    /// continuously; anything else stays <see cref="TradingModel.Unknown"/> until classified.
+    /// continuously, and so do the US and Canadian shares Avanza offers (ADR 0005: USD and CAD, listed on exchanges with
+    /// continuous trading); anything else stays <see cref="TradingModel.Unknown"/> until classified.
     /// </summary>
     public static InstrumentRecord FromTradingParams(InstrumentTradingParams p) => new(
         p.OrderbookId,
@@ -40,7 +41,7 @@ public sealed record InstrumentRecord(
         p.Currency,
         p.MarketPlace,
         p.InstrumentType,
-        string.Equals(p.MarketPlace, "XSTO", StringComparison.Ordinal) ? TradingModel.Continuous : TradingModel.Unknown,
+        string.Equals(p.MarketPlace, "XSTO", StringComparison.Ordinal) || p.Currency is "USD" or "CAD" ? TradingModel.Continuous : TradingModel.Unknown,
         p.VolumeFactor,
         CanonicalTickTable(p.TickSizes),
         DateOnly.FromDateTime(MarketTime.ToStockholm(p.KnownAtUtc).DateTime));
@@ -66,6 +67,9 @@ public sealed record InstrumentRecord(
 public sealed record StoredInstrument(InstrumentRecord Instrument, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
 
 public sealed record StoredBar(DailyBar Bar, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
+
+/// <summary>One stored FX rate (ADR 0005) and when it became known.</summary>
+public sealed record StoredFxRate(string Currency, FxRate Rate, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
 
 /// <summary>What an append-only write did: rows new to the store, rows that changed (restatements) and unchanged rows.</summary>
 public sealed record WriteCounts(int New, int Restated, int Unchanged);

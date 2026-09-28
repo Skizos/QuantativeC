@@ -74,3 +74,27 @@
   - wrong time zone and unknown market refused
   - the CLI
 
+### Step 2: FX rates (done 2026-09-28)
+
+- **`RiksbankFxSource`** (QuantAnalyst.Data/Fx): `GET https://api.riksbank.se/swea/v1/Observations/SEK<CCY>PMI/{from}/{to}`,
+  keyless, one call per import, a shared HTTP client, 30 s timeout. The answer is read strictly:
+  - an array of `{date, value}`; a null value is a day without a fixing
+  - anything else, a date twice, or a rate outside 1–100 SEK (a per-100 quote) is refused
+  - 204 means no fixing in the range; 429 says to wait a minute
+- **The FX table** `fx_rates` (currency, date, SEK per unit, known_at, source) is added in place; the schema version
+  stays 1. Writes are append-only with restatements, like the bars. `LatestFxRate` gives the last fixing on or before a
+  date.
+- **`FxImporter`:** USD and CAD only. A range of 10 days or more without a fixing means a wrong series and stores
+  nothing.
+- **`qa fx import USD [CAD] --from … [--to …]`, `qa fx show USD`.**
+- **`qa history import` of a USD or CAD share** (and the app's Add) imports the fixings **first**, from 10 days before the
+  first bar, so a share whose rates can't be read stores nothing. USD and CAD shares are stored as continuously traded
+  (their exchanges trade continuously).
+- **Tests (21 new):**
+  - the adapter over a fake handler: series, URL, keyless, sorting, null days, 9 kinds of bad answer, 204, a wrong series
+  - the store: idempotent re-import, restatements invisible before they were known, latest on or before, an old store
+    gaining the table
+  - the CLI: import and show, other currencies refused, an unreachable Riksbank, a US share's history import with its
+    fixings, a failed FX import storing nothing
+- All 1180 tests pass.
+

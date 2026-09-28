@@ -48,6 +48,12 @@ public sealed class HistoryStore : IDisposable
             volume BIGINT NOT NULL, known_at TIMESTAMP NOT NULL, source VARCHAR NOT NULL, source_version VARCHAR NOT NULL,
             PRIMARY KEY (orderbook_id, source, valid_from, known_at))
         """,
+        """
+        CREATE TABLE IF NOT EXISTS fx_rates (
+            currency VARCHAR NOT NULL, valid_from DATE NOT NULL, sek_per_unit DECIMAL(18,6) NOT NULL,
+            known_at TIMESTAMP NOT NULL, source VARCHAR NOT NULL, source_version VARCHAR NOT NULL,
+            PRIMARY KEY (currency, source, valid_from, known_at))
+        """,
     ];
 
     private readonly DuckDBConnection _db;
@@ -203,6 +209,113 @@ public sealed class HistoryStore : IDisposable
         }
 
         return result;
+    }
+
+    // ---- FX rates (ADR 0005) ----
+
+    /// <summary>
+    /// Appends the rates that are new or changed (known at <paramref name="knownAtUtc"/>) in one transaction, like
+    /// <see cref="UpsertDailyBars"/>. The table was added in place (schema version 1 still): an older build ignores it.
+    /// </summary>
+    public WriteCounts UpsertFxRates(string currency, IReadOnlyList<FxRate> rates, DataSourceInfo source, string sourceVersion, DateTimeOffset knownAtUtc)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(currency);
+        ArgumentNullException.ThrowIfNull(rates);
+        RequireRegistered(source);
+        if (rates.Count == 0)
+        {
+            return new WriteCounts(0, 0, 0);
+        }
+
+        foreach (FxRate r in rates)
+        {
+            if (r.SekPerUnit <= 0m)
+            {
+                throw new ArgumentException($"{currency} {r.Date:yyyy-MM-dd}: the rate must be positive.", nameof(rates));
+            }
+
+            Validate(r.SekPerUnit, $"{currency} {r.Date:yyyy-MM-dd} rate");
+        }
+
+        if (rates.Select(r => r.Date).Distinct().Count() != rates.Count)
+        {
+            throw new ArgumentException("The same date appears twice in one write.", nameof(rates));
+        }
+
+        DateTime knownAt = ToStoredTime(knownAtUtc);
+        Dictionary<DateOnly, decimal> latest = GetFxRates(currency, source.Name, rates.Min(r => r.Date), rates.Max(r => r.Date))
+            .ToDictionary(s => s.Rate.Date, s => s.Rate.SekPerUnit);
+        int added = 0, restated = 0, unchanged = 0;
+        using DbTransaction tx = _db.BeginTransaction();
+        using (DuckDBAppender appender = _db.CreateAppender("fx_rates"))
+        {
+            foreach (FxRate r in rates)
+            {
+                if (latest.TryGetValue(r.Date, out decimal known))
+                {
+                    if (known == Normalize(r.SekPerUnit))
+                    {
+                        unchanged++;
+                        continue;
+                    }
+
+                    restated++;
+                }
+                else
+                {
+                    added++;
+                }
+
+                appender.CreateRow()
+                    .AppendValue(currency).AppendValue(r.Date).AppendValue(r.SekPerUnit)
+                    .AppendValue(knownAt).AppendValue(source.Name).AppendValue(sourceVersion)
+                    .EndRow();
+            }
+        }
+
+        tx.Commit();
+        return new WriteCounts(added, restated, unchanged);
+    }
+
+    /// <summary>One currency's rates from one source, as known at <paramref name="asOfUtc"/> (default: latest), ordered by date.</summary>
+    public IReadOnlyList<StoredFxRate> GetFxRates(string currency, string source, DateOnly? from = null, DateOnly? to = null, DateTimeOffset? asOfUtc = null)
+    {
+        using DuckDBCommand cmd = Command(
+            """
+            SELECT valid_from, sek_per_unit, known_at, source, source_version
+            FROM fx_rates
+            WHERE currency = $ccy AND source = $source AND valid_from BETWEEN $from AND $to AND known_at <= $asof
+            QUALIFY row_number() OVER (PARTITION BY valid_from ORDER BY known_at DESC) = 1
+            ORDER BY valid_from
+            """,
+            ("ccy", currency), ("source", source), ("from", from ?? DateOnly.MinValue), ("to", to ?? DateOnly.MaxValue), ("asof", AsOf(asOfUtc)));
+        using DbDataReader r = cmd.ExecuteReader();
+        var result = new List<StoredFxRate>();
+        while (r.Read())
+        {
+            result.Add(new StoredFxRate(currency, new FxRate(r.GetFieldValue<DateOnly>(0), Normalize(r.GetDecimal(1))), FromStoredTime(r.GetDateTime(2)), r.GetString(3), r.GetString(4)));
+        }
+
+        return result;
+    }
+
+    /// <summary>The latest rate dated on or before <paramref name="date"/>, or null when there is none.</summary>
+    public StoredFxRate? LatestFxRate(string currency, string source, DateOnly date, DateTimeOffset? asOfUtc = null)
+    {
+        using DuckDBCommand cmd = Command(
+            """
+            SELECT valid_from, sek_per_unit, known_at, source, source_version
+            FROM fx_rates
+            WHERE currency = $ccy AND source = $source AND valid_from <= $date AND known_at <= $asof
+            QUALIFY row_number() OVER (PARTITION BY valid_from ORDER BY known_at DESC) = 1
+            ORDER BY valid_from DESC
+            LIMIT 1
+            """,
+            ("ccy", currency), ("source", source), ("date", date), ("asof", AsOf(asOfUtc)));
+        using DbDataReader r = cmd.ExecuteReader();
+        return r.Read()
+            ? new StoredFxRate(currency, new FxRate(r.GetFieldValue<DateOnly>(0), Normalize(r.GetDecimal(1))), FromStoredTime(r.GetDateTime(2)), r.GetString(3), r.GetString(4))
+            : null;
     }
 
     // ---- instrument master ----

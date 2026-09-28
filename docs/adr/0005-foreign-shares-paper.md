@@ -86,7 +86,7 @@ Recorded as:
 - A day is still one Stockholm date; the gate counts it once.
 - **Unverified until the first evening session:** whether Avanza streams live (not delayed) quotes for US and Canadian
   shares. With delayed quotes, R15 (fresh market data) rejects the orders, and the report shows it.
-- The price store gains an FX table (a new store schema version, migrated in place).
+- The price store gains an FX table, added in place: the schema version is unchanged, and an older build ignores it.
 
 ## Open items
 

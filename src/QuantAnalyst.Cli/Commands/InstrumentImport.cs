@@ -3,6 +3,7 @@ using QuantAnalyst.Core;
 using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.Fx;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Store;
 using QuantAnalyst.Trading.Pipeline;
@@ -10,8 +11,8 @@ using QuantAnalyst.Trading.Risk;
 
 namespace QuantAnalyst.Cli.Commands;
 
-/// <summary>What one import stored: the instrument (and whether it was new) and the daily bars.</summary>
-internal sealed record InstrumentImportResult(InstrumentTradingParams Params, WriteCounts Instrument, ImportReport Report, string? CalendarNote);
+/// <summary>What one import stored: the instrument (and whether it was new), the daily bars, and a foreign share's FX fixings.</summary>
+internal sealed record InstrumentImportResult(InstrumentTradingParams Params, WriteCounts Instrument, ImportReport Report, string? CalendarNote, FxImportReport? Fx = null);
 
 /// <summary>
 /// Imports one instrument's daily bars from Avanza's price chart (read-only) and updates the instrument master. The one
@@ -23,10 +24,18 @@ internal static class InstrumentImport
     /// <summary>How many years the app imports when a share is added from the search (like the names you have).</summary>
     public const int AppYears = 3;
 
+    /// <summary>How far before the first bar a foreign share's FX fixings start, so its first day has a rate.</summary>
+    public const int FxLeadDays = 10;
+
+    /// <param name="fx">
+    /// Where a USD or CAD share's FX fixings come from (ADR 0005). They are imported first, so a share whose rates can't
+    /// be read stores nothing.
+    /// </param>
     public static async Task<InstrumentImportResult> ImportAsync(
-        IBrokerGateway gateway, InstrumentTradingParams instrument, string storePath, string? configDir, DateOnly from, DateOnly to, CancellationToken ct)
+        IBrokerGateway gateway, IFxRateSource fx, InstrumentTradingParams instrument, string storePath, string? configDir, DateOnly from, DateOnly to, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(gateway);
+        ArgumentNullException.ThrowIfNull(fx);
         ArgumentNullException.ThrowIfNull(instrument);
         if (from > to)
         {
@@ -35,12 +44,15 @@ internal static class InstrumentImport
 
         MarketCalendar? calendar = DataCommands.TryLoadCalendar(configDir, out string? calendarNote);
         using HistoryStore history = HistoryStore.Open(storePath);
+        FxImportReport? fxReport = Markets.ForCurrency(instrument.Currency) is not null && Markets.IsForeign(instrument.Currency)
+            ? await FxImporter.ImportAsync(history, fx, instrument.Currency, from.AddDays(-FxLeadDays), to, TimeProvider.System, ct).ConfigureAwait(false)
+            : null;
         WriteCounts written = history.UpsertInstrument(
             InstrumentRecord.FromTradingParams(instrument), "avanza-orderbook", AvanzaConnection.OrderbookSourceVersion, instrument.KnownAtUtc);
         var provider = new AvanzaChartImporter(gateway, TimeProvider.System, AvanzaConnection.PriceChartSourceVersion);
         ImportReport report = await new HistoryImporter(history, TimeProvider.System, calendar)
             .ImportAsync(provider, instrument.OrderbookId, from, to, ct).ConfigureAwait(false);
-        return new InstrumentImportResult(instrument, written, report, calendarNote);
+        return new InstrumentImportResult(instrument, written, report, calendarNote, fxReport);
     }
 }
 

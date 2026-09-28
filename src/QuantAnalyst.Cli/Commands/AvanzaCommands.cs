@@ -65,6 +65,9 @@ internal sealed record AvanzaCliServices(
     /// </summary>
     internal Func<AvanzaConnection, IBrokerOrderChannel> OrderChannel { get; init; } = connection => connection.CreateOrderChannel();
 
+    /// <summary>Gets where FX rates come from (ADR 0005): the Riksbank's daily fixing. Tests pass a fake.</summary>
+    public Func<IFxRateSource> FxRates { get; init; } = () => Data.Fx.RiksbankFxSource.Shared;
+
     public static AvanzaCliServices Default { get; } = new(
         (options, secrets, prompt, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor, prompt),
         CreateSecretStore);

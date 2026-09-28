@@ -67,7 +67,7 @@ internal static partial class AvanzaCommands
 
             string storePath = parse.GetValue(store)!;
             InstrumentImportResult result = await InstrumentImport.ImportAsync(
-                ctx.Connection.Gateway, p, storePath, parse.GetValue(configDir), fromDate, toDate, ctx.Ct).ConfigureAwait(false);
+                ctx.Connection.Gateway, services.FxRates(), p, storePath, parse.GetValue(configDir), fromDate, toDate, ctx.Ct).ConfigureAwait(false);
             WriteCounts instrument = result.Instrument;
             ImportReport report = result.Report;
 
@@ -81,6 +81,11 @@ internal static partial class AvanzaCommands
             if (result.CalendarNote is not null)
             {
                 output.WriteLine(result.CalendarNote);
+            }
+
+            if (result.Fx is { } fx)
+            {
+                output.WriteLine($"FX fixings (ADR 0005): {FxCommands.Describe(fx)} Source: {fx.Source.Label}.");
             }
 
             foreach (string warning in report.Warnings)
