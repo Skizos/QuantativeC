@@ -269,6 +269,11 @@ says whether an intraday strategy is worth trying on paper. What you do:
    `holdout.json`). Every run is logged, mine too, and counts against the result (Deflated Sharpe, PBO). A few weeks
    of data prove nothing, so read these runs as a check that it works, not as a verdict. The verdict is the go/no-go
    report after about six months.
+5. **After about six months (120 trading days before the holdout):** `.\qa intraday report`. Each line of its bar
+   says PASS, FAIL or WAIT, and the verdict is one of NOT YET, NO-GO, PASSES SO FAR (the holdout still locked) or GO.
+   Only when everything else passes, unlock `config/holdout.intraday.json` (set `locked` to false and fill in who,
+   when and why) and run the report once more: it then checks the chosen range on the held-out days. A GO means
+   Phase B (trading it on paper) may be built; that decision is yours.
 
 ## 4. What the numbers mean
 

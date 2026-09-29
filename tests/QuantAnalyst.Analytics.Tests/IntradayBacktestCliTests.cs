@@ -212,6 +212,57 @@ public sealed class IntradayBacktestCliTests : IDisposable
     }
 
     [Fact]
+    public void TheReport_RunsItsFiveRuns_BeforeTheHoldout_AndSaysNotYet()
+    {
+        (int code, string output, string error) = Qa("intraday", "report");
+
+        Assert.True(code == 0, error + output);
+        Assert.Contains("Intraday go/no-go report (plan 17 step A6, ADR 0006)", output, StringComparison.Ordinal);
+        Assert.Contains("Data read up to 2026-10-07", output, StringComparison.Ordinal);
+        Assert.Contains("Candidate: orb-long range=", output, StringComparison.Ordinal);
+        Assert.Contains("Per trade at Mini: 5 round trips on 5 days", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("NaN", output, StringComparison.Ordinal);
+        Assert.Contains("Free trades: 2.0 trades a day use 500 in about 250 trading days", output, StringComparison.Ordinal);
+        Assert.Contains("WAIT  at least 120 trading days", output, StringComparison.Ordinal);
+        Assert.Contains("WAIT  holds on the holdout", output, StringComparison.Ordinal);
+        Assert.Contains("Verdict: NOT YET", output, StringComparison.Ordinal);
+
+        TrialRecord[] logged = [.. new TrialLedger(Ledger).ReadAll()];
+        Assert.Equal(["orb-long", "orb-long", "orb-long", "late-momentum", "open-close"], logged.Select(t => t.Strategy));
+        Assert.DoesNotContain(logged, t => t.HoldoutTouched || t.To >= new DateOnly(2026, 10, 8));
+
+        (code, output, error) = Qa("intraday", "report", "--json");
+        Assert.True(code == 0, error);
+        using var json = System.Text.Json.JsonDocument.Parse(output);
+        Assert.StartsWith("NOT YET", json.RootElement.GetProperty("verdict").GetString(), StringComparison.Ordinal);
+        Assert.Equal(6, json.RootElement.GetProperty("criteria").GetArrayLength());
+    }
+
+    [Fact]
+    public void TheReport_WithTheHoldoutUnlocked_ChoosesWithoutIt_ThenChecksTheChoiceOnIt()
+    {
+        WriteIntradayHoldout(days: 3, locked: false);
+        (int code, string output, string error) = Qa("intraday", "report");
+
+        Assert.True(code == 0, error + output);
+        Assert.Contains("The intraday holdout from 2026-10-08 is unlocked", output, StringComparison.Ordinal);
+        Assert.Contains("Holdout (3 days)", output, StringComparison.Ordinal);
+        TrialRecord[] logged = [.. new TrialLedger(Ledger).ReadAll()];
+        Assert.Equal([false, false, false, false, false, true, true], logged.Select(t => t.HoldoutTouched));
+        Assert.All(logged.Take(5), t => Assert.Equal(new DateOnly(2026, 10, 7), t.To)); // chosen without the holdout
+    }
+
+    [Fact]
+    public void TheReport_NeedsMoreDaysThanTheHoldout()
+    {
+        WriteIntradayHoldout(days: 8, locked: false);
+        (int code, _, string error) = Qa("intraday", "report");
+
+        Assert.Equal(1, code);
+        Assert.Contains("8 trading day(s) of 5-minute bars are collected; the report chooses on the days before the last 8", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TheHoldoutRule_CountsBackFromTheNewestCollectedDay()
     {
         var rule = new IntradayHoldout(true, 3, "h.json");

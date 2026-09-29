@@ -159,6 +159,18 @@ public sealed class IntradayStrategyTests
     }
 
     [Fact]
+    public void APosition_IsEnteredAndLeftWhole_NeverResizedAsItsPriceMoves()
+    {
+        // 9 shares at 100; the price then climbs 0.2 a bar to about 117, so 10 % of equity would be 8 shares, then 7.
+        // The daily no-trade band would sell a share each time; intraday, the position stays as it was bought.
+        MarketPanel data = Panel([Monday], (_, _, k) => k >= K(9, 10) ? 100 + (0.2 * (k - K(9, 10))) : 100);
+        BacktestResult r = Run(data, "open-close", ("weight", "0.1"));
+
+        Assert.True(r.Ok, r.Record.Note);
+        Assert.Equal(["03-03 09:10 buy A 9", "03-03 17:10 sell A 9"], Fills(r, data));
+    }
+
+    [Fact]
     public void OnAHalfDay_TheExitFollowsTheEarlyClose()
     {
         MarketPanel data = Panel([HalfDay], (_, _, k) => k >= K(10, 0) ? 101 : 100);

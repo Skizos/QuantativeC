@@ -24,6 +24,7 @@ internal static partial class AvanzaCommands
         command.Subcommands.Add(IntradayImport(services));
         command.Subcommands.Add(IntradayResearch(services));
         command.Subcommands.Add(IntradayBacktestCommands.Backtest());
+        command.Subcommands.Add(IntradayBacktestCommands.Report());
         return command;
     }
 

@@ -1,6 +1,7 @@
 # 17 — An intraday strategy (research first, then paper)
 
-- **Status:** Phase A started 2026-09-29. Planned the same day at the owner's request: "yes plan an intraday strategy"
+- **Status:** Phase A built 2026-09-29 (A1–A6). The go/no-go now waits for about six months of collected bars; Phase B
+  is not started. Planned the same day at the owner's request: "yes plan an intraday strategy"
   (after asking whether the current model can place orders through the day without a decision: it can't; it decides
   once a day per market).
 - **Decisions:** ADR 0006, accepted 2026-09-29: "go with your recommendations, start phase A". D1–D7 below are the
@@ -324,3 +325,59 @@ the screen all day.
     - a daily strategy refused
     - the holdout rule
 - All 1285 managed tests pass (1 skipped); the hook tests pass.
+
+### A6: the go/no-go report (done 2026-09-29; Phase A is built, the verdict waits for the data)
+
+- **`qa intraday report`** runs a fixed set of runs on the days before the intraday holdout, every one logged:
+  - `orb-long` with range 5, 15 and 30 (the plan's grid, the rest at the defaults)
+  - `late-momentum` and `open-close`
+  - all at the configured costs: Start and its free trades by default
+- **The candidate** is the range with the best daily Sharpe. For it the report shows:
+  - its Deflated Sharpe over the whole study (every orb-long run on the same names, days and bars, earlier ones too)
+  - the grid's PBO on daily returns
+  - a walk-forward: choose the range on all days before (at least 60), trade the next 20
+  - how long the 500 free trades last at its pace
+- **"At Mini"** (`BacktestRunner.Recost`):
+  - the same fills, each Swedish one paying Mini's courtage instead of what the run charged
+  - nothing is run again, so no trial is added and the study is not padded with near-copies
+  - approximation (stated): sizes and the engine's cash check stay as they were
+- **Per trade:**
+  - round trips per share and day, net of Mini's courtage (the fill prices already carry the spread and slippage)
+  - the mean, the share won, and a t-statistic with standard errors clustered by day (CR1)
+- **The bar**, each line PASS, FAIL or WAIT:
+  - at least 120 days before the holdout (WAIT until then)
+  - Deflated Sharpe ≥ 0.95
+  - PBO ≤ 0.2 (WAIT under 40 days)
+  - net per trade > 0 at Mini
+  - beats `open-close` at Mini (daily Sharpe)
+  - holds on the holdout: WAIT while it is locked. Once the owner unlocks it, the candidate (chosen without those
+    days) and `open-close` run on the held-out days only (marked in the ledger), and it holds when its return at Mini
+    is positive and above open-close's.
+- **The verdict:**
+  - NOT YET while there are too few days
+  - NO-GO on any FAIL
+  - PASSES SO FAR while the holdout waits
+  - GO: Phase B may be built; the owner decides
+- **The report never chooses on the holdout's days**, locked or not. With no more days than the holdout, it stops and
+  says so. `--json` gives the numbers, with a non-finite value (a Sharpe without trades) as null.
+- **Found while building it:** the runner resized an open intraday position whenever the price drift made a 1-share
+  change reach the 10 % no-trade band (about 10 shares at 500 kr). That meant extra trades, extra courtage and free
+  trades used up. An intraday position is now entered and left whole; a missed entry is still retried, since the
+  position is then zero. Daily bars are unchanged.
+- **Tests (11 new):**
+  - on hand-made bars (a real breakout edge on one share, a falling second share):
+    - every criterion passing, the holdout too, with seven runs logged and only the two holdout runs touching it
+    - the holdout locked: PASSES SO FAR and never read
+    - too few days: NOT YET
+    - no edge: NO-GO on the per-trade line
+    - re-costing (at Mini, at its own class, and after an allowance ran out, which changes no trade)
+    - one round trip by hand
+    - a position never resized
+  - the CLI: the report's five runs before the holdout, text and JSON; the unlocked holdout checked; too few days
+- All 1295 managed tests pass (1 skipped).
+- **What remains is data and the owner:**
+  - about six months of collection (`qa paper run` or `qa intraday import` each trading day)
+  - the probe
+  - the research list
+  - verifying the Start allowance and the calendar
+  - then the report, and unlocking the holdout for its last line

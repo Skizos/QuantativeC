@@ -94,6 +94,13 @@ public sealed record BacktestResult(
 /// <summary>One fill and the bar it happened on.</summary>
 public readonly record struct TimedFill(int Bar, BacktestFill Fill);
 
+/// <summary>A run's trades at another courtage class (<see cref="BacktestRunner.Recost"/>).</summary>
+/// <param name="Costs">The class the trades were priced at.</param>
+/// <param name="Equity">The equity after each bar.</param>
+/// <param name="DailyReturns">One return per trading day (per bar for daily bars).</param>
+/// <param name="Courtage">All courtage paid, SEK.</param>
+public sealed record RecostedRun(CostModel Costs, IReadOnlyList<double> Equity, IReadOnlyList<double> DailyReturns, double Courtage);
+
 /// <summary>
 /// Runs a strategy through the native engine bar by bar and logs the evaluation to the TrialLedger, whatever the
 /// outcome (docs/plans/05-phase5-backtesting.md). Guards, in order:
@@ -275,17 +282,35 @@ public static class BacktestRunner
     /// </summary>
     private static Simulation ApplyFreeTrades(BacktestRequest request, Simulation sim, List<string> notes)
     {
-        if (request.Costs.FreeTrades is not { } allowance || sim.Fills.Count == 0)
+        if (request.Costs.FreeTrades is not { } allowance
+            || AllowanceCourtageAt(request, sim.Fills, sim.Equity.Length) is not { } owed)
         {
             return sim;
         }
 
+        double[] equity = Subtract(sim.Equity, owed.ExtraAt);
+        notes.Add(string.Create(CultureInfo.InvariantCulture,
+            $"{request.Costs.DisplayName ?? request.Costs.Name}'s {allowance.Trades} free trades per {allowance.Months} months ran out on {owed.RanOut:yyyy-MM-dd}; later trades paid {allowance.Then.DisplayName ?? allowance.Then.Name}'s courtage ({owed.Total:N2} SEK{(allowance.VerifiedOn is null ? ", allowance UNVERIFIED" : string.Empty)})"));
+        return sim with { Equity = equity, AllowanceCourtage = owed.Total };
+    }
+
+    /// <summary>
+    /// The courtage owed past a class's free trades, per bar, or null when the allowance never ran out (or the class has
+    /// none): Swedish trades only, counted in a rolling window of the allowance's months.
+    /// </summary>
+    private static (double[] ExtraAt, double Total, DateOnly RanOut)? AllowanceCourtageAt(BacktestRequest request, IReadOnlyList<TimedFill> fills, int bars)
+    {
+        if (request.Costs.FreeTrades is not { } allowance || fills.Count == 0)
+        {
+            return null;
+        }
+
         MarketPanel data = request.Data;
         var counted = new Queue<DateOnly>();
-        var extraAt = new double[sim.Equity.Length];
+        var extraAt = new double[bars];
         double extra = 0;
         DateOnly? ranOut = null;
-        foreach (TimedFill f in sim.Fills)
+        foreach (TimedFill f in fills)
         {
             if (data.Instruments[f.Fill.Instrument].ForeignCurrency)
             {
@@ -313,22 +338,62 @@ public static class BacktestRunner
             counted.Enqueue(day);
         }
 
-        if (ranOut is null)
-        {
-            return sim;
-        }
+        return ranOut is { } d ? (extraAt, extra, d) : null;
+    }
 
-        var equity = (double[])sim.Equity.Clone();
+    /// <summary>The equity with each bar's extra cost taken off from that bar on.</summary>
+    private static double[] Subtract(double[] equity, double[] extraAt)
+    {
+        var result = new double[equity.Length];
         double running = 0;
-        for (int t = 0; t < equity.Length; t++)
+        for (int t = 0; t < result.Length; t++)
         {
             running += extraAt[t];
-            equity[t] -= running;
+            result[t] = equity[t] - running;
         }
 
-        notes.Add(string.Create(CultureInfo.InvariantCulture,
-            $"{request.Costs.DisplayName ?? request.Costs.Name}'s {allowance.Trades} free trades per {allowance.Months} months ran out on {ranOut:yyyy-MM-dd}; later trades paid {allowance.Then.DisplayName ?? allowance.Then.Name}'s courtage ({extra:N2} SEK{(allowance.VerifiedOn is null ? ", allowance UNVERIFIED" : string.Empty)})"));
-        return sim with { Equity = equity, AllowanceCourtage = extra };
+        return result;
+    }
+
+    /// <summary>
+    /// Plan 17 A6: the same trades at another courtage class ("at Mini"): each Swedish fill pays <paramref name="other"/>'s
+    /// courtage instead of what the run charged (the free class and, past its allowance, the next one's). Nothing is
+    /// run again, so no trial is added; sizes and the engine's cash check stay as they were (an approximation).
+    /// </summary>
+    public static RecostedRun Recost(BacktestRequest request, BacktestResult result, CostModel other)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentNullException.ThrowIfNull(other);
+        if (!result.Ok || result.Equity.Count != request.Data.Periods)
+        {
+            throw new ArgumentException("Only a completed run over the request's data can be re-costed.", nameof(result));
+        }
+
+        // Back to what the engine charged, then the other class on every Swedish fill.
+        double[] engine = [.. result.Equity];
+        if (AllowanceCourtageAt(request, result.Fills, engine.Length) is { } owed)
+        {
+            engine = Subtract(engine, [.. owed.ExtraAt.Select(x => -x)]);
+        }
+
+        var extraAt = new double[engine.Length];
+        double courtage = 0;
+        foreach (TimedFill f in result.Fills)
+        {
+            double paid = f.Fill.Courtage;
+            if (!request.Data.Instruments[f.Fill.Instrument].ForeignCurrency)
+            {
+                paid = (double)other.Courtage((decimal)(f.Fill.Quantity * f.Fill.Price));
+                extraAt[f.Bar] += paid - f.Fill.Courtage;
+            }
+
+            courtage += paid;
+        }
+
+        double[] equity = Subtract(engine, extraAt);
+        double[] daily = request.Data.IsIntraday ? DayEndEquity(request.Data, equity, (double)request.InitialCash) : equity;
+        return new RecostedRun(other, equity, Returns(daily), courtage);
     }
 
     /// <summary>
@@ -404,6 +469,11 @@ public static class BacktestRunner
 
             double value = Math.Abs(delta) * price;
             bool entryOrExit = target == 0 || current == 0;
+            if (!entryOrExit && data.IsIntraday)
+            {
+                continue; // plan 17: an intraday position is entered and left whole, never resized as its price moves
+            }
+
             if ((!entryOrExit && value < execution.RebalanceBand * Math.Max(target, current) * price)
                 || (target != 0 && value < (double)execution.MinTradeValue))
             {

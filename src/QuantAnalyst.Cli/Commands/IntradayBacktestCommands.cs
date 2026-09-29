@@ -18,7 +18,7 @@ namespace QuantAnalyst.Cli.Commands;
 /// bars. Offline; every run is logged to the TrialLedger, whatever its outcome. The intraday holdout
 /// (config/holdout.intraday.json, the last collected days) is never read while locked.
 /// </summary>
-internal static class IntradayBacktestCommands
+internal static partial class IntradayBacktestCommands
 {
     /// <summary>Spread samples a share needs before its own measured spread replaces the cost model's.</summary>
     internal const int MinSpreadSamples = 30;
@@ -59,9 +59,12 @@ internal static class IntradayBacktestCommands
 
         public Option<bool> Json { get; } = new("--json") { Description = "JSON output" };
 
-        public void AddTo(Command command)
+        /// <summary>The report runs a fixed set of strategies up to the holdout, so it takes no strategy, grid or end date.</summary>
+        public void AddTo(Command command, bool report = false)
         {
-            foreach (Option o in new Option[] { Strategy, Param, Grid, Top, Tickers, Resolution, From, To, Costs, Cash, ConfigDir, Store, Ledger, Json })
+            Option[] strategy = report ? [] : [Strategy, Param, Grid, Top];
+            Option[] end = report ? [] : [To];
+            foreach (Option o in (Option[])[.. strategy, Tickers, Resolution, From, .. end, Costs, Cash, ConfigDir, Store, Ledger, Json])
             {
                 command.Options.Add(o);
             }
@@ -78,14 +81,7 @@ internal static class IntradayBacktestCommands
         command.SetAction(parse => BacktestCommands.Execute(parse, w =>
         {
             string configDir = BacktestCommands.ResolveConfigDir(parse.GetValue(o.ConfigDir));
-            ChartResolution resolution = parse.GetValue(o.Resolution) switch
-            {
-                "five_minutes" => ChartResolution.FiveMinutes,
-                "minute" => ChartResolution.Minute,
-                string other => throw new ArgumentException($"--resolution: '{other}' is not five_minutes or minute."),
-                null => ChartResolution.FiveMinutes,
-            };
-
+            ChartResolution resolution = ParseResolution(parse.GetValue(o.Resolution));
             MarketCalendar calendar = LoadCalendar(configDir, out string? calendarNote);
             var clock = new IntradayClock(calendar, IntradayImporter.Length(resolution));
             string name = parse.GetValue(o.Strategy)!;
@@ -98,7 +94,7 @@ internal static class IntradayBacktestCommands
             }
 
             StrategyDefinition[] configurations = [.. BacktestSweep.ExpandGrid(grid, fixedParams).Select(p => IntradayStrategyCatalog.Create(name, p, clock))];
-            BacktestCommands.Setup setup = Prepare(parse, o, configDir, resolution, configurations[0], calendar, calendarNote);
+            BacktestCommands.Setup setup = Prepare(parse, o, configDir, resolution, configurations[0], calendar, calendarNote, report: false, out _);
             bool json = parse.GetValue(o.Json);
             if (grid.Count == 0)
             {
@@ -148,6 +144,13 @@ internal static class IntradayBacktestCommands
         return command;
     }
 
+    private static ChartResolution ParseResolution(string? text) => text switch
+    {
+        "five_minutes" or null => ChartResolution.FiveMinutes,
+        "minute" => ChartResolution.Minute,
+        _ => throw new ArgumentException($"--resolution: '{text}' is not five_minutes or minute."),
+    };
+
     /// <summary>"Trades: 84 fills on 21 trading days (4.0 a day)."</summary>
     private static string Trades(MarketPanel data, BacktestResult result)
     {
@@ -170,7 +173,8 @@ internal static class IntradayBacktestCommands
     }
 
     private static BacktestCommands.Setup Prepare(
-        ParseResult parse, Inputs o, string configDir, ChartResolution resolution, StrategyDefinition strategy, MarketCalendar calendar, string? calendarNote)
+        ParseResult parse, Inputs o, string configDir, ChartResolution resolution, StrategyDefinition strategy, MarketCalendar calendar, string? calendarNote,
+        bool report, out MarketPanel? holdoutData)
     {
         BacktestDefaults defaults = BacktestDefaults.Load(configDir);
         CostModel costs = BacktestCommands.LoadCosts(configDir, parse.GetValue(o.Costs) ?? defaults.Costs);
@@ -203,7 +207,7 @@ internal static class IntradayBacktestCommands
         }
 
         DateOnly? from = DataCommands.ParseDate(parse.GetValue(o.From), "--from");
-        DateOnly? to = DataCommands.ParseDate(parse.GetValue(o.To), "--to");
+        DateOnly? to = report ? null : DataCommands.ParseDate(parse.GetValue(o.To), "--to");
         using HistoryStore store = DataCommands.OpenExisting(storePath);
         string sourceName = AvanzaChartImporter.AvanzaPriceChart.Name;
         IntradayHoldout rule = IntradayHoldout.Load(Path.Combine(configDir, IntradayHoldout.FileName));
@@ -215,12 +219,24 @@ internal static class IntradayBacktestCommands
         }
 
         // The holdout rolls with the collection: the last `days` collected days. Too few days, and all of them are in it.
+        if (report && collected.Count <= rule.Days)
+        {
+            throw new ArgumentException($"{collected.Count} trading day(s) of {bars} bars are collected; the report chooses on the days before the last {rule.Days} (the intraday holdout), so there is nothing to report yet. Keep collecting.");
+        }
+
         HoldoutPolicy holdout = rule.For(collected) ?? (rule.Locked
             ? throw new ArgumentException($"{collected.Count} trading day(s) of {bars} bars are collected; the last {rule.Days} are the locked intraday holdout ({rule.Path}), so nothing can be backtested yet. Keep collecting.")
             : new HoldoutPolicy(false, collected[0], rule.Path));
 
-        DateOnly? readTo = to is null && holdout.Locked ? holdout.Start.AddDays(-1) : to;
-        if (readTo != to)
+        // The report never chooses on the holdout's days, locked or not; it checks the choice on them once unlocked.
+        DateOnly? readTo = to is null && (holdout.Locked || report) ? holdout.Start.AddDays(-1) : to;
+        holdoutData = null;
+        if (report && !holdout.Locked)
+        {
+            holdoutData = LoadPanel(store, names, resolution, calendar, holdout.Start, null, costs, []);
+            notes.Add($"The intraday holdout from {holdout.Start:yyyy-MM-dd} is unlocked ({rule.Path}): the candidate is chosen without it, then checked on it.");
+        }
+        else if (readTo != to)
         {
             notes.Add($"Data read up to {readTo:yyyy-MM-dd}: the intraday holdout, the last {rule.Days} collected days from {holdout.Start:yyyy-MM-dd}, is locked ({rule.Path}).");
         }
