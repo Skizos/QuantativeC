@@ -201,3 +201,37 @@ the screen all day.
 - All 1242 managed tests pass (1 skipped).
 - **Still waiting on the owner's probe:** whether "today" is the only period with minute bars decides whether a
   missed day can be caught up (`--period one_week`).
+
+### A3: the intraday backtest (done 2026-09-29)
+
+- **Native ABI 1.4** (additive, like 1.3; both only before the first step):
+  - `qe_bt_set_fill_mode(backtest, QE_BT_FILL_INTRADAY)`: a limit fills only at its own limit, and only when the
+    bar trades through it (buy: low < limit; sell: high > limit). Prices sit on the tick grid, so "through" is at
+    least one tick; a touch is no fill, and no limit ever fills at a better bar open (a minute bar's open is not an
+    auction). MOO and MOC are unchanged.
+  - `qe_bt_set_half_spread(backtest, instrument, bps)`: a share's own half-spread for market-type fills.
+  - The managed side requires 1.4 (`QeBacktest.SetFillMode`, `SetHalfSpread`, `BacktestFillMode`).
+  - The 1.3 test now reads "minor ≥ 3", and the export check still matches the header.
+- **The panel** (`MarketPanel`) takes intraday bars:
+  - `FromIntradayBars`: bars aligned on their starts, each dated by its Stockholm trading date; `BarStartsUtc`,
+    `IsIntraday`, `IsLastOfDay`, `Label`
+  - a daily panel is unchanged: strictly increasing dates, no times
+- **The strategy's window** gives `Time(t)`, with the same look-ahead guard as every other read.
+- **The runner**, for an intraday panel:
+  - uses the intraday fill mode and each share's measured half-spread
+  - fails a run that holds a position after a day's last bar (ADR 0006 D4), naming the share and the day
+  - computes the statistics on daily P&L: the starting cash, then each day's last equity, so Sharpe, PSR and DSR
+    are per day as for the daily strategies
+  - the truncation replay and the ledger work as before; its message names the bar's time
+- **Tests (16 new):**
+  - native: the version, daily unchanged, the intraday limit at its limit on a trade-through, a touch, market orders
+    with the spread, a share's own spread, bad input and too late
+  - managed: the same through the binding
+  - the panel (alignment, a missing bar, dates, labels, views, refusals)
+  - a day trader flat each evening and judged per day
+  - holding overnight failing the run
+  - an intraday limit at its limit, not at the better open
+  - a measured spread paid (three times the cost at 25 + 5 against 5 + 5 bps)
+  - reading the next bar's time, and an intraday leakage canary caught by the truncation replay
+  - daily bars having no times
+- All 1254 managed and 138 native tests pass (1 skipped).

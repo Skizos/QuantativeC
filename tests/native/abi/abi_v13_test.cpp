@@ -48,12 +48,12 @@ class Abi13 : public ::testing::Test {
 
 } // namespace
 
-TEST(Abi13Version, MinorIsThree) {
+TEST(Abi13Version, MinorIsAtLeastThree) {
     std::int32_t major = 0;
     std::int32_t minor = 0;
     ASSERT_EQ(qe_abi_version(&major, &minor), QE_OK);
     EXPECT_EQ(major, 1);
-    EXPECT_EQ(minor, 3);
+    EXPECT_GE(minor, 3);
 }
 
 TEST_F(Abi13, AForeignShareWithItsOwnCourtage_PaysIt_TheOthersPayTheConfigs) {

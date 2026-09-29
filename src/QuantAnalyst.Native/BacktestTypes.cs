@@ -15,6 +15,16 @@ public enum BacktestOrderType
     MarketOnClose = 2,
 }
 
+/// <summary>How limit orders fill (<c>QE_BT_FILL_*</c>, ABI 1.4).</summary>
+public enum BacktestFillMode
+{
+    /// <summary>The bar's open is the opening auction: a limit marketable there fills at the open (daily bars).</summary>
+    Daily = 0,
+
+    /// <summary>A limit fills only at its limit, on a trade-through; never at a better bar open (bars of minutes).</summary>
+    Intraday = 1,
+}
+
 /// <summary>Backtest order side (<c>QE_BT_BUY</c> / <c>QE_BT_SELL</c>).</summary>
 public enum BacktestSide
 {

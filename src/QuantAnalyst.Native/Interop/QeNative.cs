@@ -115,4 +115,14 @@ internal static unsafe partial class QeNative
     [LibraryImport(LibraryName, EntryPoint = "qe_bt_set_courtage")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial QeStatus BtSetCourtage(QeBacktestHandle backtest, long instrument, double courtageMin, double courtageRate);
+
+    // ---- ABI 1.4: intraday fills and per-instrument spread (plan 17) ----
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_bt_set_fill_mode")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus BtSetFillMode(QeBacktestHandle backtest, int mode);
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_bt_set_half_spread")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus BtSetHalfSpread(QeBacktestHandle backtest, long instrument, double halfSpreadBps);
 }

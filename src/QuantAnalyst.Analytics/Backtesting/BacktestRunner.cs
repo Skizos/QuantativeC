@@ -168,8 +168,19 @@ public static class BacktestRunner
         }
 
         using QeBacktest engine = QeBacktest.Create(request.Costs.ToEngineConfig(request.InitialCash), instruments);
+        if (data.IsIntraday)
+        {
+            // Plan 17: a minute bar's open is not an auction; limits fill at their limit on a trade-through only.
+            engine.SetFillMode(BacktestFillMode.Intraday);
+        }
+
         for (int i = 0; i < n; i++)
         {
+            if (data.Instruments[i].HalfSpreadBps is { } halfSpread)
+            {
+                engine.SetHalfSpread(i, halfSpread); // measured from a session's bid/ask samples
+            }
+
             // ADR 0005: a US or Canadian share pays its market's courtage; the minimum (e.g. 1 USD) in SEK at the last fixing.
             PanelInstrument p = data.Instruments[i];
             if (p.ForeignCurrency && p.LastSekPerUnit is { } fx)
@@ -207,6 +218,11 @@ public static class BacktestRunner
             }
 
             equity[t] = state.Equity;
+            if (data.IsIntraday && data.IsLastOfDay(t))
+            {
+                RequireFlat(data, t, engine, positions);
+            }
+
             if (t == periods - 1)
             {
                 break; // nothing trades after the last bar
@@ -229,6 +245,23 @@ public static class BacktestRunner
         return new Simulation(equity, state, positions, traded, checkpoints);
     }
 
+    /// <summary>
+    /// ADR 0006 D4: an intraday strategy is flat after each day's last bar. A position held overnight is a broken
+    /// strategy, not a result: the run fails with the share and the day.
+    /// </summary>
+    private static void RequireFlat(MarketPanel data, int t, QeBacktest engine, long[] positions)
+    {
+        engine.GetPositions(positions);
+        for (int i = 0; i < positions.Length; i++)
+        {
+            if (positions[i] != 0)
+            {
+                throw new StrategyException(
+                    $"{data.Instruments[i].Symbol}: {positions[i]} share(s) held after the last bar of {data.Dates[t]:yyyy-MM-dd} ({data.Label(t)}); an intraday strategy must be flat by the close (ADR 0006).");
+            }
+        }
+    }
+
     /// <summary>Targets at the close of bar t → day orders for bar t+1 (whole lots; limits rounded passively to the tick).</summary>
     internal static void PlanOrders(
         MarketPanel data, int t, ReadOnlySpan<double> targets, double equity, ReadOnlySpan<long> positions, ExecutionOptions execution, List<BacktestOrder> orders)
@@ -244,7 +277,7 @@ public static class BacktestRunner
 
             if (!double.IsFinite(w) || w < 0)
             {
-                throw new StrategyException($"Target weights must be finite and >= 0 (long-only); got {w} at {data.Dates[t]:yyyy-MM-dd}.");
+                throw new StrategyException($"Target weights must be finite and >= 0 (long-only); got {w} at {data.Label(t)}.");
             }
 
             sum += w;
@@ -252,7 +285,7 @@ public static class BacktestRunner
 
         if (sum > 1 + 1e-9)
         {
-            throw new StrategyException($"Target weights sum to {sum:0.######} > 1 at {data.Dates[t]:yyyy-MM-dd} (no leverage).");
+            throw new StrategyException($"Target weights sum to {sum:0.######} > 1 at {data.Label(t)} (no leverage).");
         }
 
         double investable = Math.Max(0, equity) * (1 - execution.CashBuffer);
@@ -338,7 +371,7 @@ public static class BacktestRunner
                 {
                     return string.Create(
                         CultureInfo.InvariantCulture,
-                        $"look-ahead: the decision at the close of {data.Dates[t]:yyyy-MM-dd} for {data.Instruments[i].Symbol} was {full[i]:R} on the full data but {replay[i]:R} on data ending that day");
+                        $"look-ahead: the decision at the close of {data.Label(t)} for {data.Instruments[i].Symbol} was {full[i]:R} on the full data but {replay[i]:R} on data ending {(data.IsIntraday ? "with that bar" : "that day")}");
                 }
             }
         }
@@ -348,7 +381,9 @@ public static class BacktestRunner
 
     private static TrialMetrics ComputeMetrics(BacktestRequest request, Simulation sim)
     {
-        double[] equity = sim.Equity;
+        // Intraday bars (plan 17): the statistics are on daily P&L, one number per day (its last bar's equity after the
+        // starting cash), so Sharpe, PSR and DSR mean what they mean for the daily strategies.
+        double[] equity = request.Data.IsIntraday ? DayEndEquity(request.Data, sim.Equity, (double)request.InitialCash) : sim.Equity;
         double[] returns = Returns(equity);
         int obs = returns.Length;
         double sharpe = PerformanceStatistics.Sharpe(returns);
@@ -431,6 +466,21 @@ public static class BacktestRunner
         }
 
         return new BacktestResult(record, data.Dates, outcome.Equity, outcome.Returns, outcome.State, outcome.Positions, outcome.Traded);
+    }
+
+    /// <summary>The starting cash, then the equity after each trading day's last bar.</summary>
+    internal static double[] DayEndEquity(MarketPanel data, double[] equity, double initialCash)
+    {
+        var result = new List<double> { initialCash };
+        for (int t = 0; t < data.Periods; t++)
+        {
+            if (data.IsLastOfDay(t))
+            {
+                result.Add(equity[t]);
+            }
+        }
+
+        return [.. result];
     }
 
     private static double[] Returns(double[] equity)

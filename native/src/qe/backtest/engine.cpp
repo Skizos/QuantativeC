@@ -66,6 +66,22 @@ void Engine::set_courtage(std::size_t instrument, double courtage_min, double co
     i.courtage_rate = courtage_rate;
 }
 
+void Engine::set_fill_mode(FillMode mode) {
+    require(!stepped_, "set_fill_mode must come before the first step");
+    require(mode == FillMode::Daily || mode == FillMode::Intraday, "fill mode must be DAILY or INTRADAY");
+    fill_mode_ = mode;
+}
+
+void Engine::set_half_spread(std::size_t instrument, double half_spread_bps) {
+    require(!stepped_, "set_half_spread must come before the first step");
+    require(instrument < instruments_.size(), "instrument out of range");
+    require(std::isfinite(half_spread_bps) && half_spread_bps >= 0.0 && half_spread_bps < 1000.0,
+            "half_spread_bps must be in [0, 1000)");
+    Instrument& i = instruments_[instrument];
+    i.own_spread = true;
+    i.half_spread_bps = half_spread_bps;
+}
+
 double Engine::courtage(const Instrument& instrument, double notional) const noexcept {
     return instrument.own_courtage
                ? std::max(instrument.courtage_min, instrument.courtage_rate * notional)
@@ -121,7 +137,13 @@ bool Engine::try_fill(const Order& order, std::int32_t index, const Bar& bar, Ph
     double reference = 0.0; // price before spread/slippage (market-type fills)
     switch (order.type) {
     case OrderType::Limit:
-        if (phase == Phase::Open) {
+        if (fill_mode_ == FillMode::Intraday) {
+            // No auction and no better open: only a trade through the limit fills, at the limit.
+            if (phase == Phase::Continuous &&
+                (buy ? bar.low < order.limit_price : bar.high > order.limit_price)) {
+                price = order.limit_price;
+            }
+        } else if (phase == Phase::Open) {
             if (buy ? bar.open <= order.limit_price : bar.open >= order.limit_price) {
                 price = bar.open;
             }
@@ -139,7 +161,8 @@ bool Engine::try_fill(const Order& order, std::int32_t index, const Bar& bar, Ph
             (order.type == OrderType::MarketOnOpen) ? phase == Phase::Open : phase == Phase::Close;
         if (mine) {
             reference = order.type == OrderType::MarketOnOpen ? bar.open : bar.close;
-            const double bps = (config_.half_spread_bps + config_.slippage_bps) / 10000.0;
+            const double half_spread = instrument.own_spread ? instrument.half_spread_bps : config_.half_spread_bps;
+            const double bps = (half_spread + config_.slippage_bps) / 10000.0;
             price = reference * (buy ? 1.0 + bps : 1.0 - bps);
         }
         break;
@@ -221,8 +244,8 @@ std::size_t Engine::step(std::span<const Bar> bars, std::span<const Order> order
     std::fill(traded_this_bar_.begin(), traded_this_bar_.end(), 0.0);
     state_.orders += static_cast<std::int64_t>(orders.size());
     // Each order can fill in exactly one phase (a limit marketable at the open cannot also trade
-    // through later, and MOO/MOC belong to their auction), so no order fills twice and the fill
-    // count never exceeds the order count.
+    // through later, an intraday limit fills in the continuous phase only, and MOO/MOC belong to
+    // their auction), so no order fills twice and the fill count never exceeds the order count.
     std::size_t count = 0;
     Fill fill;
     for (Phase phase : {Phase::Open, Phase::Continuous, Phase::Close}) {

@@ -90,6 +90,26 @@ public sealed class QeBacktest : IDisposable
         QeErrors.ThrowIfFailed(QeNative.BtSetCourtage(handle, instrument, courtageMin, courtageRate), "qe_bt_set_courtage");
     }
 
+    /// <summary>
+    /// How limit orders fill (ABI 1.4, plan 17): <see cref="BacktestFillMode.Intraday"/> for bars of minutes, whose open
+    /// is not an auction. Only before the first <see cref="Step"/>; invalid input throws and changes nothing.
+    /// </summary>
+    public void SetFillMode(BacktestFillMode mode)
+    {
+        ObjectDisposedException.ThrowIf(handle.IsClosed, this);
+        QeErrors.ThrowIfFailed(QeNative.BtSetFillMode(handle, (int)mode), "qe_bt_set_fill_mode");
+    }
+
+    /// <summary>
+    /// Gives one instrument its own half-spread in bps for market-type fills, instead of the config's (a measured spread,
+    /// plan 17, ABI 1.4). Only before the first <see cref="Step"/>; invalid input throws and changes nothing.
+    /// </summary>
+    public void SetHalfSpread(int instrument, double halfSpreadBps)
+    {
+        ObjectDisposedException.ThrowIf(handle.IsClosed, this);
+        QeErrors.ThrowIfFailed(QeNative.BtSetHalfSpread(handle, instrument, halfSpreadBps), "qe_bt_set_half_spread");
+    }
+
     /// <summary>Copies the positions (shares per instrument) into <paramref name="positions"/>.</summary>
     public unsafe void GetPositions(Span<long> positions)
     {

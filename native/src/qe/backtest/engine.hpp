@@ -19,6 +19,15 @@ namespace qe::backtest {
 
 enum class OrderType : std::int32_t { Limit = 0, MarketOnOpen = 1, MarketOnClose = 2 };
 
+// How limit orders fill (ABI 1.4, plan 17).
+//   Daily   : the bar's open is the opening auction: a limit marketable there fills at the open;
+//             otherwise it fills at its limit on a trade-through during continuous trading.
+//   Intraday: a bar's open is just its first trade, not an auction: a limit fills only at its own
+//             limit, and only when the bar trades through it (buy: low < limit; sell: high > limit).
+//             Prices sit on the tick grid, so "through" is at least one tick; a touch is no fill,
+//             and a better open is never given.
+enum class FillMode : std::int32_t { Daily = 0, Intraday = 1 };
+
 struct Config {
     double initial_cash{0};
     double courtage_min{0}; // courtage = max(min, rate * notional)
@@ -36,6 +45,9 @@ struct Instrument {
     bool own_courtage{false};
     double courtage_min{0};
     double courtage_rate{0};
+    // ABI 1.4 (plan 17): an instrument's own half-spread for market-type fills (measured, bps).
+    bool own_spread{false};
+    double half_spread_bps{0};
 };
 
 struct Bar {
@@ -82,6 +94,15 @@ class Engine {
     /// qe::InvalidArgument otherwise, or for an index out of range or a negative / non-finite / >= 10 % value.
     void set_courtage(std::size_t instrument, double courtage_min, double courtage_rate);
 
+    /// Sets how limit orders fill (see FillMode). Only before the first step.
+    void set_fill_mode(FillMode mode);
+
+    /// Gives one instrument its own half-spread (bps, [0, 1000)) for MOO/MOC fills instead of the
+    /// config's. Only before the first step.
+    void set_half_spread(std::size_t instrument, double half_spread_bps);
+
+    [[nodiscard]] FillMode fill_mode() const noexcept { return fill_mode_; }
+
     /// Processes one bar. Validates everything first, so a throwing call leaves the state
     /// unchanged. out must hold at least orders.size() fills (an order fills at most once per bar).
     /// Returns the fill count.
@@ -105,6 +126,7 @@ class Engine {
     std::vector<double> last_close_;
     std::vector<double> traded_this_bar_;
     State state_;
+    FillMode fill_mode_{FillMode::Daily};
     bool stepped_{false};
 };
 

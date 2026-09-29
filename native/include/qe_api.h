@@ -40,7 +40,7 @@ extern "C" {
 /* ---- Versioning --------------------------------------------------------------------------- */
 
 #define QE_ABI_MAJOR 1
-#define QE_ABI_MINOR 3 /* 1.1: pricing, risk and portfolio batch APIs; 1.2: backtest engine; 1.3: per-instrument courtage */
+#define QE_ABI_MINOR 4 /* 1.1: pricing, risk and portfolio batch APIs; 1.2: backtest engine; 1.3: per-instrument courtage; 1.4: intraday fills, per-instrument spread */
 
 /* ---- Status codes ------------------------------------------------------------------------- */
 
@@ -475,6 +475,28 @@ QE_API qe_status QE_CALL qe_bt_positions(const qe_backtest* backtest, int64_t* o
  */
 QE_API qe_status QE_CALL qe_bt_set_courtage(qe_backtest* backtest, int64_t instrument,
                                             double courtage_min, double courtage_rate) QE_NOEXCEPT;
+
+/* ---- ABI 1.4: intraday fills and per-instrument spread (plan 17) ----------------------------- */
+
+/* qe_bt_set_fill_mode mode */
+#define QE_BT_FILL_DAILY 0    /* the bar's open is the opening auction (the default) */
+#define QE_BT_FILL_INTRADAY 1 /* a limit fills only at its limit, on a trade-through; never at a better open */
+
+/*
+ * How limit orders fill. QE_BT_FILL_INTRADAY is for bars of minutes, whose open is not an auction:
+ * a buy limit fills at its limit when low < limit, a sell when high > limit (a touch is no fill),
+ * and no limit fills at a better bar open. MOO/MOC are unchanged. Only before the first
+ * qe_bt_step; on failure the backtest is unchanged.
+ */
+QE_API qe_status QE_CALL qe_bt_set_fill_mode(qe_backtest* backtest, int32_t mode) QE_NOEXCEPT;
+
+/*
+ * Gives one instrument its own half-spread in bps, [0, 1000), for MOO/MOC fills instead of the
+ * config's (a measured spread per share). Only before the first qe_bt_step; on failure the
+ * backtest is unchanged.
+ */
+QE_API qe_status QE_CALL qe_bt_set_half_spread(qe_backtest* backtest, int64_t instrument,
+                                               double half_spread_bps) QE_NOEXCEPT;
 
 #ifdef __cplusplus
 } /* extern "C" */
