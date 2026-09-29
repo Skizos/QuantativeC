@@ -230,12 +230,10 @@ public sealed class StatusViewModel : PageViewModel
     {
         try
         {
-            RiskLimits limits = RiskLimits.Load(Path.Combine(_workspace.ConfigDir, RiskLimits.FileName));
-            PaperConfig paper = PaperConfig.Load(Path.Combine(_workspace.ConfigDir, PaperConfig.FileName));
-            MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(_workspace.ConfigDir);
+            // ADR 0005: with US or Canadian shares on the list, each market's decision and the session's end.
+            (TradingSchedule stockholm, IReadOnlyList<TradingSchedule> foreign) = StatusCommand.SessionSchedules(_workspace.ConfigDir, _workspace.Store);
             DateTimeOffset now = _time.GetUtcNow();
-            DateTimeOffset decision = new TradingSchedule(calendar, limits, paper.DecisionTime).NextDecision(now).DecisionUtc;
-            NextSessionText = string.Create(CultureInfo.InvariantCulture, $"{MarketTime.ToStockholm(decision):ddd d MMM} · decides at {MarketTime.ToStockholm(decision):HH:mm}");
+            (NextSessionText, DateTimeOffset decision) = StatusCommand.NextSessionShort(now, stockholm, foreign);
             NextSessionIn = Until(decision - now);
         }
         catch (Exception ex) when (ex is TradingConfigException or CalendarConfigException or IOException or ArgumentException or InvalidOperationException)

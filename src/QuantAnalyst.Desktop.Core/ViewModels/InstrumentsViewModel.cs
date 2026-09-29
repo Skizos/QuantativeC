@@ -704,10 +704,15 @@ public sealed class InstrumentsViewModel : PageViewModel
             bool hasSource = store.GetSource(source) is not null;
             foreach (UniverseEntry e in universe.Entries)
             {
-                IReadOnlyList<StoredBar> bars = hasSource ? store.GetDailyBars(e.OrderbookId, source) : [];
-                result[e.OrderbookId.Value] = bars.Count == 0
+                IReadOnlyList<StoredBar> stored = hasSource ? store.GetDailyBars(e.OrderbookId, source) : [];
+                string bars = stored.Count == 0
                     ? "none yet"
-                    : string.Create(CultureInfo.InvariantCulture, $"{bars.Count} bars to {bars[^1].Bar.Date:yyyy-MM-dd}");
+                    : string.Create(CultureInfo.InvariantCulture, $"{stored.Count} bars to {stored[^1].Bar.Date:yyyy-MM-dd}");
+
+                // ADR 0005: a US or Canadian share says so, and that it trades on paper only.
+                result[e.OrderbookId.Value] = Markets.ForCurrency(store.GetInstrument(e.OrderbookId)?.Instrument.Currency) is { } market && Markets.IsForeign(market.Currency)
+                    ? $"{market.Currency} · {market.Name}, paper only · {bars}"
+                    : bars;
             }
         }
         catch (Exception ex) when (ex is HistoryStoreException or IOException || Cli.Commands.DataCommands.IsStoreFailure(ex))

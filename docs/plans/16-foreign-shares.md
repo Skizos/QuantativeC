@@ -1,6 +1,6 @@
 # 16 — Foreign shares (USD, CAD) on paper
 
-- **Status:** planned 2026-09-28 at the owner's request: "Make it able to use CAD and USD too."
+- **Status:** done 2026-09-29 (steps 1–7), at the owner's request of 2026-09-28: "Make it able to use CAD and USD too."
 - **Decisions:** ADR 0005, taken by the owner on 2026-09-28: one session a day to 22:02, and foreign shares on paper
   only.
 - **Research (CLAUDE.md rules):**
@@ -211,3 +211,25 @@
 - The spy's depth now matches the recorded poll's prices: with two different prices the R5 collar tripped whenever
   the poll landed between the decision and the check (a test harness race, not a product fault).
 - All 1218 managed tests pass (1 skipped).
+
+### Step 7: the app and the guide (done 2026-09-29)
+
+- **One source for the schedules:** `StatusCommand.SessionSchedules` (Stockholm's schedule and one per foreign market on
+  the allowlist, from the store's instruments) feeds `qa status`, the Overview and the Trading page alike.
+- **Overview:** "Mon 28 Sep · decides at 09:10 (XSTO), 15:40 (XNYS) · ends 22:02"; a Swedish-only list reads as before
+  ("Mon 28 Sep · decides at 09:10").
+- **Trading page:** "Start today's session before 09:10: press Start. It decides per market (XSTO at 09:10, XNYS at
+  15:40), trades, and ends after the 22:00 close; keep its window open."
+- **Instruments:** a US or Canadian share's row says "USD · US (NYSE, Nasdaq), paper only · …" (the search hits already
+  showed the kronor price, step 3).
+- **`docs/guide.md`:** a section on US and Canadian shares (adding, the day to 22:02, money in kronor, costs, the account
+  cap, paper only, and what the owner still checks); `docs/cli.md` for `qa paper run` and `qa status`.
+- **Tests (3 new):** the Overview, the Trading page and the Instruments row with AAPL on the list.
+- All 1221 managed tests pass (1 skipped).
+
+## Open items (ADR 0005)
+
+1. The owner verifies the foreign courtage and FX fee of the chosen class (UNVERIFIED search-engine extract).
+2. The owner verifies the XNYS and XTSE calendars and sets `verified_on`.
+3. The first Canadian import confirms the Riksbank series `SEKCADPMI`.
+4. The first evening Paper session confirms that US and Canadian quotes arrive live, not delayed (else R15 rejects).

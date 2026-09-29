@@ -365,13 +365,9 @@ internal static class StatusCommand
 
             var parts = new List<string>();
             bool behind = false;
+            foreign.AddRange(ForeignMarkets(history, universe));
             foreach (UniverseEntry e in universe.Entries)
             {
-                if (Markets.ForCurrency(history.GetInstrument(e.OrderbookId)?.Instrument.Currency) is { } market && Markets.IsForeign(market.Currency) && !foreign.Contains(market))
-                {
-                    foreign.Add(market);
-                }
-
                 IReadOnlyList<StoredBar> bars = hasSource ? history.GetDailyBars(e.OrderbookId, source) : [];
                 DateOnly? last = bars.Count > 0 ? bars[^1].Bar.Date : null;
                 behind |= last is null || last < wanted;
@@ -551,6 +547,89 @@ internal static class StatusCommand
 
         SessionPlan next = schedule.NextDecision(now);
         return $"Next session: {MarketTime.ToStockholm(next.DecisionUtc):dddd yyyy-MM-dd}. Start it that morning before {Clock(next.DecisionUtc)}: qa paper run";
+    }
+
+    /// <summary>The foreign markets (ADR 0005) of the allowlist's shares, from their currencies in the instrument master.</summary>
+    internal static List<MarketInfo> ForeignMarkets(HistoryStore history, Universe universe)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+        ArgumentNullException.ThrowIfNull(universe);
+        var foreign = new List<MarketInfo>();
+        foreach (UniverseEntry e in universe.Entries)
+        {
+            if (Markets.ForCurrency(history.GetInstrument(e.OrderbookId)?.Instrument.Currency) is { } market && Markets.IsForeign(market.Currency) && !foreign.Contains(market))
+            {
+                foreign.Add(market);
+            }
+        }
+
+        return [.. foreign.OrderBy(m => Markets.All.ToList().IndexOf(m))];
+    }
+
+    /// <summary>
+    /// The Paper session's schedules (ADR 0005): Stockholm's, and one per foreign market on the allowlist whose calendar
+    /// loads (the session skips the others). For the app's Overview and Trading page. Throws when the paper settings,
+    /// the limits or the Stockholm calendar don't load; a store that can't be read means no foreign market.
+    /// </summary>
+    internal static (TradingSchedule Stockholm, IReadOnlyList<TradingSchedule> Foreign) SessionSchedules(string configDir, string storePath)
+    {
+        RiskLimits limits = RiskLimits.Load(Path.Combine(configDir, RiskLimits.FileName));
+        PaperConfig paper = PaperConfig.Load(Path.Combine(configDir, PaperConfig.FileName));
+        MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(configDir);
+        var home = new TradingSchedule(calendar, limits, paper.DecisionTime);
+        List<MarketInfo> markets = [];
+        try
+        {
+            Universe universe = Universe.Load(Path.Combine(configDir, Universe.FileName));
+            if (universe.Entries.Count > 0 && File.Exists(storePath))
+            {
+                using HistoryStore history = HistoryStore.Open(storePath);
+                markets = ForeignMarkets(history, universe);
+            }
+        }
+        catch (Exception ex) when (ex is TradingConfigException or HistoryStoreException or IOException or ArgumentException || DataCommands.IsStoreFailure(ex))
+        {
+            // Swedish only, as far as can be told.
+        }
+
+        var foreign = new List<TradingSchedule>();
+        foreach (MarketInfo market in markets)
+        {
+            try
+            {
+                foreign.Add(new TradingSchedule(MarketCalendarLoader.LoadDirectory(configDir, market.Mic), limits, paper.DecisionTime, calendar));
+            }
+            catch (CalendarConfigException)
+            {
+                // The session skips this market's shares too.
+            }
+        }
+
+        return (home, foreign);
+    }
+
+    /// <summary>
+    /// The next session day in short, for the app's Overview: "Mon 28 Sep · decides at 09:10", or with US or Canadian
+    /// shares "Mon 28 Sep · decides at 09:10 (XSTO), 15:40 (XNYS) · ends 22:02". Returns its first decision too.
+    /// </summary>
+    internal static (string Text, DateTimeOffset FirstDecisionUtc) NextSessionShort(DateTimeOffset now, TradingSchedule stockholm, IReadOnlyList<TradingSchedule> foreign)
+    {
+        ArgumentNullException.ThrowIfNull(stockholm);
+        ArgumentNullException.ThrowIfNull(foreign);
+        TradingSchedule[] all = [stockholm, .. foreign];
+        DateTimeOffset first = all.Min(s => s.NextDecision(now).DecisionUtc);
+        string day = MarketTime.ToStockholm(first).ToString("ddd d MMM", CultureInfo.InvariantCulture);
+        if (foreign.Count == 0)
+        {
+            return ($"{day} · decides at {Clock(first)}", first);
+        }
+
+        SessionPlan[] plans = [.. all.Select(s => s.Plan(s.Calendar.LocalDate(first))).OfType<SessionPlan>()];
+        string decides = string.Join(", ", all
+            .Select(s => (s.Mic, Plan: s.Plan(s.Calendar.LocalDate(first))))
+            .Where(x => x.Plan is { } p && p.DecisionUtc >= now)
+            .Select(x => $"{Clock(x.Plan!.DecisionUtc)} ({x.Mic})"));
+        return ($"{day} · decides at {decides} · ends {Clock(plans.Max(p => p.CloseUtc).AddMinutes(2))}", first);
     }
 
     /// <summary>

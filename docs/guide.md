@@ -219,6 +219,38 @@ A day is **clean** when it ran to the close with:
    ```
 On an exchange holiday the command simply says there is no session today.
 
+### US and Canadian shares (paper only, ADR 0005)
+
+- **Adding one** works like a Swedish share: find it in the app and press **Add**, or
+  `.\qa history import AAPL` then `.\qa universe add AAPL`. The import brings the Riksbank's USD/SEK (or CAD/SEK)
+  fixings first. The Instruments list then says "USD · US (NYSE, Nasdaq), paper only".
+- **The day is still one session**, started in the morning as before:
+  - Swedish names decide at 09:10, US and Canadian ones at 09:40 their time: **15:40 Stockholm** (14:40 in the few
+    weeks when US and European summer time differ).
+  - Each market's orders expire at its own close: 17:30 in Stockholm, **22:00** for New York and Toronto (19:00 on a
+    US early close).
+  - The session ends at **22:02**, with one end-of-day report. Keep the window open until then; stopped earlier, the
+    day is INCOMPLETE.
+  - The Overview shows it, e.g. "Mon 28 Sep · decides at 09:10 (XSTO), 15:40 (XNYS) · ends 22:02", and so do the
+    Trading page and `.\qa status`.
+- **Money stays in kronor.** The session reads the latest Riksbank fixing at its start and uses it all day:
+  - every limit, the cash, the fees and the positions' values are in SEK
+  - prices, limits sent and fills stay in dollars (or Canadian dollars)
+  - a fixing older than 4 days (or none) skips the foreign names that day; the Swedish ones still trade
+- **Costs:** the courtage class's foreign courtage in the share's currency (Start and Mini 0.25 %, at least 1 USD/CAD),
+  plus the currency exchange fee (0.25 %, none on Start).
+- **Account cap:** with a 5 000 kr cap one order may be 500 kr, and many US shares cost more per share. The search says
+  so ("One share costs more than an order may").
+- **Backtests** convert a foreign share's prices to kronor at each day's fixing and charge its courtage and FX fee.
+- **Paper only:** Confirm (and later Auto) refuses US and Canadian shares before any order card.
+- **Not yet checked** (you, once):
+  - the foreign courtage and FX fee against Avanza's "Prislista för utlandshandel"
+  - the XNYS and XTSE calendars against the exchanges' own pages; then set `verified_on` in
+    `config/market-calendar.XNYS.<year>.json` and `…XTSE…`
+  - that the first Canadian import finds the Riksbank series `SEKCADPMI`
+  - that the first evening session gets live (not delayed) US quotes. With delayed ones, R15 rejects the orders and the
+    report shows it.
+
 ## 4. What the numbers mean
 
 - **The limits** (ADR 0003 §4, `config/risk-limits.json`): every order must pass R1–R21. The rejection message names the check, e.g. "R6 order value 620 SEK > 500 SEK".

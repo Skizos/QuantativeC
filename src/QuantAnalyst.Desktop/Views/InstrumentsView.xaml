@@ -125,7 +125,7 @@
                                     <StackPanel>
                                         <TextBlock Text="{Binding Ticker}" FontWeight="SemiBold" />
                                         <TextBlock Text="{Binding Name}" Style="{StaticResource Caption}" />
-                                        <TextBlock Text="{Binding History}" Style="{StaticResource Caption}" Foreground="{StaticResource InkMutedBrush}" />
+                                        <TextBlock Text="{Binding History}" Style="{StaticResource Caption}" Foreground="{StaticResource InkMutedBrush}" TextWrapping="Wrap" />
                                     </StackPanel>
                                 </DockPanel>
                             </DataTemplate>

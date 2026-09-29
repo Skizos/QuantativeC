@@ -267,10 +267,8 @@ public sealed class SessionViewModel : PageViewModel
 
         try
         {
-            RiskLimits limits = RiskLimits.Load(Path.Combine(_workspace.ConfigDir, RiskLimits.FileName));
-            PaperConfig paper = PaperConfig.Load(Path.Combine(_workspace.ConfigDir, PaperConfig.FileName));
-            MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(_workspace.ConfigDir);
-            Schedule = StatusCommand.NextSession(_time.GetUtcNow(), new TradingSchedule(calendar, limits, paper.DecisionTime)).Replace("qa paper run", "press Start", StringComparison.Ordinal);
+            (TradingSchedule stockholm, IReadOnlyList<TradingSchedule> foreign) = StatusCommand.SessionSchedules(_workspace.ConfigDir, _workspace.Store);
+            Schedule = StatusCommand.NextSession(_time.GetUtcNow(), stockholm, foreign).Replace("qa paper run", "press Start", StringComparison.Ordinal);
         }
         catch (Exception ex) when (ex is TradingConfigException or CalendarConfigException or IOException or ArgumentException or InvalidOperationException)
         {
