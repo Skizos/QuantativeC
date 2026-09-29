@@ -40,7 +40,7 @@ extern "C" {
 /* ---- Versioning --------------------------------------------------------------------------- */
 
 #define QE_ABI_MAJOR 1
-#define QE_ABI_MINOR 2 /* 1.1: pricing, risk and portfolio batch APIs; 1.2: backtest engine */
+#define QE_ABI_MINOR 3 /* 1.1: pricing, risk and portfolio batch APIs; 1.2: backtest engine; 1.3: per-instrument courtage */
 
 /* ---- Status codes ------------------------------------------------------------------------- */
 
@@ -464,6 +464,17 @@ QE_API qe_status QE_CALL qe_bt_step(qe_backtest* backtest, const qe_bt_bar* bars
 /* Copies the current positions (shares) into out; count must equal the instrument count. */
 QE_API qe_status QE_CALL qe_bt_positions(const qe_backtest* backtest, int64_t* out,
                                          int64_t count) QE_NOEXCEPT;
+
+/* ---- ABI 1.3: per-instrument courtage (ADR 0005) ----------------------------------------- */
+
+/*
+ * Gives one instrument its own courtage, max(courtage_min, courtage_rate * notional), instead of
+ * the config's (a foreign share pays its market's courtage). Only before the first qe_bt_step.
+ * courtage_min must be finite and >= 0, courtage_rate in [0, 0.1). On failure the backtest is
+ * unchanged.
+ */
+QE_API qe_status QE_CALL qe_bt_set_courtage(qe_backtest* backtest, int64_t instrument,
+                                            double courtage_min, double courtage_rate) QE_NOEXCEPT;
 
 #ifdef __cplusplus
 } /* extern "C" */

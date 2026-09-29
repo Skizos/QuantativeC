@@ -88,6 +88,19 @@ QE_API qe_status QE_CALL qe_bt_create(const qe_bt_config* config,
     });
 }
 
+QE_API qe_status QE_CALL qe_bt_set_courtage(qe_backtest* backtest, std::int64_t instrument,
+                                            double courtage_min, double courtage_rate) noexcept {
+    return guarded([&]() -> qe_status {
+        require_backtest(backtest);
+        require(instrument >= 0 &&
+                    instrument < static_cast<std::int64_t>(backtest->engine.instrument_count()),
+                "instrument out of range");
+        backtest->engine.set_courtage(static_cast<std::size_t>(instrument), courtage_min,
+                                      courtage_rate); // validates; unchanged on failure
+        return QE_OK;
+    });
+}
+
 QE_API qe_status QE_CALL qe_bt_destroy(qe_backtest* backtest) noexcept {
     return guarded([&]() -> qe_status {
         if (backtest == nullptr) {

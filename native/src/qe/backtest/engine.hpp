@@ -32,6 +32,10 @@ struct Config {
 struct Instrument {
     std::int64_t lot_size{1};
     bool foreign_currency{false};
+    // ABI 1.3 (ADR 0005): an instrument's own courtage, max(min, rate * notional), instead of the config's.
+    bool own_courtage{false};
+    double courtage_min{0};
+    double courtage_rate{0};
 };
 
 struct Bar {
@@ -74,6 +78,10 @@ class Engine {
   public:
     Engine(const Config& config, std::span<const Instrument> instruments);
 
+    /// Gives one instrument its own courtage (a foreign share pays its market's). Only before the first step; throws
+    /// qe::InvalidArgument otherwise, or for an index out of range or a negative / non-finite / >= 10 % value.
+    void set_courtage(std::size_t instrument, double courtage_min, double courtage_rate);
+
     /// Processes one bar. Validates everything first, so a throwing call leaves the state
     /// unchanged. out must hold at least orders.size() fills (an order fills at most once per bar).
     /// Returns the fill count.
@@ -87,9 +95,8 @@ class Engine {
   private:
     enum class Phase { Open, Continuous, Close };
 
-    [[nodiscard]] double courtage(double notional) const noexcept;
-    [[nodiscard]] std::int64_t affordable(double price, std::int64_t lot,
-                                          bool foreign) const noexcept;
+    [[nodiscard]] double courtage(const Instrument& instrument, double notional) const noexcept;
+    [[nodiscard]] std::int64_t affordable(double price, const Instrument& instrument) const noexcept;
     bool try_fill(const Order& order, std::int32_t index, const Bar& bar, Phase phase, Fill& fill);
 
     Config config_;
@@ -98,6 +105,7 @@ class Engine {
     std::vector<double> last_close_;
     std::vector<double> traded_this_bar_;
     State state_;
+    bool stepped_{false};
 };
 
 } // namespace qe::backtest

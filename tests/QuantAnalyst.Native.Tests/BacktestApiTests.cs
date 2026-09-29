@@ -70,6 +70,28 @@ public sealed class BacktestApiTests
     }
 
     [Fact]
+    public void AForeignShare_PaysItsOwnCourtage_SetBeforeTheFirstStep()
+    {
+        // ABI 1.3 (ADR 0005): instrument 1 is a US share (prices in SEK): 0.25 %, minimum 9.40 SEK (1 USD at 9.40).
+        using var bt = QeBacktest.Create(Costs with { CourtageMin = 0, CourtageRate = 0, FxFeeRate = 0 }, TwoInstruments);
+        bt.SetCourtage(1, 9.40, 0.0025);
+        var fills = new BacktestFill[2];
+        bt.Step(
+            [new(100, 102, 98, 101, 1e6), new(50, 51, 49, 50, 1e6)],
+            [new(0, BacktestSide.Buy, BacktestOrderType.Limit, 10, 100), new(1, BacktestSide.Buy, BacktestOrderType.Limit, 100, 50)],
+            fills,
+            out int count);
+        Assert.Equal(2, count);
+        Assert.Equal(0.0, fills[0].Courtage);
+        Assert.Equal(0.0025 * 100 * 50, fills[1].Courtage, 1e-12); // 12.50 SEK, above the minimum
+
+        var ex = Assert.Throws<QeException>(() => bt.SetCourtage(1, 1, 0.001)); // after the first step
+        Assert.Contains("before the first step", ex.Message, StringComparison.Ordinal);
+        using var other = QeBacktest.Create(Costs, TwoInstruments);
+        Assert.Throws<QeException>(() => other.SetCourtage(2, 1, 0.001)); // no such instrument
+    }
+
+    [Fact]
     public void InvalidInput_ThrowsWithTheNativeMessage_AndChangesNothing()
     {
         using var bt = QeBacktest.Create(Costs, TwoInstruments);

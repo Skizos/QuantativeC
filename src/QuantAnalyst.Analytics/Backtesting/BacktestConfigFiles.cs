@@ -51,9 +51,13 @@ public sealed record HoldoutPolicy(bool Locked, DateOnly Start, string Path)
         root.TryGetProperty(name, out JsonElement e) && e.ValueKind == JsonValueKind.String && e.GetString() is { Length: > 0 } s ? s : null;
 }
 
+/// <summary>A courtage class's courtage for shares in a foreign currency, in that currency (ADR 0005): max(min, rate × value).</summary>
+public sealed record ForeignCourtage(decimal Min, decimal Rate);
+
 /// <summary>
-/// A cost model (config/costs.&lt;name&gt;.json): courtage, FX fee, spread, slippage and participation cap. Money
-/// amounts stay decimal here and become double only for the engine.
+/// A cost model (config/costs.&lt;name&gt;.json): courtage, FX fee, spread, slippage and participation cap, and the courtage
+/// for US and Canadian shares (<c>foreign_courtage</c>, ADR 0005). Money amounts stay decimal here and become double only
+/// for the engine.
 /// </summary>
 public sealed record CostModel(
     string Name,
@@ -79,8 +83,31 @@ public sealed record CostModel(
     /// <summary>Gets a value indicating whether the owner checked the courtage and FX fee against Avanza's price list.</summary>
     public bool Verified => VerifiedOn is not null;
 
+    /// <summary>Gets the courtage for shares in each foreign currency (USD, CAD), in that currency; empty when the file has none.</summary>
+    public IReadOnlyDictionary<string, ForeignCourtage> Foreign { get; init; } = new Dictionary<string, ForeignCourtage>(StringComparer.Ordinal);
+
+    /// <summary>Gets where the foreign courtage comes from.</summary>
+    public string? ForeignSourceUrl { get; init; }
+
+    /// <summary>Gets when the owner checked the foreign courtage against Avanza's price list; null until then.</summary>
+    public DateOnly? ForeignVerifiedOn { get; init; }
+
     /// <summary>Courtage for one order of <paramref name="notional"/> SEK: max(min, rate × notional).</summary>
     public decimal Courtage(decimal notional) => Math.Max(CourtageMin, CourtageRate * notional);
+
+    /// <summary>
+    /// Courtage for one order of <paramref name="notional"/> in <paramref name="currency"/>, in that currency: the Swedish
+    /// courtage for SEK, the class's foreign courtage for USD and CAD (ADR 0005). Throws when the file has none for it.
+    /// </summary>
+    public decimal CourtageIn(string currency, decimal notional) =>
+        string.Equals(currency, Currency, StringComparison.Ordinal)
+            ? Courtage(notional)
+            : ForeignFor(currency) is { } f
+                ? Math.Max(f.Min, f.Rate * notional)
+                : throw new BacktestConfigException($"The courtage class {Name} has no courtage for {currency} shares; add foreign_courtage.{currency} to costs.{Name}.json (ADR 0005).");
+
+    /// <summary>The foreign courtage for <paramref name="currency"/>, or null.</summary>
+    public ForeignCourtage? ForeignFor(string currency) => Foreign.GetValueOrDefault(currency);
 
     /// <summary>Every cost model in a folder (costs.*.json), cheapest minimum first.</summary>
     public static IReadOnlyList<CostModel> LoadAll(string directory)
@@ -158,6 +185,18 @@ public sealed record CostModel(
                     : (null, null),
                 EligibleBelowCapital = OptionalDecimal(root, "eligible_below_capital_sek"),
             };
+            if (root.TryGetProperty("foreign_courtage", out JsonElement foreign))
+            {
+                model = model with
+                {
+                    Foreign = ReadForeign(foreign, path),
+                    ForeignSourceUrl = OptionalString(foreign, "source_url"),
+                    ForeignVerifiedOn = foreign.GetProperty("verified_on") is { ValueKind: JsonValueKind.String } fv
+                        ? DateOnly.ParseExact(fv.GetString()!, "yyyy-MM-dd", CultureInfo.InvariantCulture)
+                        : null,
+                };
+            }
+
             if (model.CourtageMin < 0 || model.CourtageRate < 0 || model.FxFeeRate < 0 || model.SlippageBps < 0 || model.HalfSpreadBps < 0
                 || model.ParticipationCap <= 0 || model.ParticipationCap > 1)
             {
@@ -181,6 +220,43 @@ public sealed record CostModel(
         {
             throw new BacktestConfigException($"{path} is not a valid cost model: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// <c>foreign_courtage</c>: <c>{"USD": {"min", "rate"}, "CAD": {…}, "source_url", "verified_on", "basis"}</c>. Only the
+    /// currencies of the markets the program trades may appear (ADR 0005); every value must be ≥ 0 and the rate below 10 %.
+    /// </summary>
+    private static Dictionary<string, ForeignCourtage> ReadForeign(JsonElement foreign, string path)
+    {
+        var result = new Dictionary<string, ForeignCourtage>(StringComparer.Ordinal);
+        foreach (JsonProperty p in foreign.EnumerateObject())
+        {
+            if (p.Name is "source_url" or "verified_on" or "basis")
+            {
+                continue;
+            }
+
+            if (Core.Market.Markets.ForCurrency(p.Name) is null || !Core.Market.Markets.IsForeign(p.Name))
+            {
+                throw new BacktestConfigException($"{path}: foreign_courtage.{p.Name} is not a foreign currency the program trades ({string.Join(", ", Core.Market.Markets.All.Where(m => Core.Market.Markets.IsForeign(m.Currency)).Select(m => m.Currency))}).");
+            }
+
+            var c = new ForeignCourtage(p.Value.GetProperty("min").GetDecimal(), p.Value.GetProperty("rate").GetDecimal());
+            if (c.Min < 0 || c.Rate < 0 || c.Rate >= 0.1m)
+            {
+                throw new BacktestConfigException($"{path}: foreign_courtage.{p.Name} needs min >= 0 and rate in [0, 0.1).");
+            }
+
+            result[p.Name] = c;
+        }
+
+        if (foreign.TryGetProperty("verified_on", out JsonElement v) && v.ValueKind == JsonValueKind.String
+            && !DateOnly.TryParseExact(v.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+        {
+            throw new BacktestConfigException($"{path}: foreign_courtage.verified_on must be null or a yyyy-MM-dd date.");
+        }
+
+        return result;
     }
 
     private static string? OptionalString(JsonElement e, string name) =>

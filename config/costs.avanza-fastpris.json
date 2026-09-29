@@ -5,6 +5,13 @@
   "currency": "SEK",
   "courtage": { "min": 99.0, "rate": 0.0 },
   "fx_fee_rate": 0.0025,
+  "foreign_courtage": {
+    "USD": { "min": 12.0, "rate": 0.00079 },
+    "CAD": { "min": 12.0, "rate": 0.00079 },
+    "source_url": "https://www.avanza.se/konton-lan-prislista/prislista/handel-utland.html",
+    "verified_on": null,
+    "basis": "UNVERIFIED (2026-09-28, ADR 0005): a search-engine extract of Avanza's price list for foreign trading (avanza.se is not reachable from the development container): 0.079 %, minimum 12 USD for US shares, and the same in CAD for Canadian shares (the CAD minimum is assumed equal). The FX fee is this file's fx_fee_rate. Check against Avanza's 'Prislista för utlandshandel' and set verified_on."
+  },
   "slippage_bps": 5.0,
   "half_spread_bps": 5.0,
   "participation_cap": 0.10,

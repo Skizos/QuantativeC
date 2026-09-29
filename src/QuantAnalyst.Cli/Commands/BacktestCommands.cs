@@ -134,6 +134,11 @@ internal static class BacktestCommands
             using HistoryStore store = DataCommands.OpenExisting(parse.GetValue(o.Store)!);
             data = LoadStorePanel(store, QaCli.SplitList(tickers), from, readTo);
             notes.Add("Universe: current names only (survivorship-biased: delisted companies are missing).");
+            if (data.Instruments.Where(i => i.ForeignCurrency).ToList() is { Count: > 0 } foreign)
+            {
+                notes.Add(string.Create(CultureInfo.InvariantCulture,
+                    $"Foreign shares (ADR 0005): {string.Join(", ", foreign.Select(i => $"{i.Symbol} ({i.Currency}, last fixing {i.LastSekPerUnit:0.0000} SEK)"))}. Their prices are in SEK at each day's Riksbank fixing, so FX moves count; their tick table and courtage minimum are converted at the last fixing (an approximation); they pay the class's foreign courtage (UNVERIFIED until checked) and FX fee."));
+            }
             if (readTo != to)
             {
                 notes.Add($"Data read up to {readTo:yyyy-MM-dd}: the final holdout from {holdout.Start:yyyy-MM-dd} is locked.");
@@ -473,12 +478,74 @@ internal static class BacktestCommands
                 throw new ArgumentException($"{r.Ticker}: no bars from {sourceName} in the requested range.");
             }
 
-            var instrument = new PanelInstrument(r.Ticker, 1, !string.Equals(r.Currency, "SEK", StringComparison.Ordinal), ParseTickTable(r.TickTableJson));
-            series.Add((instrument, [.. bars.Select(b => b.Bar)]));
+            IReadOnlyList<DailyBar> daily = [.. bars.Select(b => b.Bar)];
+            PanelInstrument instrument;
+            if (Markets.IsForeign(r.Currency))
+            {
+                if (Markets.ForCurrency(r.Currency) is null)
+                {
+                    throw new ArgumentException($"{r.Ticker} trades in {r.Currency}; the program trades shares in {Markets.CurrencyList} (ADR 0005).");
+                }
+
+                (daily, decimal last) = InSek(store, r, daily);
+                instrument = new PanelInstrument(r.Ticker, 1, true, Scaled(ParseTickTable(r.TickTableJson), last)) { Currency = r.Currency, LastSekPerUnit = last };
+            }
+            else
+            {
+                instrument = new PanelInstrument(r.Ticker, 1, false, ParseTickTable(r.TickTableJson));
+            }
+
+            series.Add((instrument, daily));
         }
 
         return MarketPanel.FromDailyBars(series, source);
     }
+
+    /// <summary>A fixing older than this for a bar means the FX history has a hole: refused rather than bridged.</summary>
+    internal const int MaxFixingAgeDays = 7;
+
+    /// <summary>
+    /// A foreign share's bars in SEK (ADR 0005): each bar at the latest Riksbank fixing on or before its date (published
+    /// about 16:15 Stockholm, before the US and Canadian close, so known when the bar closes). Returns the last fixing used.
+    /// </summary>
+    internal static (IReadOnlyList<DailyBar> Bars, decimal LastSekPerUnit) InSek(HistoryStore store, InstrumentRecord r, IReadOnlyList<DailyBar> bars)
+    {
+        string ccy = r.Currency;
+        DateOnly first = bars[0].Date, last = bars[^1].Date;
+        StoredFxRate[] rates = [.. store.GetFxRates(ccy, Data.Fx.RiksbankFxSource.Riksbank.Name, first.AddDays(-MaxFixingAgeDays), last)];
+        string fix = $"run 'qa fx import {ccy} --from {first.AddDays(-14):yyyy-MM-dd}' (or import {r.Ticker} again, which brings its fixings)";
+        if (rates.Length == 0 || rates[0].Rate.Date > first)
+        {
+            throw new ArgumentException($"{r.Ticker} trades in {ccy}, but no {ccy}/SEK fixing is stored for its first bar {first:yyyy-MM-dd}: {fix}.");
+        }
+
+        var converted = new List<DailyBar>(bars.Count);
+        int k = 0;
+        foreach (DailyBar b in bars)
+        {
+            while (k + 1 < rates.Length && rates[k + 1].Rate.Date <= b.Date)
+            {
+                k++;
+            }
+
+            FxRate fx = rates[k].Rate;
+            if (b.Date.DayNumber - fx.Date.DayNumber > MaxFixingAgeDays)
+            {
+                throw new ArgumentException($"{r.Ticker}: the {ccy}/SEK fixing for {b.Date:yyyy-MM-dd} is from {fx.Date:yyyy-MM-dd}, more than {MaxFixingAgeDays} days old: {fix}.");
+            }
+
+            decimal m = fx.SekPerUnit;
+            converted.Add(new DailyBar(b.Date, Sek(b.Open * m), Sek(b.High * m), Sek(b.Low * m), Sek(b.Close * m), b.Volume));
+        }
+
+        return (converted, rates[k].Rate.SekPerUnit);
+
+        static decimal Sek(decimal v) => decimal.Round(v, 6, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>A foreign tick table in SEK at one rate: an approximation, stated in the report (ADR 0005).</summary>
+    internal static TickSizeTable Scaled(TickSizeTable table, decimal sekPerUnit) =>
+        new([.. table.Bands.Select(b => new TickSizeBand(b.Min * sekPerUnit, b.Max * sekPerUnit, b.Tick * sekPerUnit))]);
 
     private static TickSizeTable ParseTickTable(string json)
     {

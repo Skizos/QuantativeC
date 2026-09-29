@@ -13,7 +13,8 @@ public sealed class AbiTests
     }
 
     [Theory]
-    [InlineData(1, 2, true)]
+    [InlineData(1, 3, true)]
+    [InlineData(1, 2, false)] // 1.3 adds qe_bt_set_courtage, which the backtest runner needs
     [InlineData(1, 7, true)]
     [InlineData(1, 1, false)]
     [InlineData(1, 0, false)]

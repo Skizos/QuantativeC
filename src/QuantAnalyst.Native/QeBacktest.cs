@@ -3,7 +3,7 @@ using QuantAnalyst.Native.Interop;
 namespace QuantAnalyst.Native;
 
 /// <summary>
-/// The native event-driven backtest engine (qe_api.h, ABI 1.2): one <see cref="Step"/> per bar with the day orders
+/// The native event-driven backtest engine (qe_api.h, ABI 1.2; 1.3 adds per-instrument courtage): one <see cref="Step"/> per bar with the day orders
 /// decided at the previous close. Not thread-safe; dispose once.
 /// </summary>
 public sealed class QeBacktest : IDisposable
@@ -77,6 +77,17 @@ public sealed class QeBacktest : IDisposable
 
         fillCount = (int)count;
         return state;
+    }
+
+    /// <summary>
+    /// Gives one instrument its own courtage, max(<paramref name="courtageMin"/>, <paramref name="courtageRate"/> × notional),
+    /// instead of the config's: a foreign share pays its market's (ADR 0005, ABI 1.3). Only before the first
+    /// <see cref="Step"/>; invalid input throws and changes nothing.
+    /// </summary>
+    public void SetCourtage(int instrument, double courtageMin, double courtageRate)
+    {
+        ObjectDisposedException.ThrowIf(handle.IsClosed, this);
+        QeErrors.ThrowIfFailed(QeNative.BtSetCourtage(handle, instrument, courtageMin, courtageRate), "qe_bt_set_courtage");
     }
 
     /// <summary>Copies the positions (shares per instrument) into <paramref name="positions"/>.</summary>

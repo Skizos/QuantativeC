@@ -117,3 +117,30 @@
   - `qa universe add AAPL`
 - All 1183 tests pass.
 
+### Step 4: costs and backtests (done 2026-09-29)
+
+- **Foreign courtage** in every `config/costs.avanza-*.json` (`foreign_courtage.USD|CAD` with min, rate, source_url,
+  verified_on null, basis): Start and Mini 0.25 % min 1; Small 0.15 % min 6; Medium 0.089 % min 8; Fast pris 0.079 %
+  min 12. UNVERIFIED. `CostModel.CourtageIn(currency, value)` charges it in the share's currency. Another currency in
+  the section is refused.
+- **Native ABI 1.3:** `qe_bt_set_courtage(backtest, instrument, min, rate)` gives one instrument its own courtage
+  (before the first step). The engine's cash check counts it. The managed side requires 1.3 (`QeBacktest.SetCourtage`).
+  The ABI 1.2 tests are unchanged apart from "minor ≥ 2"; the export check still matches the header.
+- **Backtests in SEK** (`BacktestCommands.LoadStorePanel`, also used by the Paper decision):
+  - a USD or CAD share's bars are converted day by day at the latest Riksbank fixing on or before the bar; a fixing
+    more than 7 days old, or none for the first bar, is refused with the `qa fx import` command to run
+  - the tick table and the courtage minimum are converted at the last fixing (an approximation, printed in the report)
+  - the runner charges the class's foreign courtage per instrument; a class without one for that currency refuses the
+    run instead of charging Swedish courtage
+- **A flaky app test fixed at its root:** showing a page starts a refresh that the UI doesn't await. In tests its
+  continuation ran on a thread-pool thread while the test's search rebuilt the same list. `ShellViewModel.Refreshing`
+  lets tests await it. In the app both run on the UI thread.
+- **Tests (13 managed, 4 native new):**
+  - the costs of every class
+  - `CourtageIn`
+  - a foreign currency refused
+  - a US share paying its courtage in a backtest, and refused without one
+  - the SEK panel: each day's fixing, the scaled tick table, a missing or stale fixing
+  - ABI 1.3: version, per-instrument courtage, the cash check, bad input, after the first step
+- All 1196 managed and 131 native tests pass.
+

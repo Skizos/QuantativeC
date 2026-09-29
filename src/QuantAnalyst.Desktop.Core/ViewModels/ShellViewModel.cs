@@ -124,7 +124,7 @@ public sealed class ShellViewModel : ObservableObject
                 }
 
                 Release(before);
-                _ = value.RefreshAsync();
+                Refreshing = value.RefreshAsync();
             }
         }
     }
@@ -181,6 +181,12 @@ public sealed class ShellViewModel : ObservableObject
 
     /// <summary>Gets the pages shown in windows of their own (a page opened twice is here twice).</summary>
     public IReadOnlyList<PageViewModel> WindowPages => _windowPages;
+
+    /// <summary>
+    /// Gets the refresh a page got when it was shown (not awaited by the setter, which the UI calls). The app's
+    /// continuations run on the UI thread; tests await this so the refresh can't interleave with what they do next.
+    /// </summary>
+    internal Task Refreshing { get; private set; } = Task.CompletedTask;
 
     /// <summary>Gets or sets whether the navigation rail shows icons only (more room for the pages).</summary>
     public bool NavCollapsed
@@ -292,7 +298,7 @@ public sealed class ShellViewModel : ObservableObject
 
         if (next is not null)
         {
-            _ = next.RefreshAsync();
+            Refreshing = next.RefreshAsync();
         }
     }
 

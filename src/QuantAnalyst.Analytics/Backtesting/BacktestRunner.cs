@@ -168,6 +168,18 @@ public static class BacktestRunner
         }
 
         using QeBacktest engine = QeBacktest.Create(request.Costs.ToEngineConfig(request.InitialCash), instruments);
+        for (int i = 0; i < n; i++)
+        {
+            // ADR 0005: a US or Canadian share pays its market's courtage; the minimum (e.g. 1 USD) in SEK at the last fixing.
+            PanelInstrument p = data.Instruments[i];
+            if (p.ForeignCurrency && p.LastSekPerUnit is { } fx)
+            {
+                ForeignCourtage c = request.Costs.ForeignFor(p.Currency)
+                    ?? throw new BacktestConfigException($"The courtage class {request.Costs.Name} has no courtage for {p.Currency} shares ({p.Symbol}); add foreign_courtage.{p.Currency} to costs.{request.Costs.Name}.json (ADR 0005).");
+                engine.SetCourtage(i, (double)(c.Min * fx), (double)c.Rate);
+            }
+        }
+
         IStrategy strategy = request.Strategy.Factory(data);
         var window = new BarWindow(data);
         var bars = new BacktestBar[n];

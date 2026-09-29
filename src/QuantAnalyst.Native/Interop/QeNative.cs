@@ -109,4 +109,10 @@ internal static unsafe partial class QeNative
     [LibraryImport(LibraryName, EntryPoint = "qe_bt_positions")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial QeStatus BtPositions(QeBacktestHandle backtest, long* positions, long count);
+
+    // ---- ABI 1.3: per-instrument courtage (ADR 0005)
+
+    [LibraryImport(LibraryName, EntryPoint = "qe_bt_set_courtage")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial QeStatus BtSetCourtage(QeBacktestHandle backtest, long instrument, double courtageMin, double courtageRate);
 }

@@ -60,12 +60,12 @@ class Abi12 : public ::testing::Test {
     qe_bt_state state_{};
 };
 
-TEST(Abi12Version, MinorIsTwo) {
+TEST(Abi12Version, MinorIsAtLeastTwo) {
     std::int32_t major = 0;
     std::int32_t minor = 0;
     ASSERT_EQ(qe_abi_version(&major, &minor), QE_OK);
     EXPECT_EQ(major, 1);
-    EXPECT_EQ(minor, 2);
+    EXPECT_GE(minor, 2); // 1.3 added per-instrument courtage without changing 1.2
 }
 
 TEST(Abi12Layout, StructLayoutsMatchTheHeader) {

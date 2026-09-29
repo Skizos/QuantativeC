@@ -54,17 +54,33 @@ Engine::Engine(const Config& config, std::span<const Instrument> instruments)
     state_.equity = config.initial_cash;
 }
 
-double Engine::courtage(double notional) const noexcept {
-    return std::max(config_.courtage_min, config_.courtage_rate * notional);
+void Engine::set_courtage(std::size_t instrument, double courtage_min, double courtage_rate) {
+    require(!stepped_, "set_courtage must come before the first step");
+    require(instrument < instruments_.size(), "instrument out of range");
+    require(std::isfinite(courtage_min) && courtage_min >= 0.0, "courtage_min must be finite and >= 0");
+    require(std::isfinite(courtage_rate) && courtage_rate >= 0.0 && courtage_rate < 0.1,
+            "courtage_rate must be in [0, 0.1)");
+    Instrument& i = instruments_[instrument];
+    i.own_courtage = true;
+    i.courtage_min = courtage_min;
+    i.courtage_rate = courtage_rate;
+}
+
+double Engine::courtage(const Instrument& instrument, double notional) const noexcept {
+    return instrument.own_courtage
+               ? std::max(instrument.courtage_min, instrument.courtage_rate * notional)
+               : std::max(config_.courtage_min, config_.courtage_rate * notional);
 }
 
 // Largest lot multiple whose price plus costs the cash can pay.
-std::int64_t Engine::affordable(double price, std::int64_t lot, bool foreign) const noexcept {
+std::int64_t Engine::affordable(double price, const Instrument& instrument) const noexcept {
     const double cash = state_.cash;
-    const double fx = foreign ? config_.fx_fee_rate : 0.0;
+    const std::int64_t lot = instrument.lot_size;
+    const double fx = instrument.foreign_currency ? config_.fx_fee_rate : 0.0;
+    const double minimum = instrument.own_courtage ? instrument.courtage_min : config_.courtage_min;
     auto cost = [&](std::int64_t q) {
         const double v = static_cast<double>(q) * price;
-        return v + courtage(v) + fx * v;
+        return v + courtage(instrument, v) + fx * v;
     };
     if (cash <= 0.0) {
         return 0;
@@ -74,10 +90,10 @@ std::int64_t Engine::affordable(double price, std::int64_t lot, bool foreign) co
     //  - minimum regime (rate * v <= min): v * (1 + fx) + min <= cash, and v at most min / rate
     const double lot_value = price * static_cast<double>(lot);
     auto lots_at_most = [](double x) { return x > 0.0 ? std::floor(std::min(x, 9.0e15)) : 0.0; };
-    const double rate = config_.courtage_rate;
-    double lots_min = lots_at_most((cash - config_.courtage_min) / (lot_value * (1.0 + fx)));
+    const double rate = instrument.own_courtage ? instrument.courtage_rate : config_.courtage_rate;
+    double lots_min = lots_at_most((cash - minimum) / (lot_value * (1.0 + fx)));
     if (rate > 0.0) {
-        lots_min = std::min(lots_min, lots_at_most(config_.courtage_min / (rate * lot_value)));
+        lots_min = std::min(lots_min, lots_at_most(minimum / (rate * lot_value)));
     }
     const double lots_rate = lots_at_most(cash / (lot_value * (1.0 + rate + fx)));
     std::int64_t best = 0;
@@ -140,7 +156,7 @@ bool Engine::try_fill(const Order& order, std::int32_t index, const Bar& bar, Ph
         order.quantity,
         static_cast<std::int64_t>(std::floor(room / static_cast<double>(lot))) * lot);
     if (buy) {
-        quantity = std::min(quantity, affordable(price, lot, instrument.foreign_currency));
+        quantity = std::min(quantity, affordable(price, instrument));
     } else {
         quantity = std::min(quantity, positions_[i] / lot * lot);
     }
@@ -149,7 +165,7 @@ bool Engine::try_fill(const Order& order, std::int32_t index, const Bar& bar, Ph
     }
 
     const double notional = static_cast<double>(quantity) * price;
-    const double fee = courtage(notional);
+    const double fee = courtage(instrument, notional);
     const double fx = instrument.foreign_currency ? config_.fx_fee_rate * notional : 0.0;
     const double spread_slippage = std::abs(price - reference) * static_cast<double>(quantity);
     if (buy) {
@@ -201,6 +217,7 @@ std::size_t Engine::step(std::span<const Bar> bars, std::span<const Order> order
     }
 
     // Validated: from here on the step cannot fail.
+    stepped_ = true;
     std::fill(traded_this_bar_.begin(), traded_this_bar_.end(), 0.0);
     state_.orders += static_cast<std::int64_t>(orders.size());
     // Each order can fill in exactly one phase (a limit marketable at the open cannot also trade

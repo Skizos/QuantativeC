@@ -206,6 +206,7 @@ public sealed class SearchPageTests : IDisposable
         ShellViewModel shell = Shell();
         InstrumentsViewModel page = shell.Instruments;
         shell.SelectedPage = page;
+        await shell.Refreshing; // the page refresh it starts, finished before the test goes on
         _search.Answer("eric", [EricB, EricHelsinki]);
         page.SearchText = "eric";
         await page.SearchCommand.ExecuteAsync();
@@ -295,15 +296,18 @@ public sealed class SearchPageTests : IDisposable
         // Beside another page: shown, so the search stays while the left page changes.
         shell.SelectedPage = shell.Charts;
         shell.SelectedBeside = shell.BesideChoices.Single(c => c.Kind == PageKind.Instruments);
+        await shell.Refreshing; // the page refresh it starts, finished before the test goes on
         page.SearchText = "eric";
         await page.SearchCommand.ExecuteAsync();
         shell.SelectedPage = shell.Accounts;
+        await shell.Refreshing; // the page refresh it starts, finished before the test goes on
         Assert.Equal(0, _search.Closes);
         Assert.Single(page.Results); // the search is kept
 
         // In a window of its own while the beside pane closes: still shown.
         shell.OpenInWindow(page);
         shell.SelectedBeside = shell.BesideChoices[0];
+        await shell.Refreshing; // the page refresh it starts, finished before the test goes on
         Assert.Equal(0, _search.Closes);
 
         // The window closes and nothing shows the page any more: the login is let go.
@@ -313,9 +317,11 @@ public sealed class SearchPageTests : IDisposable
 
         // Navigating away from it, too.
         shell.SelectedPage = page;
+        await shell.Refreshing; // the page refresh it starts, finished before the test goes on
         page.SearchText = "eric";
         await page.SearchCommand.ExecuteAsync();
         shell.SelectedPage = shell.Status;
+        await shell.Refreshing; // the page refresh it starts, finished before the test goes on
         Assert.Equal(2, _search.Closes);
     }
 

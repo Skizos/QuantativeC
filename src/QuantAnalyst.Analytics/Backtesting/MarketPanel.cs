@@ -9,7 +9,17 @@ namespace QuantAnalyst.Analytics.Backtesting;
 /// <param name="LotSize">Shares per lot (1 for Nasdaq Stockholm equities).</param>
 /// <param name="ForeignCurrency">True when the instrument does not trade in SEK (the FX fee applies).</param>
 /// <param name="TickSizes">Valid limit prices; limits are rounded to it passively.</param>
-public sealed record PanelInstrument(string Symbol, long LotSize, bool ForeignCurrency, TickSizeTable TickSizes);
+public sealed record PanelInstrument(string Symbol, long LotSize, bool ForeignCurrency, TickSizeTable TickSizes)
+{
+    /// <summary>Gets the currency the share trades in; its prices in the panel are SEK either way (ADR 0005).</summary>
+    public string Currency { get; init; } = Markets.Stockholm.Currency;
+
+    /// <summary>
+    /// Gets the last FX fixing used for a foreign share's prices (SEK per unit): its courtage minimum and tick table are
+    /// converted at it. Null for a SEK share.
+    /// </summary>
+    public decimal? LastSekPerUnit { get; init; }
+}
 
 /// <summary>
 /// Daily bars of a universe on one date axis (T periods × N instruments). A missing bar (holiday for that
