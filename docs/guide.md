@@ -256,13 +256,26 @@ On an exchange holiday the command simply says there is no session today.
 Nothing trades intraday yet. For about six months the program collects 1- and 5-minute bars and spreads; then a report
 says whether an intraday strategy is worth trying on paper. What you do:
 
-1. **Once, on a trading day after 09:30:** `.\qa intraday probe`. It asks Avanza's public chart (no login) how much
-   minute history it gives. Send me the output (or sanitize its recording into `recordings/fixtures`, as it says).
+1. **Once (done 2026-09-29):** `.\qa intraday probe`. It asks Avanza's public chart (no login) how much minute
+   history it gives. The answer: today's only (see step 3).
 2. **Once:** put up to 30 Stockholm shares on the research list, e.g. the large ones you know:
    `.\qa intraday research add VOLV-B SEB-A ATCO-A`. The search needs no login; nothing on the list is traded.
 3. **Every trading day:** nothing new. `.\qa paper run` stores the spreads it saw and, after 17:30, the day's bars.
    On a day without a session, run `.\qa intraday import` in the evening (or schedule it, e.g. 18:05 on weekdays).
-   A missed day can't be fetched later if Avanza only gives today's minute bars; the probe tells.
+   **A missed day can't be fetched later:** Avanza gives 1- and 5-minute bars for today only (your probe,
+   2026-09-29). Run the import the same evening, between 17:30 and midnight; a scheduled task is safest. Paste this
+   once into PowerShell 7 (it runs weekdays at 18:05 while you are logged in, or as soon as the PC is on again, and
+   appends to `data\intraday-import.log`; a second import the same evening changes nothing):
+
+   ```powershell
+   $run = "& 'C:\dev\QuantativeC\qa.ps1' intraday import *>> 'C:\dev\QuantativeC\data\intraday-import.log'"
+   $action = New-ScheduledTaskAction -Execute 'pwsh.exe' -Argument "-NoProfile -Command `"$run`"" -WorkingDirectory 'C:\dev\QuantativeC'
+   $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 18:05
+   Register-ScheduledTask -TaskName 'QuantAnalyst intraday import' -Action $action -Trigger $trigger -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable)
+   ```
+
+   Check it with `Get-Content data\intraday-import.log -Tail 5`; remove it with
+   `Unregister-ScheduledTask 'QuantAnalyst intraday import'`.
 4. **Whenever you like, once there are some weeks of bars:** `.\qa intraday backtest --strategy orb-long` (or
    `late-momentum`, `open-close`; `--grid range=5,15,30` tries several). It uses only the days before the intraday
    holdout: the newest 20 collected days stay unseen until you unlock `config/holdout.intraday.json` (your file, like

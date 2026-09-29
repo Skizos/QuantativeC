@@ -200,8 +200,9 @@ the screen all day.
     allowlist and the list without a login, a failing name, the refusals
   - the Paper spy: spreads kept; bars collected after the close, not before
 - All 1242 managed tests pass (1 skipped).
-- **Still waiting on the owner's probe:** whether "today" is the only period with minute bars decides whether a
-  missed day can be caught up (`--period one_week`).
+- **The owner's probe (2026-09-29, after the close):** only `today` gives 1- and 5-minute bars (`one_week` gives
+  10-minute bars at best, `one_month` hourly). A missed day cannot be caught up, so the import must run every trading
+  evening; `today` still gave the whole day at 23:24. Details in docs/research/avanza-endpoints.md.
 
 ### A3: the intraday backtest (done 2026-09-29)
 

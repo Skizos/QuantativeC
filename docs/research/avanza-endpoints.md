@@ -107,11 +107,27 @@ Rate limits: nothing is documented. The Go SDK default is **one request per 100 
 | Market data snapshot | `GET /_api/trading-critical/rest/marketdata/{orderbookId}` | Py, Go | `quote{buy,sell,last,highest,lowest,timeOfLast,updated,totalVolumeTraded,vwap}` + `orderDepth{receivedTime,levels[{buySide,sellSide}]}` + `trades`. Empty sides are formatted `"0.00"`, so volumes must decode as decimal. |
 | Stock info | `GET /_api/market-guide/stock/{id}` (+ `/details`, `/quote`, `/orderdepth`, `/marketplace`) | Py, Go | The Go SDK marks these **public** (no session needed). |
 | Price chart | `GET /_api/price-chart/stock/{id}?timePeriod=...&resolution=...` | Py, Go | OHLC `{timestamp(ms),open,high,low,close,totalVolumeTraded}`. Periods `today…infinity`, resolutions `minute…quarter`. **Public.** |
-| Price chart, intraday (2026-09-29, plan 17) | same route | Py, Go | Resolutions `minute`, `two_minutes`, `five_minutes`, `ten_minutes`, `thirty_minutes`, `hour`, `day`, `week`, `month`, `quarter`, sent lower-case (Qluxzz [`a6a18a94` `constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py) `Resolution`; `get_chart_data` lower-cases both parameters). The server picks what it allows per period and says so in `metadata.resolution.{chartResolution, availableResolutions}` (Go SDK [`43f39025` `market/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/types.go)). Our recording of `one_month` allows only `hour`, `day`, `week`. **Which periods give minute bars, and how many days back, is not known yet:** one read-only probe by the owner answers it before any intraday code. |
+| Price chart, intraday (2026-09-29, plan 17) | same route | Py, Go | Resolutions `minute`, `two_minutes`, `five_minutes`, `ten_minutes`, `thirty_minutes`, `hour`, `day`, `week`, `month`, `quarter`, sent lower-case (Qluxzz [`a6a18a94` `constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py) `Resolution`; `get_chart_data` lower-cases both parameters). The server picks what it allows per period and says so in `metadata.resolution.{chartResolution, availableResolutions}` (Go SDK [`43f39025` `market/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/types.go)). Our recording of `one_month` allows only `hour`, `day`, `week`. **The owner's probe (`qa intraday probe ERIC-B`, 2026-09-29 23:24 Stockholm, public, no login)** answered which periods give minute bars (see the table below): **only `today`**. |
 | Off-hours price | `GET /_push/market-offhours-price/latest/{id}` | Go | Public. |
 | Order validation (pre-flight) | `POST /_api/trading-critical/rest/order/validation/validate` | Go | Returns `commissionWarning`, `orderValueLimitWarning`, `priceRampingWarning`, `largeInScaleWarning`… each `{valid: bool}`. Read-only pre-trade check; see ADR 0003. |
 | Preliminary fee | `POST /_api/trading/preliminary-fee/preliminaryfee` | Go | Body `{accountId, orderbookId, price, volume, side}` as strings. Returns `commission`, `marketFees`, `totalFees`, `totalSum`, `currencyExchangeFee{rate,sum}`. **Gets the real courtage for an order, so the class need not be hard-coded.** |
 | Session info | `GET /_api/authentication/session/info/session` | Go | Health check (§1). |
+
+**Intraday probe, 2026-09-29** (owner, ERIC B, orderbook 5240; asked after the close, at 23:24 Stockholm):
+
+| period | asked | answered | bars | days | offers (`availableResolutions`) |
+|---|---|---|---|---|---|
+| `today` | (its own) | `minute` | 475 | 1 (09:00–17:29) | minute, two_minutes, five_minutes, ten_minutes, thirty_minutes, hour, day |
+| `today` | `five_minutes` | `five_minutes` | 102 | 1 (09:00–17:25) | the same |
+| `one_week` | (its own) | `ten_minutes` | 306 | 6 | ten_minutes, thirty_minutes, hour, day |
+| `one_month` | (its own) | `hour` | 198 | 22 | hour, day, week |
+| `three_months` | (its own) | `day` | 67 | 67 | day, week, month |
+
+- 1- and 5-minute bars come **only for the current day**: a day not collected by its evening is lost at those
+  resolutions (a week back gives 10-minute bars at best).
+- Asked late in the evening, `today` still returned the whole day, so the evening import works.
+- A minute with no trade has no bar (475 of 510 minutes for ERIC B); every 5-minute slot was there (102, the last
+  one the closing auction's 17:25).
 
 **No login needed:** the Go SDK README says search, stock/certificate/warrant info, quote, order depth, market place, price chart, off-hours price, news and forum work without a session. That lets the chart importer and much of Paper-mode data run **without** credentials. The ToS question in `avanza-terms.md` still applies.
 

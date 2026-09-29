@@ -32,7 +32,7 @@ internal static partial class AvanzaCommands
     {
         var common = new Common();
         var tickers = new Argument<string[]>("tickers") { Description = "Shares to collect (default: the allowlist's Stockholm shares and the research list)", Arity = ArgumentArity.ZeroOrMore };
-        var period = new Option<string>("--period") { Description = "today (default) or one_week, one_month, three_months where 'qa intraday probe' shows 1- or 5-minute bars", DefaultValueFactory = _ => "today" };
+        var period = new Option<string>("--period") { Description = "today (default; the owner's probe of 2026-09-29 found 1- and 5-minute bars for today only), or one_week, one_month, three_months if 'qa intraday probe' ever shows them there", DefaultValueFactory = _ => "today" };
         var resolution = new Option<string>("--resolution") { Description = "minute, five_minutes or both (default)", DefaultValueFactory = _ => "both" };
         var store = DataCommands.StoreOption();
         var configDir = TradingCommands.ConfigDirOption();
