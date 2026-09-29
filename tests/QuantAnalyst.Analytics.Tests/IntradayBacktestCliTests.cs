@@ -176,7 +176,7 @@ public sealed class IntradayBacktestCliTests : IDisposable
         (int code, _, string error) = Qa("intraday", "backtest", "--strategy", "orb-long");
 
         Assert.Equal(1, code);
-        Assert.Contains("8 trading day(s) of 5-minute bars are collected; the last 20 are the locked intraday holdout", error, StringComparison.Ordinal);
+        Assert.Contains("8 trading day(s) with intraday bars are collected; the last 20 are the locked intraday holdout", error, StringComparison.Ordinal);
         Assert.False(File.Exists(Ledger));
     }
 
@@ -259,7 +259,54 @@ public sealed class IntradayBacktestCliTests : IDisposable
         (int code, _, string error) = Qa("intraday", "report");
 
         Assert.Equal(1, code);
-        Assert.Contains("8 trading day(s) of 5-minute bars are collected; the report chooses on the days before the last 8", error, StringComparison.Ordinal);
+        Assert.Contains("8 trading day(s) with intraday bars are collected; the report chooses on the days before the last 8", error, StringComparison.Ordinal);
+    }
+
+    /// <summary>A caught-up day of 10-minute bars (A2b), 09:00-17:20; the breakout share closes at 101 from 10:00.</summary>
+    private static List<Bar> TenMinuteBars(DateOnly day, bool breakout)
+    {
+        var bars = new List<Bar>();
+        for (int k = 0; k < 51; k++)
+        {
+            Assert.True(MarketTime.TryStockholmToUtc(day.ToDateTime(new TimeOnly(9, 0)).AddMinutes(10 * k), out DateTimeOffset start));
+            decimal close = breakout ? (k >= 6 ? 101m : 100m) : 50m;
+            decimal open = breakout && k == 6 ? 100m : close;
+            bars.Add(new Bar(start, open, Math.Max(open, close) + 0.1m, Math.Min(open, close) - 0.1m, close, 100_000));
+        }
+
+        return bars;
+    }
+
+    [Fact]
+    public void Fallback_FillsAWholeMissedDay_WithTenMinuteBars_AsASeparateStudy()
+    {
+        // Wednesday 30 September was missed by every share and caught up at 10 minutes; on 2 October VOLV B also has
+        // 10-minute bars, but that day has 5-minute bars, so they are never mixed in.
+        var missed = new DateOnly(2026, 9, 30);
+        using (HistoryStore store = HistoryStore.Open(Store))
+        {
+            DateTimeOffset knownAt = new(2026, 10, 12, 16, 0, 0, TimeSpan.Zero);
+            store.UpsertIntradayBars(Eric, ChartResolution.TenMinutes, TenMinuteBars(missed, breakout: true), AvanzaChartImporter.AvanzaPriceChart, "test", knownAt);
+            store.UpsertIntradayBars(Volvo, ChartResolution.TenMinutes, [.. TenMinuteBars(missed, breakout: false), .. TenMinuteBars(new DateOnly(2026, 10, 2), breakout: false)],
+                AvanzaChartImporter.AvanzaPriceChart, "test", knownAt);
+        }
+
+        // Nine days with bars now: the holdout is still the last three (8, 9 and 12 October).
+        (int code, string output, string error) = Qa("intraday", "backtest", "--strategy", "orb-long");
+        Assert.True(code == 0, error + output);
+        Assert.Contains("1 missed day(s) have only caught-up 10-minute bars; --fallback uses them (a separate study).", output, StringComparison.Ordinal);
+        Assert.Contains("Study: orb-long|ERIC B,VOLV B|2026-10-01..2026-10-07|avanza-price-chart:5m", output, StringComparison.Ordinal);
+
+        (code, output, error) = Qa("intraday", "backtest", "--strategy", "orb-long", "--fallback");
+        Assert.True(code == 0, error + output);
+        Assert.Contains("Fallback: 1 of 6 trading day(s) are 10-minute days, no share having 5-minute bars for them (2026-09-30).", output, StringComparison.Ordinal);
+        Assert.Contains("Trades: 12 fills on 6 trading day(s)", output, StringComparison.Ordinal); // ERIC B in and out on the 10-minute day too
+        Assert.Contains("Study: orb-long|ERIC B,VOLV B|2026-09-30..2026-10-07|avanza-price-chart:5m+10m", output, StringComparison.Ordinal);
+        Assert.Equal(["avanza-price-chart:5m", "avanza-price-chart:5m+10m"], new TrialLedger(Ledger).ReadAll().Select(t => t.DataSource));
+
+        (code, _, error) = Qa("intraday", "backtest", "--strategy", "orb-long", "--fallback", "--resolution", "minute");
+        Assert.Equal(1, code);
+        Assert.Contains("--fallback fills missed days of 5-minute bars", error, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -274,8 +274,15 @@ says whether an intraday strategy is worth trying on paper. What you do:
    Register-ScheduledTask -TaskName 'QuantAnalyst intraday import' -Action $action -Trigger $trigger -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable)
    ```
 
-   Check it with `Get-Content data\intraday-import.log -Tail 5`; remove it with
-   `Unregister-ScheduledTask 'QuantAnalyst intraday import'`.
+   The log file appears after the task's first run, the next weekday at 18:05. To try it at once:
+   `Start-ScheduledTask 'QuantAnalyst intraday import'`, wait a minute, then
+   `Get-Content data\intraday-import.log -Tail 5` (and `Get-ScheduledTaskInfo 'QuantAnalyst intraday import'`: a
+   `LastTaskResult` of 0 means it ran fine). Remove it with `Unregister-ScheduledTask 'QuantAnalyst intraday import'`.
+
+   **If a day is missed anyway** (the PC was off), the next import catches it up: for each share, the trading days
+   of the last week without 5-minute bars are fetched once as 10-minute bars (Avanza keeps those for a week). The
+   output lists them. Older days are gone. Backtests and the report use those days only with `--fallback`, and
+   only for days no share has 5-minute bars for.
 4. **Whenever you like, once there are some weeks of bars:** `.\qa intraday backtest --strategy orb-long` (or
    `late-momentum`, `open-close`; `--grid range=5,15,30` tries several). It uses only the days before the intraday
    holdout: the newest 20 collected days stay unseen until you unlock `config/holdout.intraday.json` (your file, like

@@ -170,6 +170,47 @@ public sealed class IntradayStrategyTests
         Assert.Equal(["03-03 09:10 buy A 9", "03-03 17:10 sell A 9"], Fills(r, data));
     }
 
+    /// <summary>One day of 10-minute bars (a caught-up missed day, A2b): 100 until 10:00, then 101.</summary>
+    private static MarketPanel TenMinuteDay()
+    {
+        DateTimeOffset open = Calendar.ToUtc(Monday, new TimeOnly(9, 0));
+        var bars = new List<Bar>();
+        decimal previous = 100m;
+        for (int k = 0; k < 51; k++)
+        {
+            decimal close = k >= 6 ? 101m : 100m;
+            bars.Add(new Bar(open.AddMinutes(10 * k), previous, Math.Max(previous, close) + 0.1m, Math.Min(previous, close) - 0.1m, close, 1_000_000));
+            previous = close;
+        }
+
+        return MarketPanel.FromIntradayBars([(new PanelInstrument("A", 1, false, Cents), bars)], Source);
+    }
+
+    private static BacktestResult RunWith(IntradayClock clock, MarketPanel data, string name, params (string Key, string Value)[] parameters) =>
+        BacktestRunner.Run(BacktestFixtures.Request(data, IntradayStrategyCatalog.Create(name, parameters.ToDictionary(p => p.Key, p => p.Value), clock)) with
+        {
+            Costs = Free,
+            InitialCash = 10_000m,
+            Execution = new ExecutionOptions { OrderType = BacktestOrderType.MarketOnOpen },
+        });
+
+    [Fact]
+    public void OnATenMinuteDay_TheClockKeepsTheRealTimes()
+    {
+        MarketPanel data = TenMinuteDay();
+        var tenMinutes = new IntradayClock(Calendar, TimeSpan.FromMinutes(5), new Dictionary<DateOnly, TimeSpan> { [Monday] = TimeSpan.FromMinutes(10) });
+
+        // The 09:00 bar closes at 09:10 and the 17:00 bar at 17:10: in at 09:10, out at 17:10, as on a 5-minute day.
+        Assert.Equal(["03-03 09:10 buy A 9", "03-03 17:10 sell A 9"], Fills(RunWith(tenMinutes, data, "open-close"), data));
+
+        // Taken for 5-minute bars, every decision would be 5 minutes early: in at 09:20, out at 17:20.
+        Assert.Equal(["03-03 09:20 buy A 9", "03-03 17:20 sell A 9"], Fills(RunWith(Clock, data, "open-close"), data));
+
+        // orb-long: the 15-minute range from 09:05 holds only the 09:10 bar; a 5-minute range can't form at all.
+        Assert.Equal(["03-03 10:10 buy A 9", "03-03 17:10 sell A 9"], Fills(RunWith(tenMinutes, data, "orb-long"), data));
+        Assert.Empty(RunWith(tenMinutes, data, "orb-long", ("range", "5")).Fills);
+    }
+
     [Fact]
     public void OnAHalfDay_TheExitFollowsTheEarlyClose()
     {

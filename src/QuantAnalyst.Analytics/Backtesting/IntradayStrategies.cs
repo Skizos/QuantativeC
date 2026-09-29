@@ -12,21 +12,33 @@ public sealed class IntradayClock
 {
     private readonly MarketCalendar _calendar;
     private readonly Dictionary<DateOnly, (DateTimeOffset, DateTimeOffset)> _sessions = [];
+    private readonly Dictionary<DateOnly, TimeSpan> _days;
 
-    public IntradayClock(MarketCalendar calendar, TimeSpan barLength)
+    /// <param name="dayBarLengths">
+    /// Days whose bars are longer than <paramref name="barLength"/> (plan 17 A2b: 10-minute bars on a day no 5-minute bars
+    /// were collected for); every bar of such a day has that length.
+    /// </param>
+    public IntradayClock(MarketCalendar calendar, TimeSpan barLength, IReadOnlyDictionary<DateOnly, TimeSpan>? dayBarLengths = null)
     {
         ArgumentNullException.ThrowIfNull(calendar);
-        if (barLength <= TimeSpan.Zero || barLength > TimeSpan.FromHours(1))
+        foreach (TimeSpan length in (dayBarLengths?.Values ?? []).Append(barLength))
         {
-            throw new ArgumentOutOfRangeException(nameof(barLength), barLength, "An intraday bar is longer than zero and at most an hour.");
+            if (length <= TimeSpan.Zero || length > TimeSpan.FromHours(1))
+            {
+                throw new ArgumentOutOfRangeException(nameof(barLength), length, "An intraday bar is longer than zero and at most an hour.");
+            }
         }
 
         _calendar = calendar;
         BarLength = barLength;
+        _days = dayBarLengths is null ? [] : new Dictionary<DateOnly, TimeSpan>(dayBarLengths);
     }
 
-    /// <summary>Gets the length of one bar (a decision is made at a bar's start plus this).</summary>
+    /// <summary>Gets the length of one bar (a decision is made at a bar's start plus this), except on <see cref="BarLengthOn"/>'s own days.</summary>
     public TimeSpan BarLength { get; }
+
+    /// <summary>The length of the bars of <paramref name="date"/>.</summary>
+    public TimeSpan BarLengthOn(DateOnly date) => _days.GetValueOrDefault(date, BarLength);
 
     /// <summary>The session of <paramref name="date"/> in UTC. Bars on a day the calendar has closed are refused, not guessed.</summary>
     public (DateTimeOffset OpenUtc, DateTimeOffset CloseUtc) Session(DateOnly date)
@@ -110,9 +122,6 @@ public abstract class IntradayStrategy : IStrategy
     /// <summary>Gets today's session close (UTC).</summary>
     protected DateTimeOffset CloseUtc { get; private set; }
 
-    /// <summary>Gets the bar length.</summary>
-    protected TimeSpan BarLength => _clock.BarLength;
-
     public void Decide(BarWindow window, Span<double> targets)
     {
         ArgumentNullException.ThrowIfNull(window);
@@ -138,7 +147,7 @@ public abstract class IntradayStrategy : IStrategy
         }
 
         DateTimeOffset barStart = window.Time(window.Now);
-        DateTimeOffset barEnd = barStart + BarLength;
+        DateTimeOffset barEnd = barStart + _clock.BarLengthOn(date);
         bool closing = barEnd >= CloseUtc - Exit;
         _candidates.Clear();
         int held = 0;

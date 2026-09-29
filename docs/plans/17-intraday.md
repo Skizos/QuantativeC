@@ -382,3 +382,46 @@ the screen all day.
   - the research list
   - verifying the Start allowance and the calendar
   - then the report, and unlocking the holdout for its last line
+
+### A2b: the 10-minute fallback for missed days (planned and built 2026-09-29, owner: "yes add the 10-minute fallback for missed days")
+
+Why: the owner's probe showed 1- and 5-minute bars exist for the current day only; `one_week` gives 10-minute bars.
+A day the evening import missed (PC off, a failed call) is otherwise lost for good.
+
+- **Collection (the catch-up):**
+  - every `qa intraday import` of today's bars (and the Paper session's collection after the close) also looks back
+    over the last week
+  - per share: the XSTO trading days of the last 7 days, before today, with neither 5-minute nor 10-minute bars
+  - if there are any: one public `one_week` call at `ten_minutes` (the same route and resolution names as before,
+    Qluxzz `a6a18a94`)
+  - the same strictness as the 1- and 5-minute import: the answer must be `ten_minutes`, on the 10-minute grid,
+    rising, and open bars are left out
+  - only the missed days' bars are stored, as resolution `TenMinutes`
+  - no calendar loaded: the catch-up is skipped and says so (trading days are never guessed)
+  - `--no-catch-up` skips it
+- **Use in backtests and the report (`--fallback`, off by default):**
+  - a day becomes a 10-minute day only when **no** share has 5-minute bars for it. Mixing bar sizes within one day
+    would let one share's later data (a 10-minute bar ends 5 minutes after the 5-minute clock) steer another's
+    earlier trade.
+  - the strategies get each day's bar length from the clock (`IntradayClock` per day), so decisions and exits keep
+    their real times. Consequence: on a 10-minute day, a 5-minute opening range can't be formed, so `orb-long
+    range=5` does not trade that day.
+  - such runs name their source `avanza-price-chart:5m+10m`: a separate study, never mixed with the pure 5-minute
+    one
+  - the output says how many of the days are 10-minute days
+- **The intraday holdout** counts the days with bars of any resolution, so it is the same days whatever the run uses.
+- **Done 2026-09-29.** Tests (6 new):
+  - the store: collected days of every resolution
+  - the catch-up:
+    - only the week's missed trading days filled, in one call, nothing asked the next evening
+    - a day the answer no longer has reported as lost
+    - another resolution refused
+  - `qa intraday import`: skipped without a calendar, then catching up; nothing missing the next evening; `--no-catch-up`
+  - the strategies on a 10-minute day, with and without the day's bar length (5 minutes late without it)
+  - `qa intraday backtest --fallback`:
+    - a whole missed day used and a mixed day not
+    - the separate study
+    - the hint without the flag
+    - refused for 1-minute runs
+- The existing holdout tests now read "trading day(s) with intraday bars".
+- All 1301 managed tests pass (1 skipped).

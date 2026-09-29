@@ -578,7 +578,7 @@ internal static partial class AvanzaCommands
             IReadOnlyList<IntradayName> names = CollectedShares(storePath, setup.ConfigDir, output);
             if (names.Count > 0)
             {
-                await CollectIntradayAsync(ctx.Connection.Gateway, storePath, names, ChartPeriod.Today, IntradayImporter.Resolutions, time, output, ctx.Ct).ConfigureAwait(false);
+                await CollectIntradayAsync(ctx.Connection.Gateway, storePath, names, ChartPeriod.Today, IntradayImporter.Resolutions, time, output, ctx.Ct, setup.Calendar).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)

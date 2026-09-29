@@ -6,6 +6,7 @@ using QuantAnalyst.Core;
 using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.Calendar;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Intraday;
 using QuantAnalyst.Data.Store;
@@ -34,15 +35,17 @@ internal static partial class AvanzaCommands
         var tickers = new Argument<string[]>("tickers") { Description = "Shares to collect (default: the allowlist's Stockholm shares and the research list)", Arity = ArgumentArity.ZeroOrMore };
         var period = new Option<string>("--period") { Description = "today (default; the owner's probe of 2026-09-29 found 1- and 5-minute bars for today only), or one_week, one_month, three_months if 'qa intraday probe' ever shows them there", DefaultValueFactory = _ => "today" };
         var resolution = new Option<string>("--resolution") { Description = "minute, five_minutes or both (default)", DefaultValueFactory = _ => "both" };
+        var noCatchUp = new Option<bool>("--no-catch-up") { Description = "Skip the catch-up: trading days of the last week without 5-minute bars, fetched as 10-minute bars (one extra call per share that misses one)" };
         var store = DataCommands.StoreOption();
         var configDir = TradingCommands.ConfigDirOption();
         var command = new Command(
             "import",
-            "Store 1- and 5-minute bars from Avanza's public price chart, without a login (plan 17 step A2). Bars still open are left out; run it after 17:30 for the whole day. Read-only; nothing is traded.");
+            "Store today's 1- and 5-minute bars from Avanza's public price chart, without a login (plan 17 step A2), and catch up missed days of the last week with 10-minute bars (A2b). Bars still open are left out; run it after 17:30 and before midnight. Read-only; nothing is traded.");
         common.AddTo(command, json: false);
         command.Arguments.Add(tickers);
         command.Options.Add(period);
         command.Options.Add(resolution);
+        command.Options.Add(noCatchUp);
         command.Options.Add(store);
         command.Options.Add(configDir);
         command.SetAction(parse => Run(parse, services, common, record: null, async (ctx, output) =>
@@ -59,7 +62,20 @@ internal static partial class AvanzaCommands
                 throw new ArgumentException("Nothing to collect: the allowlist has no Stockholm share and the research list is empty. Add names with 'qa intraday research add VOLV-B'.");
             }
 
-            int failed = await CollectIntradayAsync(ctx.Connection.Gateway, storePath, names, chartPeriod, resolutions, services.Time, output, ctx.Ct).ConfigureAwait(false);
+            MarketCalendar? catchUp = null;
+            if (chartPeriod == ChartPeriod.Today && !parse.GetValue(noCatchUp))
+            {
+                try
+                {
+                    catchUp = MarketCalendarLoader.LoadDirectory(config, Markets.Stockholm.Mic);
+                }
+                catch (CalendarConfigException ex)
+                {
+                    output.WriteLine($"Catch-up skipped: no {Markets.Stockholm.Mic} calendar to tell the last week's trading days ({ex.Message}).");
+                }
+            }
+
+            int failed = await CollectIntradayAsync(ctx.Connection.Gateway, storePath, names, chartPeriod, resolutions, services.Time, output, ctx.Ct, catchUp).ConfigureAwait(false);
             return failed == 0 ? 0 : 1;
         }));
         return command;
@@ -160,9 +176,10 @@ internal static partial class AvanzaCommands
     /// Collects 1- and 5-minute bars for <paramref name="names"/> (plan 17 step A2): one public chart call per name and
     /// resolution. A name that fails is reported and the others go on. Returns how many imports failed.
     /// </summary>
+    /// <param name="catchUp">The XSTO calendar, to catch up the last week's missed days with 10-minute bars (A2b); null skips it.</param>
     internal static async Task<int> CollectIntradayAsync(
         IBrokerGateway gateway, string storePath, IReadOnlyList<IntradayName> names, ChartPeriod period, IReadOnlyList<ChartResolution> resolutions, TimeProvider time,
-        TextWriter output, CancellationToken ct)
+        TextWriter output, CancellationToken ct, MarketCalendar? catchUp = null)
     {
         using HistoryStore history = HistoryStore.Open(storePath);
         int failed = 0, stored = 0;
@@ -192,7 +209,51 @@ internal static partial class AvanzaCommands
 
         output.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"Intraday: {stored} bar(s) stored for {names.Count} share(s){(failed > 0 ? $", {failed} import(s) failed" : string.Empty)}. Source: {AvanzaChartImporter.AvanzaPriceChart.Label}."));
+        if (catchUp is not null)
+        {
+            failed += await CatchUpAsync(gateway, history, names, catchUp, time, output, ct).ConfigureAwait(false);
+        }
+
         return failed;
+    }
+
+    /// <summary>
+    /// Plan 17 A2b: for each share, the last week's trading days without 5- or 10-minute bars, fetched once as 10-minute
+    /// bars (Avanza keeps 1- and 5-minute bars for today only). Returns how many shares failed.
+    /// </summary>
+    private static async Task<int> CatchUpAsync(
+        IBrokerGateway gateway, HistoryStore history, IReadOnlyList<IntradayName> names, MarketCalendar calendar, TimeProvider time, TextWriter output, CancellationToken ct)
+    {
+        int failed = 0, filled = 0, lost = 0;
+        foreach (IntradayName name in names)
+        {
+            try
+            {
+                IntradayCatchUpReport r = await IntradayImporter.CatchUpAsync(history, gateway, name.Id, calendar, AvanzaConnection.PriceChartSourceVersion, time, ct).ConfigureAwait(false);
+                if (r.Missed.Count == 0)
+                {
+                    continue;
+                }
+
+                filled += r.Filled.Count;
+                lost += r.Lost.Count;
+                output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"{name.Ticker} catch-up: no bars on {Days(r.Missed)}; {(r.Filled.Count == 0 ? "none of them" : $"{Days(r.Filled)}")} filled with {r.Bars!.New + r.Bars.Restated} 10-minute bar(s){(r.Lost.Count > 0 ? $"; {Days(r.Lost)} not in Avanza's answer, lost" : string.Empty)}."));
+            }
+            catch (Exception ex) when (ex is HistoryImportException or SchemaDriftException or BrokerUnavailableException)
+            {
+                failed++;
+                output.WriteLine($"{name.Ticker} catch-up: FAILED ({ex.Message})");
+            }
+        }
+
+        output.WriteLine(filled + lost == 0 && failed == 0
+            ? "Catch-up: no trading day of the last week is missing."
+            : string.Create(CultureInfo.InvariantCulture,
+                $"Catch-up: {filled} missed share-day(s) filled with 10-minute bars{(lost > 0 ? $", {lost} lost" : string.Empty)}{(failed > 0 ? $", {failed} failed" : string.Empty)}. Backtests use them only with --fallback."));
+        return failed;
+
+        static string Days(IEnumerable<DateOnly> days) => string.Join(", ", days.Order().Select(d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)));
     }
 
     /// <summary>The shares collected by default: the allowlist's Stockholm (SEK) shares and the research list (ADR 0006 D5).</summary>

@@ -172,6 +172,78 @@ public sealed class IntradayDataTests : IDisposable
         Assert.Empty(gateway.ChartRequests);
     }
 
+    // ---- the catch-up (A2b) ----
+
+    // The week before Tuesday 2026-09-29: Tue 22 .. Mon 28; the weekend and a (made-up) holiday on Thursday 24 are no trading days.
+    private static readonly MarketCalendar Week = new([new CalendarYear(
+        "XSTO", 2026, new TimeOnly(9, 0), new TimeOnly(17, 30), new TimeOnly(9, 0), new TimeOnly(13, 0),
+        [new CalendarEntry(new DateOnly(2026, 9, 24), "test holiday")], [], "https://example.invalid/calendar", null)]);
+
+    private static DateTimeOffset NineOn(int day) => new(2026, 9, day, 7, 0, 0, TimeSpan.Zero); // 09:00 Stockholm (CEST)
+
+    private static readonly FakeTimeProvider Evening = new(new DateTimeOffset(2026, 9, 29, 16, 0, 0, TimeSpan.Zero)); // 18:00
+
+    private static readonly int[] WeekDays = [22, 23, 25, 28, 29];
+
+    /// <summary>What one_week at ten_minutes gives: three 10-minute bars on each trading day from the 22nd (the 29th included).</summary>
+    private static PriceHistory TenMinuteWeek(params int[] leaveOut) =>
+        Chart(ChartResolution.TenMinutes, [.. WeekDays.Except(leaveOut).SelectMany(d => Minutes(NineOn(d), 3, TimeSpan.FromMinutes(10)))]);
+
+    private static IEnumerable<DateOnly> DaysOf(HistoryStore store, ChartResolution r) =>
+        store.GetIntradayBars(Eric, r, AvanzaChartImporter.AvanzaPriceChart.Name).Select(b => DateOnly.FromDateTime(MarketTime.ToStockholm(b.Bar.TimestampUtc).DateTime)).Distinct();
+
+    [Fact]
+    public async Task TheCatchUp_FillsOnlyTheWeeksMissedTradingDays_WithTenMinuteBars_InOneCall()
+    {
+        using HistoryStore store = Store();
+        // 5-minute bars on the 23rd and 25th; the 22nd and 28th were missed; the 24th is a holiday; the 29th is today's own import.
+        store.UpsertIntradayBars(Eric, ChartResolution.FiveMinutes, [.. Minutes(NineOn(23), 2, TimeSpan.FromMinutes(5)), .. Minutes(NineOn(25), 2, TimeSpan.FromMinutes(5))],
+            AvanzaChartImporter.AvanzaPriceChart, "v", Evening.GetUtcNow());
+        var gateway = new FakeGateway { Chart = (_, _, _) => TenMinuteWeek() };
+
+        IntradayCatchUpReport r = await IntradayImporter.CatchUpAsync(store, gateway, Eric, Week, "v", Evening, Ct);
+
+        Assert.Equal((ChartPeriod.OneWeek, (ChartResolution?)ChartResolution.TenMinutes), Assert.Single(gateway.ChartRequests));
+        DateOnly[] missed = [new(2026, 9, 22), new(2026, 9, 28)];
+        Assert.Equal(missed, r.Missed);
+        Assert.Equal(missed, r.Filled.Order());
+        Assert.Empty(r.Lost);
+        Assert.Equal(new WriteCounts(6, 0, 0), r.Bars);
+        Assert.Equal(missed, DaysOf(store, ChartResolution.TenMinutes).Order()); // not the 23rd, 25th or today
+
+        // The next evening nothing is missing: no call at all.
+        IntradayCatchUpReport again = await IntradayImporter.CatchUpAsync(store, gateway, Eric, Week, "v", Evening, Ct);
+        Assert.Equal((0, (WriteCounts?)null), (again.Missed.Count, again.Bars));
+        Assert.Single(gateway.ChartRequests);
+    }
+
+    [Fact]
+    public async Task TheCatchUp_SaysWhatTheAnswerNoLongerHas_AndRefusesAnotherResolution()
+    {
+        using HistoryStore store = Store();
+        var gateway = new FakeGateway { Chart = (_, _, _) => TenMinuteWeek(leaveOut: 22) };
+        IntradayCatchUpReport r = await IntradayImporter.CatchUpAsync(store, gateway, Eric, Week, "v", Evening, Ct);
+        Assert.Equal([new DateOnly(2026, 9, 22)], r.Lost);
+        Assert.Equal(4, r.Missed.Count); // 22, 23, 25, 28: nothing was collected at all
+
+        using HistoryStore other = HistoryStore.Open(_dir.File("other.duckdb"));
+        var hourly = new FakeGateway { Chart = (_, _, _) => Chart(ChartResolution.Hour, B(NineOn(28))) };
+        var ex = await Assert.ThrowsAsync<HistoryImportException>(() => IntradayImporter.CatchUpAsync(other, hourly, Eric, Week, "v", Evening, Ct));
+        Assert.Contains("Avanza answered with Hour bars for OneWeek, not TenMinutes; nothing was stored", ex.Message, StringComparison.Ordinal);
+        Assert.Empty(other.GetIntradayCollectedDays(AvanzaChartImporter.AvanzaPriceChart.Name));
+    }
+
+    [Fact]
+    public void TheCollectedDays_CountEveryResolution_ForTheHoldout()
+    {
+        using HistoryStore store = Store();
+        store.UpsertIntradayBars(Eric, ChartResolution.FiveMinutes, Minutes(NineOn(23), 2, TimeSpan.FromMinutes(5)), AvanzaChartImporter.AvanzaPriceChart, "v", Evening.GetUtcNow());
+        store.UpsertIntradayBars(Eric, ChartResolution.TenMinutes, Minutes(NineOn(22), 2, TimeSpan.FromMinutes(10)), AvanzaChartImporter.AvanzaPriceChart, "v", Evening.GetUtcNow());
+
+        Assert.Equal([new DateOnly(2026, 9, 23)], store.GetIntradayCollectedDays(ChartResolution.FiveMinutes, AvanzaChartImporter.AvanzaPriceChart.Name));
+        Assert.Equal([new DateOnly(2026, 9, 22), new DateOnly(2026, 9, 23)], store.GetIntradayCollectedDays(AvanzaChartImporter.AvanzaPriceChart.Name));
+    }
+
     // ---- the research list ----
 
     [Fact]

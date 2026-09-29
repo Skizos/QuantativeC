@@ -45,6 +45,8 @@ internal static partial class IntradayBacktestCommands
 
         public Option<string?> From { get; } = new("--from") { Description = "First trading day (yyyy-MM-dd)" };
 
+        public Option<bool> Fallback { get; } = new("--fallback") { Description = "Also use the 10-minute bars caught up for days no share has 5-minute bars for (a separate study, source avanza-price-chart:5m+10m)" };
+
         public Option<string?> To { get; } = new("--to") { Description = "Last trading day (yyyy-MM-dd); defaults to the day before the locked intraday holdout" };
 
         public Option<string?> Costs { get; } = new("--costs") { Description = "Courtage class (config/costs.<name>.json) or a path. Default: config/backtest-defaults.json" };
@@ -64,7 +66,7 @@ internal static partial class IntradayBacktestCommands
         {
             Option[] strategy = report ? [] : [Strategy, Param, Grid, Top];
             Option[] end = report ? [] : [To];
-            foreach (Option o in (Option[])[.. strategy, Tickers, Resolution, From, .. end, Costs, Cash, ConfigDir, Store, Ledger, Json])
+            foreach (Option o in (Option[])[.. strategy, Tickers, Resolution, Fallback, From, .. end, Costs, Cash, ConfigDir, Store, Ledger, Json])
             {
                 command.Options.Add(o);
             }
@@ -93,8 +95,14 @@ internal static partial class IntradayBacktestCommands
                 grid[key] = QaCli.SplitList(list);
             }
 
-            StrategyDefinition[] configurations = [.. BacktestSweep.ExpandGrid(grid, fixedParams).Select(p => IntradayStrategyCatalog.Create(name, p, clock))];
-            BacktestCommands.Setup setup = Prepare(parse, o, configDir, resolution, configurations[0], calendar, calendarNote, report: false, out _);
+            IReadOnlyList<IReadOnlyDictionary<string, string>> points = BacktestSweep.ExpandGrid(grid, fixedParams);
+            StrategyDefinition[] configurations = [.. points.Select(p => IntradayStrategyCatalog.Create(name, p, clock))]; // bad parameters fail before any data is read
+            Prepared prepared = Prepare(parse, o, configDir, resolution, configurations[0], calendar, calendarNote, report: false);
+
+            // The strategies learn each day's bar length (10-minute fallback days) from the clock.
+            clock = new IntradayClock(calendar, clock.BarLength, prepared.DayBarLengths);
+            configurations = [.. points.Select(p => IntradayStrategyCatalog.Create(name, p, clock))];
+            BacktestCommands.Setup setup = prepared.Setup with { Template = prepared.Setup.Template with { Strategy = configurations[0] } };
             bool json = parse.GetValue(o.Json);
             if (grid.Count == 0)
             {
@@ -172,10 +180,19 @@ internal static partial class IntradayBacktestCommands
         }
     }
 
-    private static BacktestCommands.Setup Prepare(
+    /// <summary>What a run or the report needs: the template, the holdout's bars once unlocked (report only), and the 10-minute days.</summary>
+    private sealed record Prepared(BacktestCommands.Setup Setup, MarketPanel? HoldoutData, IReadOnlyDictionary<DateOnly, TimeSpan> DayBarLengths);
+
+    private static Prepared Prepare(
         ParseResult parse, Inputs o, string configDir, ChartResolution resolution, StrategyDefinition strategy, MarketCalendar calendar, string? calendarNote,
-        bool report, out MarketPanel? holdoutData)
+        bool report)
     {
+        bool fallback = parse.GetValue(o.Fallback);
+        if (fallback && resolution != ChartResolution.FiveMinutes)
+        {
+            throw new ArgumentException("--fallback fills missed days of 5-minute bars with 10-minute ones; it does not apply to --resolution minute.");
+        }
+
         BacktestDefaults defaults = BacktestDefaults.Load(configDir);
         CostModel costs = BacktestCommands.LoadCosts(configDir, parse.GetValue(o.Costs) ?? defaults.Costs);
         decimal cash = parse.GetValue(o.Cash) ?? defaults.Cash;
@@ -211,29 +228,35 @@ internal static partial class IntradayBacktestCommands
         using HistoryStore store = DataCommands.OpenExisting(storePath);
         string sourceName = AvanzaChartImporter.AvanzaPriceChart.Name;
         IntradayHoldout rule = IntradayHoldout.Load(Path.Combine(configDir, IntradayHoldout.FileName));
-        IReadOnlyList<DateOnly> collected = store.GetIntradayCollectedDays(resolution, sourceName);
-        string bars = Bars(resolution);
+        // The holdout counts days with bars of any resolution, so it is the same days whatever a run reads (A2b).
+        IReadOnlyList<DateOnly> collected = store.GetIntradayCollectedDays(sourceName);
         if (collected.Count == 0)
         {
-            throw new ArgumentException($"No {bars} bars are collected yet. Run 'qa intraday import' after each trading day (or let 'qa paper run' do it).");
+            throw new ArgumentException("No intraday bars are collected yet. Run 'qa intraday import' after each trading day (or let 'qa paper run' do it).");
         }
 
         // The holdout rolls with the collection: the last `days` collected days. Too few days, and all of them are in it.
         if (report && collected.Count <= rule.Days)
         {
-            throw new ArgumentException($"{collected.Count} trading day(s) of {bars} bars are collected; the report chooses on the days before the last {rule.Days} (the intraday holdout), so there is nothing to report yet. Keep collecting.");
+            throw new ArgumentException($"{collected.Count} trading day(s) with intraday bars are collected; the report chooses on the days before the last {rule.Days} (the intraday holdout), so there is nothing to report yet. Keep collecting.");
         }
 
         HoldoutPolicy holdout = rule.For(collected) ?? (rule.Locked
-            ? throw new ArgumentException($"{collected.Count} trading day(s) of {bars} bars are collected; the last {rule.Days} are the locked intraday holdout ({rule.Path}), so nothing can be backtested yet. Keep collecting.")
+            ? throw new ArgumentException($"{collected.Count} trading day(s) with intraday bars are collected; the last {rule.Days} are the locked intraday holdout ({rule.Path}), so nothing can be backtested yet. Keep collecting.")
             : new HoldoutPolicy(false, collected[0], rule.Path));
 
         // The report never chooses on the holdout's days, locked or not; it checks the choice on them once unlocked.
         DateOnly? readTo = to is null && (holdout.Locked || report) ? holdout.Start.AddDays(-1) : to;
-        holdoutData = null;
+        MarketPanel? holdoutData = null;
+        var dayBarLengths = new Dictionary<DateOnly, TimeSpan>();
         if (report && !holdout.Locked)
         {
-            holdoutData = LoadPanel(store, names, resolution, calendar, holdout.Start, null, costs, []);
+            (holdoutData, IReadOnlyDictionary<DateOnly, TimeSpan> heldCoarse) = LoadPanel(store, names, resolution, calendar, holdout.Start, null, costs, [], fallback);
+            foreach ((DateOnly day, TimeSpan length) in heldCoarse)
+            {
+                dayBarLengths[day] = length;
+            }
+
             notes.Add($"The intraday holdout from {holdout.Start:yyyy-MM-dd} is unlocked ({rule.Path}): the candidate is chosen without it, then checked on it.");
         }
         else if (readTo != to)
@@ -241,7 +264,12 @@ internal static partial class IntradayBacktestCommands
             notes.Add($"Data read up to {readTo:yyyy-MM-dd}: the intraday holdout, the last {rule.Days} collected days from {holdout.Start:yyyy-MM-dd}, is locked ({rule.Path}).");
         }
 
-        MarketPanel data = LoadPanel(store, names, resolution, calendar, from, readTo, costs, notes);
+        (MarketPanel data, IReadOnlyDictionary<DateOnly, TimeSpan> coarse) = LoadPanel(store, names, resolution, calendar, from, readTo, costs, notes, fallback);
+        foreach ((DateOnly day, TimeSpan length) in coarse)
+        {
+            dayBarLengths[day] = length;
+        }
+
         var template = new BacktestRequest
         {
             Data = data,
@@ -254,7 +282,7 @@ internal static partial class IntradayBacktestCommands
             GitCommit = Analytics.Backtesting.GitInfo.TryGetCommit(Directory.GetCurrentDirectory()),
         };
         notes.Add("Orders: market orders at the next bar's open, paying half the spread plus slippage; flat before each close (ADR 0006).");
-        return new BacktestCommands.Setup(template, notes);
+        return new Prepared(new BacktestCommands.Setup(template, notes), holdoutData, dayBarLengths);
     }
 
     /// <summary>
@@ -262,10 +290,16 @@ internal static partial class IntradayBacktestCommands
     /// calendar), a share's day left out when its bars stop more than <see cref="CompleteBy"/> before the close, and its own
     /// half-spread when a Paper session measured it often enough. The source is the daily bars' own (NOT point-in-time,
     /// NOT survivorship-free), named with the resolution so 1- and 5-minute runs are separate studies.
+    /// <para>
+    /// With <paramref name="fallback"/> (A2b): a day for which no share has bars of <paramref name="resolution"/> is taken
+    /// from the caught-up 10-minute bars, for every share that has them. A day is never mixed: one share's 10-minute bar
+    /// ends after another's 5-minute bar, so mixing would let later data steer an earlier trade. Returns those days with
+    /// their bar length, for the strategies' clock; the source becomes <c>…:5m+10m</c>, a separate study.
+    /// </para>
     /// </summary>
-    internal static MarketPanel LoadPanel(
+    internal static (MarketPanel Panel, IReadOnlyDictionary<DateOnly, TimeSpan> CoarseDays) LoadPanel(
         HistoryStore store, IReadOnlyList<IntradayName> names, ChartResolution resolution, MarketCalendar calendar, DateOnly? from, DateOnly? to,
-        CostModel costs, List<string> notes)
+        CostModel costs, List<string> notes, bool fallback = false)
     {
         string sourceName = AvanzaChartImporter.AvanzaPriceChart.Name;
         DataSourceInfo source = store.GetSource(sourceName) ?? throw new ArgumentException($"No data from source '{sourceName}' in {store.Path}. Run 'qa intraday import' first.");
@@ -275,6 +309,7 @@ internal static partial class IntradayBacktestCommands
         var spreads = new List<string>();
         int outside = 0, incomplete = 0;
         var empty = new List<string>();
+        var loaded = new List<(IntradayName Name, InstrumentRecord? Record, IReadOnlyList<IGrouping<DateOnly, Bar>> Fine, IReadOnlyList<IGrouping<DateOnly, Bar>> Coarse)>();
         foreach (IntradayName name in names)
         {
             InstrumentRecord? record = store.GetInstrument(name.Id)?.Instrument;
@@ -283,10 +318,19 @@ internal static partial class IntradayBacktestCommands
                 throw new ArgumentException($"{record.Ticker} trades as '{record.TradingModel}' on {record.MarketPlace}: the fill model assumes continuous trading (docs/research/market-rules.md).");
             }
 
+            loaded.Add((name, record, ByDay(resolution), fallback ? ByDay(IntradayImporter.FallbackResolution) : []));
+
+            List<IGrouping<DateOnly, Bar>> ByDay(ChartResolution r) =>
+                [.. store.GetIntradayBars(name.Id, r, sourceName, fromUtc, toUtc).Select(s => s.Bar).GroupBy(b => DateOnly.FromDateTime(MarketTime.ToStockholm(b.TimestampUtc).DateTime))];
+        }
+
+        // Whole days only: a day any share has fine bars for stays fine for all of them.
+        HashSet<DateOnly> fineDays = [.. loaded.SelectMany(l => l.Fine.Select(g => g.Key))];
+        var usedCoarse = new SortedSet<DateOnly>();
+        foreach ((IntradayName name, InstrumentRecord? record, IReadOnlyList<IGrouping<DateOnly, Bar>> fine, IReadOnlyList<IGrouping<DateOnly, Bar>> coarse) in loaded)
+        {
             var kept = new List<Bar>();
-            foreach (IGrouping<DateOnly, Bar> day in store.GetIntradayBars(name.Id, resolution, sourceName, fromUtc, toUtc)
-                         .Select(s => s.Bar)
-                         .GroupBy(b => DateOnly.FromDateTime(MarketTime.ToStockholm(b.TimestampUtc).DateTime)))
+            foreach (IGrouping<DateOnly, Bar> day in fine.Concat(coarse.Where(g => !fineDays.Contains(g.Key))).OrderBy(g => g.Key))
             {
                 TradingDay session = calendar.Classify(day.Key);
                 if (!session.IsTradingDay)
@@ -305,6 +349,10 @@ internal static partial class IntradayBacktestCommands
                 }
 
                 kept.AddRange(inSession);
+                if (!fineDays.Contains(day.Key))
+                {
+                    usedCoarse.Add(day.Key);
+                }
             }
 
             if (kept.Count == 0)
@@ -348,7 +396,27 @@ internal static partial class IntradayBacktestCommands
             : string.Create(CultureInfo.InvariantCulture, $"Spreads measured by Paper sessions (median half-spread): {string.Join(", ", spreads)}; the others pay the cost model's {costs.HalfSpreadBps:0.#} bps."));
         notes.Add("Universe: current names only (survivorship-biased), chosen now (look-ahead in the choice of names).");
         string tag = resolution == ChartResolution.Minute ? "1m" : "5m";
-        return MarketPanel.FromIntradayBars(series, source with { Name = $"{source.Name}:{tag}" });
+        MarketPanel panel = MarketPanel.FromIntradayBars(series, source with { Name = $"{source.Name}:{tag}{(usedCoarse.Count > 0 ? "+10m" : string.Empty)}" });
+        int days = panel.Dates.Distinct().Count();
+        if (fallback)
+        {
+            notes.Add(usedCoarse.Count == 0
+                ? "Fallback: no missed day to fill with 10-minute bars."
+                : string.Create(CultureInfo.InvariantCulture,
+                    $"Fallback: {usedCoarse.Count} of {days} trading day(s) are 10-minute days, no share having 5-minute bars for them ({string.Join(", ", usedCoarse.Select(d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)))}). An opening range shorter than 10 minutes can't form on them. A separate study: {panel.Source.Name}."));
+        }
+        else if (resolution == ChartResolution.FiveMinutes)
+        {
+            int missed = store.GetIntradayCollectedDays(IntradayImporter.FallbackResolution, sourceName)
+                .Count(d => !fineDays.Contains(d) && (from is null || d >= from) && (to is null || d <= to));
+            if (missed > 0)
+            {
+                notes.Add($"{missed} missed day(s) have only caught-up 10-minute bars; --fallback uses them (a separate study).");
+            }
+        }
+
+        TimeSpan coarseLength = IntradayImporter.Length(IntradayImporter.FallbackResolution);
+        return (panel, usedCoarse.ToDictionary(d => d, _ => coarseLength));
     }
 
     private static string Bars(ChartResolution resolution) => resolution == ChartResolution.Minute ? "1-minute" : "5-minute";

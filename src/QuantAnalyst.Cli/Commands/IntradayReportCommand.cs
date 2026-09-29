@@ -26,8 +26,10 @@ internal static partial class IntradayBacktestCommands
             MarketCalendar calendar = LoadCalendar(configDir, out string? calendarNote);
             var clock = new IntradayClock(calendar, IntradayImporter.Length(resolution));
             StrategyDefinition first = IntradayStrategyCatalog.Create("orb-long", new Dictionary<string, string>(), clock);
-            BacktestCommands.Setup setup = Prepare(parse, o, configDir, resolution, first, calendar, calendarNote, report: true, out MarketPanel? holdoutData);
-            IntradayReportResult r = IntradayReport.Run(new IntradayReportRequest { Template = setup.Template, Clock = clock, HoldoutData = holdoutData });
+            Prepared prepared = Prepare(parse, o, configDir, resolution, first, calendar, calendarNote, report: true);
+            clock = new IntradayClock(calendar, clock.BarLength, prepared.DayBarLengths); // 10-minute fallback days, if any
+            BacktestCommands.Setup setup = prepared.Setup;
+            IntradayReportResult r = IntradayReport.Run(new IntradayReportRequest { Template = setup.Template, Clock = clock, HoldoutData = prepared.HoldoutData });
             if (parse.GetValue(o.Json))
             {
                 w.WriteLine(JsonSerializer.Serialize(Json(r, setup), QaCli.Json));

@@ -100,19 +100,25 @@ public sealed class IntradayImportTests : IDisposable
             return FakeAvanza.Json(FxCliTests.Body("035-price-chart"));
         }
 
-        (int count, int minutes) = resolution == "five_minutes" ? (2, 5) : (5, 1);
+        (int count, int minutes) = resolution switch { "five_minutes" => (2, 5), "ten_minutes" => (3, 10), _ => (5, 1) };
         var ohlc = new JsonArray();
-        for (int i = 0; i < count; i++)
+
+        // one_week at ten_minutes: three bars a day on the week's weekdays, Tuesday 22 to today.
+        int[] daysBack = query["timePeriod"] == "one_week" ? [7, 6, 5, 4, 1, 0] : [0];
+        foreach (int back in daysBack)
         {
-            ohlc.Add(new JsonObject
+            for (int i = 0; i < count; i++)
             {
-                ["timestamp"] = Open.AddMinutes(i * minutes).ToUnixTimeMilliseconds(),
-                ["open"] = 94.9,
-                ["close"] = 95.0,
-                ["low"] = 94.8,
-                ["high"] = 95.1,
-                ["totalVolumeTraded"] = 1200,
-            });
+                ohlc.Add(new JsonObject
+                {
+                    ["timestamp"] = Open.AddDays(-back).AddMinutes(i * minutes).ToUnixTimeMilliseconds(),
+                    ["open"] = 94.9,
+                    ["close"] = 95.0,
+                    ["low"] = 94.8,
+                    ["high"] = 95.1,
+                    ["totalVolumeTraded"] = 1200,
+                });
+            }
         }
 
         return FakeAvanza.Json(new JsonObject
@@ -195,6 +201,50 @@ public sealed class IntradayImportTests : IDisposable
         Assert.DoesNotContain(_server.Requests, r => r.PathAndQuery.StartsWith(AvanzaRoutes.UserCredentials.Path(), StringComparison.Ordinal) || r.Headers.ContainsKey("X-SecurityToken"));
         Assert.All(_server.Requests.Where(r => r.PathAndQuery.StartsWith("/_api/price-chart/", StringComparison.Ordinal)),
             r => Assert.Contains("timePeriod=today&resolution=", r.PathAndQuery, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Import_CatchesUpTheWeeksMissedDays_WithTenMinuteBars_OnceAndOnlyWithACalendar()
+    {
+        AllowEricAndApple();
+        (int code, string output, string error) = Qa("intraday", "import", "--config-dir", Config, "--store", Store);
+        Assert.True(code == 0, error + output);
+        Assert.Contains("Catch-up skipped: no XSTO calendar", output, StringComparison.Ordinal); // trading days are never guessed
+
+        File.Copy(Path.Combine(RepoConfigDir(), "market-calendar.XSTO.2026.json"), Path.Combine(Config, "market-calendar.XSTO.2026.json"));
+        (code, output, error) = Qa("intraday", "import", "--config-dir", Config, "--store", Store);
+        Assert.True(code == 0, error + output);
+        Assert.Contains(
+            "ERIC B catch-up: no bars on 2026-09-22, 2026-09-23, 2026-09-24, 2026-09-25, 2026-09-28; 2026-09-22, 2026-09-23, 2026-09-24, 2026-09-25, 2026-09-28 filled with 15 10-minute bar(s).",
+            output, StringComparison.Ordinal);
+        Assert.Contains("Catch-up: 5 missed share-day(s) filled with 10-minute bars. Backtests use them only with --fallback.", output, StringComparison.Ordinal);
+        using (HistoryStore store = HistoryStore.Open(Store))
+        {
+            Assert.Equal(15, store.GetIntradayBars(new OrderbookId("5240"), ChartResolution.TenMinutes, AvanzaChartImporter.AvanzaPriceChart.Name).Count); // not today's
+        }
+
+        int weekCalls = _server.Requests.Count(r => r.PathAndQuery.Contains("timePeriod=one_week&resolution=ten_minutes", StringComparison.Ordinal));
+        Assert.Equal(1, weekCalls);
+
+        // The next evening nothing is missing, and --no-catch-up never asks.
+        (_, output, _) = Qa("intraday", "import", "--config-dir", Config, "--store", Store);
+        Assert.Contains("Catch-up: no trading day of the last week is missing.", output, StringComparison.Ordinal);
+        (_, output, _) = Qa("intraday", "import", "--no-catch-up", "--config-dir", Config, "--store", Store);
+        Assert.DoesNotContain("Catch-up", output, StringComparison.Ordinal);
+        Assert.Equal(1, _server.Requests.Count(r => r.PathAndQuery.Contains("timePeriod=one_week", StringComparison.Ordinal)));
+    }
+
+    private static string RepoConfigDir()
+    {
+        for (DirectoryInfo? d = new(AppContext.BaseDirectory); d is not null; d = d.Parent)
+        {
+            if (File.Exists(Path.Combine(d.FullName, "QuantAnalyst.sln")))
+            {
+                return Path.Combine(d.FullName, "config");
+            }
+        }
+
+        throw new DirectoryNotFoundException("repository root not found");
     }
 
     [Fact]

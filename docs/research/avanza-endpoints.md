@@ -128,6 +128,13 @@ Rate limits: nothing is documented. The Go SDK default is **one request per 100 
 - Asked late in the evening, `today` still returned the whole day, so the evening import works.
 - A minute with no trade has no bar (475 of 510 minutes for ERIC B); every 5-minute slot was there (102, the last
   one the closing auction's 17:25).
+- **Used by the catch-up (plan 17 A2b, 2026-09-29):** `GET /_api/price-chart/stock/{id}?timePeriod=one_week&resolution=ten_minutes`.
+  It is the same route, and `one_week` and `ten_minutes` are both in Qluxzz
+  [`a6a18a94` `constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py)
+  (`TimePeriod.ONE_WEEK`, `Resolution.TEN_MINUTES`, `CHARTDATA_PATH = "/_api/price-chart/stock/{}"`; fetched again
+  2026-09-29 before building the catch-up). The probe saw the server offer it. Called once per share only
+  when a trading day of the last week has no 5- or 10-minute bars. The answer must be `ten_minutes`, as for the
+  other resolutions.
 
 **No login needed:** the Go SDK README says search, stock/certificate/warrant info, quote, order depth, market place, price chart, off-hours price, news and forum work without a session. That lets the chart importer and much of Paper-mode data run **without** credentials. The ToS question in `avanza-terms.md` still applies.
 
