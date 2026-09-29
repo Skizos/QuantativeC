@@ -86,9 +86,10 @@ internal static partial class AvanzaCommands
                 specs.Add(new InstrumentSpec(entry.OrderbookId, entry.Ticker, p.Name, p.Currency, Math.Max(1, p.TradingUnit), p.TickSizes, TickTableVerified: true, p.Isin, p.MarketPlace));
             }
 
+            List<PaperMarket> markets = setup.Markets(specs, output);
             try
             {
-                await RefreshHistoryAsync(ctx, storePath, setup, time, output).ConfigureAwait(false);
+                await RefreshHistoryAsync(ctx, storePath, markets, time, output).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is BrokerException or HistoryImportException)
             {
@@ -96,15 +97,31 @@ internal static partial class AvanzaCommands
                 output.WriteLine($"WARNING: the history could not be brought up to date ({ex.Message}); the decision uses what is stored.");
             }
 
+            FxTable fx = await FxAtStartAsync(storePath, markets, services.FxRates(), time, output, ctx.Ct).ConfigureAwait(false);
+            markets.RemoveAll(m => fx.SekPerUnit(m.Info.Currency) is null);
+            if (markets.Count == 0)
+            {
+                throw new ArgumentException("No market on the allowlist can trade today (see the warnings above).");
+            }
+
+            if (markets.Count > 1)
+            {
+                foreach (PaperMarket m in markets)
+                {
+                    output.WriteLine(m.Describe(time.GetUtcNow()));
+                }
+            }
+
+            specs = [.. markets.SelectMany(m => m.Specs)];
             var catalog = new InstrumentCatalog(specs);
             var quotes = new LatestQuotes();
-            PaperBook book = PaperBook.OpenOrCreate(Path.Combine(stateDir, "paper"), setup.Paper, quotes, time, out IReadOnlyList<string> bookNotes);
+            PaperBook book = PaperBook.OpenOrCreate(Path.Combine(stateDir, "paper"), setup.Paper, quotes, time, out IReadOnlyList<string> bookNotes, fx);
             foreach (string note in bookNotes)
             {
                 output.WriteLine(note);
             }
 
-            var channel = new PaperOrderChannel(book, setup.Costs, quotes, catalog, time);
+            var channel = new PaperOrderChannel(book, setup.Costs, quotes, catalog, time, fx);
             var risk = new PreTradeRiskEngine(setup.Limits);
             var oms = new OrderManager(audit, halts, time);
             var env = new GatewayEnvironment
@@ -118,6 +135,8 @@ internal static partial class AvanzaCommands
                 AllowedAccountIds = new HashSet<string>(StringComparer.Ordinal) { PaperConfig.AccountId },
                 Fees = (order, spec) => channel.EstimateFees(order.Value, spec.Currency),
                 CourtageVerified = setup.Costs.Verified,
+                Fx = fx,
+                Schedules = markets.ToDictionary(m => m.Info.Currency, m => m.Schedule, StringComparer.Ordinal),
             };
             using var gateway = new OrderGateway(channel, env, risk, oms, halts, audit, time);
             using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(killFile)!, stateDir, book, setup.Limits);
@@ -136,29 +155,36 @@ internal static partial class AvanzaCommands
                 oms.Changed += o => observer.Order(OrderTick.From(o, time.GetUtcNow()));
             }
 
-            Task<PlanResult> Decide(CancellationToken ct)
+            // One decision per market (ADR 0005), each on the whole list's bars through yesterday (all complete by then),
+            // so the targets are the ones a backtest of the list computes; each market trades its own shares.
+            Task<PlanResult> Decide(PaperMarket market, CancellationToken ct)
             {
                 DateTimeOffset now = time.GetUtcNow();
-                DateOnly yesterday = PreviousTradingDay(setup.Calendar, OrderGateway.StockholmDate(now));
+                DateOnly yesterday = PreviousTradingDay(market.Calendar, market.Calendar.LocalDate(now));
                 using HistoryStore history = DataCommands.OpenExisting(storePath);
-                MarketPanel panel = BacktestCommands.LoadStorePanel(history, tickers, null, yesterday);
-                if (panel.Dates[^1] != yesterday)
+                MarketPanel panel = BacktestCommands.LoadStorePanel(history, tickers, null, markets.Count == 1 ? yesterday : OrderGateway.StockholmDate(now).AddDays(-1));
+                int[] own = [.. specs.Select((s, i) => (s, i)).Where(x => market.Trades(x.s)).Select(x => x.i)];
+                DateOnly last = LastBarDate(panel, own);
+                if (last != yesterday)
                 {
+                    string names = string.Join(", ", own.Select(i => tickers[i]));
                     throw new InvalidOperationException(
-                        $"the history ends {panel.Dates[^1]:yyyy-MM-dd}, not on the last trading day {yesterday:yyyy-MM-dd}; run 'qa history import' for {string.Join(", ", tickers)} first. No orders today.");
+                        $"the history ends {last:yyyy-MM-dd}, not on the last trading day {yesterday:yyyy-MM-dd}; run 'qa history import' for {names} first. No orders today.");
                 }
 
                 double[] targets = StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
-                return Task.FromResult(DailyPlanner.Plan(targets, specs, book.Snapshot(), gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now));
+                return Task.FromResult(DailyPlanner.Plan(
+                    [.. own.Select(i => targets[i])], [.. own.Select(i => specs[i])], book.Snapshot(), gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now, fx));
             }
 
             DateTimeOffset start = time.GetUtcNow();
+            SessionPlan[] todays = [.. markets.Select(m => m.Schedule.Plan(m.Calendar.LocalDate(start))).OfType<SessionPlan>()];
             DateTimeOffset stopAt = parse.GetValue(duration) is { } seconds
                 ? (seconds is > 0 and <= 16 * 3600 ? start.AddSeconds(seconds) : throw new ArgumentException("--duration must be in (0, 57600] seconds."))
-                : setup.Schedule.Plan(OrderGateway.StockholmDate(start)) is { } today && start < today.CloseUtc.AddMinutes(2)
-                    ? today.CloseUtc.AddMinutes(2)
+                : todays.Length > 0 && todays.Max(p => p.CloseUtc) is var lastClose && start < lastClose.AddMinutes(2)
+                    ? lastClose.AddMinutes(2)
                     : throw new ArgumentException(
-                        $"No session left today. The next one is {MarketTime.ToStockholm(setup.Schedule.NextDecision(start).DecisionUtc):dddd yyyy-MM-dd}: start 'qa paper run' that morning before {setup.Paper.DecisionTime:HH\\:mm}. (--duration <seconds> runs a session now, outside market hours nothing trades.)");
+                        $"No session left today. The next one is {MarketTime.ToStockholm(NextDecision(markets, start)):dddd yyyy-MM-dd}: start 'qa paper run' that morning before {MarketTime.ToStockholm(NextDecision(markets, start)):HH\\:mm}. (--duration <seconds> runs a session now, outside market hours nothing trades.)");
 
             output.WriteLine($"Running until {MarketTime.ToStockholm(stopAt):yyyy-MM-dd HH:mm} (Stockholm). Stop early with Ctrl+C or 'qa kill'.");
             using var stop = CancellationTokenSource.CreateLinkedTokenSource(ctx.Ct);
@@ -177,9 +203,8 @@ internal static partial class AvanzaCommands
             var subscriptions = composers.Select(c => c.Quotes.Subscribe(capacity: 256)).ToList();
             if (observer is not null)
             {
-                SessionPlan? day = setup.Schedule.Plan(OrderGateway.StockholmDate(start));
-                observer.Started(new SessionStarted(start, day?.OpenUtc, day?.CloseUtc, day?.DecisionUtc, definition.Spec.Describe(),
-                    ObservedInstruments(storePath, specs, OrderGateway.StockholmDate(start))));
+                observer.Started(new SessionStarted(start, todays.Length > 0 ? todays.Min(p => p.OpenUtc) : null, todays.Length > 0 ? todays.Max(p => p.CloseUtc) : null,
+                    todays.Length > 0 ? todays.Min(p => p.DecisionUtc) : null, definition.Spec.Describe(), ObservedInstruments(storePath, specs, OrderGateway.StockholmDate(start))));
             }
 
             var pumps = subscriptions.Select(s => PumpQuotesAsync(s, quotes, channel, observer, time)).ToList();
@@ -191,7 +216,8 @@ internal static partial class AvanzaCommands
                 return $"{report.Summary()} Saved to {saved}.";
             }
 
-            var session = new PaperSession(gateway, channel, book, kill, reconciler, halts, setup.Schedule, audit, time, Decide, output, EndOfDayReport, observer);
+            var session = new PaperSession(gateway, channel, book, kill, reconciler, halts,
+                [.. markets.Select(m => new SessionMarket(m.Schedule, ct => Decide(m, ct), m.Trades))], audit, time, output, EndOfDayReport, observer);
             PaperSessionSummary summary;
             try
             {
@@ -333,38 +359,127 @@ internal static partial class AvanzaCommands
     }
 
     /// <summary>
-    /// Brings every allowlisted instrument's daily bars up to the last trading day before today (read-only chart calls,
-    /// the same as 'qa history import'), so a session never stops at the decision for want of yesterday's bar.
+    /// Brings every allowlisted instrument's daily bars up to its market's last trading day before today (read-only chart
+    /// calls, the same as 'qa history import'), so a session never stops at the decision for want of yesterday's bar.
     /// </summary>
-    private static async Task RefreshHistoryAsync(Ctx ctx, string storePath, PaperSetup setup, TimeProvider time, TextWriter output)
+    private static async Task RefreshHistoryAsync(Ctx ctx, string storePath, IReadOnlyList<PaperMarket> markets, TimeProvider time, TextWriter output)
     {
-        DateOnly through = PreviousTradingDay(setup.Calendar, OrderGateway.StockholmDate(time.GetUtcNow()));
         string source = AvanzaChartImporter.AvanzaPriceChart.Name;
         using HistoryStore history = HistoryStore.Open(storePath);
-        foreach (UniverseEntry entry in setup.Universe.Entries)
+        foreach (PaperMarket market in markets)
         {
-            IReadOnlyList<StoredBar> bars = history.GetSource(source) is null ? [] : history.GetDailyBars(entry.OrderbookId, source);
-            DateOnly? last = bars.Count > 0 ? bars[^1].Bar.Date : null;
-            if (last >= through)
+            DateOnly through = PreviousTradingDay(market.Calendar, market.Calendar.LocalDate(time.GetUtcNow()));
+            foreach (InstrumentSpec spec in market.Specs)
             {
-                continue;
-            }
+                IReadOnlyList<StoredBar> bars = history.GetSource(source) is null ? [] : history.GetDailyBars(spec.OrderbookId, source);
+                DateOnly? last = bars.Count > 0 ? bars[^1].Bar.Date : null;
+                if (last >= through)
+                {
+                    continue;
+                }
 
-            // A week of overlap catches restated bars; with no history, a year gives the strategies their look-back.
-            DateOnly from = last is { } l ? l.AddDays(-7) : through.AddYears(-1);
-            InstrumentTradingParams p = await ctx.Connection.Gateway.GetTradingParamsAsync(entry.OrderbookId, ctx.Ct).ConfigureAwait(false);
-            history.UpsertInstrument(InstrumentRecord.FromTradingParams(p), "avanza-orderbook", AvanzaConnection.OrderbookSourceVersion, p.KnownAtUtc);
-            var provider = new AvanzaChartImporter(ctx.Connection.Gateway, time, AvanzaConnection.PriceChartSourceVersion);
-            ImportReport report = await new HistoryImporter(history, time, setup.Calendar)
-                .ImportAsync(provider, entry.OrderbookId, from, through, ctx.Ct).ConfigureAwait(false);
-            output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"History: {entry.Ticker} brought up to {report.LastDate:yyyy-MM-dd} ({report.Bars.New} new bar(s), {report.Bars.Restated} restated)."));
-            foreach (string warning in report.Warnings)
-            {
-                output.WriteLine($"warning: {warning}");
+                // A week of overlap catches restated bars; with no history, a year gives the strategies their look-back.
+                DateOnly from = last is { } l ? l.AddDays(-7) : through.AddYears(-1);
+                InstrumentTradingParams p = await ctx.Connection.Gateway.GetTradingParamsAsync(spec.OrderbookId, ctx.Ct).ConfigureAwait(false);
+                history.UpsertInstrument(InstrumentRecord.FromTradingParams(p), "avanza-orderbook", AvanzaConnection.OrderbookSourceVersion, p.KnownAtUtc);
+                var provider = new AvanzaChartImporter(ctx.Connection.Gateway, time, AvanzaConnection.PriceChartSourceVersion);
+                ImportReport report = await new HistoryImporter(history, time, market.Calendar)
+                    .ImportAsync(provider, spec.OrderbookId, from, through, ctx.Ct).ConfigureAwait(false);
+                output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"History: {spec.Ticker} brought up to {report.LastDate:yyyy-MM-dd} ({report.Bars.New} new bar(s), {report.Bars.Restated} restated)."));
+                foreach (string warning in report.Warnings)
+                {
+                    output.WriteLine($"warning: {warning}");
+                }
             }
         }
     }
+
+    /// <summary>A session skips a foreign market whose latest fixing is older than this (ADR 0005).</summary>
+    internal const int MaxFxAgeDays = 4;
+
+    /// <summary>
+    /// The day's FX table (ADR 0005): each foreign currency on the list brought up to date from the Riksbank, then its
+    /// latest fixing on or before today. A currency whose fixing is missing or more than <see cref="MaxFxAgeDays"/> days
+    /// old is left out, with a warning: its shares are skipped today and the others still trade.
+    /// </summary>
+    private static async Task<FxTable> FxAtStartAsync(string storePath, IReadOnlyList<PaperMarket> markets, IFxRateSource source, TimeProvider time, TextWriter output, CancellationToken ct)
+    {
+        var rates = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        DateOnly today = OrderGateway.StockholmDate(time.GetUtcNow());
+        foreach (PaperMarket market in markets.Where(m => Markets.IsForeign(m.Info.Currency)))
+        {
+            string ccy = market.Info.Currency;
+            string names = string.Join(", ", market.Specs.Select(s => s.Ticker));
+            try
+            {
+                using HistoryStore history = HistoryStore.Open(storePath);
+                string riksbank = Data.Fx.RiksbankFxSource.Riksbank.Name;
+                DateOnly from = history.LatestFxRate(ccy, riksbank, today) is { } stored
+                    ? stored.Rate.Date.AddDays(-7)
+                    : FirstBar(history, market.Specs, today).AddDays(-InstrumentImport.FxLeadDays);
+                try
+                {
+                    await Data.Fx.FxImporter.ImportAsync(history, source, ccy, from, today, time, ct).ConfigureAwait(false);
+                }
+                catch (FxUnavailableException ex)
+                {
+                    output.WriteLine($"WARNING: the {ccy}/SEK fixings could not be updated ({ex.Message}); using what is stored.");
+                }
+
+                if (history.LatestFxRate(ccy, riksbank, today) is not { } latest || today.DayNumber - latest.Rate.Date.DayNumber > MaxFxAgeDays)
+                {
+                    output.WriteLine($"WARNING: no {ccy}/SEK fixing from the last {MaxFxAgeDays} days is stored, so {names} {(market.Specs.Count == 1 ? "is" : "are")} skipped today (ADR 0005). Import it with 'qa fx import {ccy} --from {today.AddDays(-14):yyyy-MM-dd}'.");
+                    continue;
+                }
+
+                rates[ccy] = latest.Rate.SekPerUnit;
+                output.WriteLine(string.Create(CultureInfo.InvariantCulture, $"FX: {ccy} {latest.Rate.SekPerUnit:0.0000} SEK (Riksbank fixing {latest.Rate.Date:yyyy-MM-dd}) for {names}."));
+            }
+            catch (Exception ex) when (ex is HistoryStoreException or IOException || DataCommands.IsStoreFailure(ex))
+            {
+                output.WriteLine($"WARNING: the {ccy}/SEK fixings could not be read ({ex.Message}), so {names} {(market.Specs.Count == 1 ? "is" : "are")} skipped today.");
+            }
+        }
+
+        return new FxTable(rates);
+
+        static DateOnly FirstBar(HistoryStore history, IEnumerable<InstrumentSpec> specs, DateOnly today)
+        {
+            string source = AvanzaChartImporter.AvanzaPriceChart.Name;
+            DateOnly first = today.AddYears(-1);
+            if (history.GetSource(source) is not null)
+            {
+                foreach (InstrumentSpec spec in specs)
+                {
+                    IReadOnlyList<StoredBar> bars = history.GetDailyBars(spec.OrderbookId, source);
+                    if (bars.Count > 0 && bars[0].Bar.Date < first)
+                    {
+                        first = bars[0].Bar.Date;
+                    }
+                }
+            }
+
+            return first;
+        }
+    }
+
+    /// <summary>The last date on which any of <paramref name="instruments"/> has a bar in the panel.</summary>
+    private static DateOnly LastBarDate(MarketPanel panel, int[] instruments)
+    {
+        for (int t = panel.Periods - 1; t >= 0; t--)
+        {
+            if (instruments.Any(i => !double.IsNaN(panel.Bar(t, i).Close)))
+            {
+                return panel.Dates[t];
+            }
+        }
+
+        return panel.Dates[0];
+    }
+
+    /// <summary>The earliest next decision of the session's markets.</summary>
+    private static DateTimeOffset NextDecision(IEnumerable<PaperMarket> markets, DateTimeOffset now) => markets.Min(m => m.Schedule.NextDecision(now).DecisionUtc);
 
     private static Command PaperStatus()
     {
@@ -385,7 +500,8 @@ internal static partial class AvanzaCommands
                 $"Paper book ({book.Costs}): started with {book.StartingCash:N2} SEK; cash {book.Cash:N2}; realised P&L {book.RealizedPnl:N2}; fees {book.FeesPaid:N2}."));
             foreach (PaperPosition p in book.Positions)
             {
-                w.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {p.Ticker} ({p.OrderbookId}): {p.Quantity}, cost {p.CostBasis:N2} SEK, last fill {p.LastFillPrice}"));
+                string currency = Markets.IsForeign(p.Currency) ? " " + p.Currency : string.Empty;
+                w.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {p.Ticker} ({p.OrderbookId}): {p.Quantity}, cost {p.CostBasis:N2} SEK, last fill {p.LastFillPrice}{currency}"));
             }
 
             w.WriteLine($"Session running: {(SessionLock.Holder(parse.GetValue(stateDir)!) is { } holder ? holder : "no")}.");
@@ -478,8 +594,63 @@ internal static partial class AvanzaCommands
     /// <summary>Everything a Paper session reads from config/ and promotion/, checked before any login.</summary>
     private sealed record PaperSetup(
         TradingMode Mode, PromotionState Promotion, RiskLimits Limits, PaperConfig Paper, Universe Universe, CostModel Costs, MarketCalendar Calendar,
-        TradingSchedule Schedule, IReadOnlyList<string> Warnings)
+        TradingSchedule Schedule, IReadOnlyList<string> Warnings, string ConfigDir)
     {
+        /// <summary>
+        /// The list's markets (ADR 0005), Stockholm first: each with its calendar, schedule and shares. A share in another
+        /// currency, or a foreign market without a calendar or a courtage, is left out with a warning.
+        /// </summary>
+        public List<PaperMarket> Markets(IReadOnlyList<InstrumentSpec> specs, TextWriter output)
+        {
+            foreach (InstrumentSpec odd in specs.Where(s => Core.Market.Markets.ForCurrency(s.Currency) is null))
+            {
+                output.WriteLine($"WARNING: {odd.Ticker} trades in {odd.Currency}; the program trades shares in {Core.Market.Markets.CurrencyList} (ADR 0005). It is skipped.");
+            }
+
+            var markets = new List<PaperMarket>();
+            foreach (MarketInfo info in Core.Market.Markets.All)
+            {
+                InstrumentSpec[] own = [.. specs.Where(s => s.Currency == info.Currency)];
+                if (own.Length == 0)
+                {
+                    continue;
+                }
+
+                if (!Core.Market.Markets.IsForeign(info.Currency))
+                {
+                    markets.Add(new PaperMarket(info, Calendar, Schedule, own));
+                    continue;
+                }
+
+                string names = string.Join(", ", own.Select(s => s.Ticker));
+                if (Costs.ForeignFor(info.Currency) is null)
+                {
+                    output.WriteLine($"WARNING: the courtage class {Costs.Name} has no courtage for {info.Currency} shares, so {names} {(own.Length == 1 ? "is" : "are")} skipped (add foreign_courtage.{info.Currency} to costs.{Costs.Name}.json).");
+                    continue;
+                }
+
+                MarketCalendar calendar;
+                try
+                {
+                    calendar = MarketCalendarLoader.LoadDirectory(ConfigDir, info.Mic);
+                }
+                catch (CalendarConfigException ex)
+                {
+                    output.WriteLine($"WARNING: no {info.Mic} calendar ({ex.Message}), so {names} {(own.Length == 1 ? "is" : "are")} skipped.");
+                    continue;
+                }
+
+                if (!calendar.IsVerified)
+                {
+                    output.WriteLine($"WARNING: the {info.Mic} calendar for {string.Join(", ", calendar.UnverifiedYears)} is not verified yet (allowed in Paper).");
+                }
+
+                markets.Add(new PaperMarket(info, calendar, new TradingSchedule(calendar, Limits, Paper.DecisionTime, Calendar), own));
+            }
+
+            return markets;
+        }
+
         public static PaperSetup Load(string configDir, string promotionDir)
         {
             PromotionState promotion = PromotionState.Load(promotionDir);
@@ -516,7 +687,25 @@ internal static partial class AvanzaCommands
                 warnings.Add($"the courtage class {costs.Name} has no verified_on date.");
             }
 
-            return new PaperSetup(mode, promotion, limits, paper, universe, costs, calendar, new TradingSchedule(calendar, limits, paper.DecisionTime), warnings);
+            return new PaperSetup(mode, promotion, limits, paper, universe, costs, calendar, new TradingSchedule(calendar, limits, paper.DecisionTime), warnings, configDir);
+        }
+    }
+
+    /// <summary>One market of a Paper session (ADR 0005): its calendar and schedule, and the list's shares on it.</summary>
+    private sealed record PaperMarket(MarketInfo Info, MarketCalendar Calendar, TradingSchedule Schedule, IReadOnlyList<InstrumentSpec> Specs)
+    {
+        public bool Trades(InstrumentSpec spec) => spec.Currency == Info.Currency;
+
+        /// <summary>"XNYS (AAPL): decides 09:40 New York (15:40 Stockholm), closes 22:00 Stockholm." for today, or its next day.</summary>
+        public string Describe(DateTimeOffset now)
+        {
+            SessionPlan next = Schedule.Plan(Calendar.LocalDate(now)) ?? Schedule.NextDecision(now);
+            string clock = Calendar.TimeZoneId[(Calendar.TimeZoneId.IndexOf('/', StringComparison.Ordinal) + 1)..].Replace('_', ' ');
+            string decides = Core.Market.Markets.IsForeign(Info.Currency)
+                ? $"{MarketTime.ToZone(next.DecisionUtc, Calendar.TimeZone):HH\\:mm} {clock} ({MarketTime.ToStockholm(next.DecisionUtc):HH\\:mm} Stockholm)"
+                : $"{MarketTime.ToStockholm(next.DecisionUtc):HH\\:mm} Stockholm";
+            string day = next.Date == Calendar.LocalDate(now) ? string.Empty : $" on {next.Date:ddd yyyy-MM-dd}";
+            return $"{Info.Mic} ({string.Join(", ", Specs.Select(s => s.Ticker))}): decides {decides}, closes {MarketTime.ToStockholm(next.CloseUtc):HH\\:mm} Stockholm{day}.";
         }
     }
 }

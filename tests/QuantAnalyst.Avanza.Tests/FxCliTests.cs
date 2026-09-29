@@ -42,14 +42,14 @@ public sealed class FxCliTests : IDisposable
         }
     }
 
-    private static string Body(string file)
+    internal static string Body(string file)
     {
         using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(Recording, file + ".json")));
         return doc.RootElement.GetProperty("response").GetProperty("body").GetRawText();
     }
 
     /// <summary>The recorded orderbook as a US share (Avanza's own fields, only the values changed).</summary>
-    private static string UsOrderbook(string id)
+    internal static string UsOrderbook(string id)
     {
         JsonNode node = JsonNode.Parse(Body("033-orderbook"))!;
         node["id"] = id;
@@ -160,11 +160,14 @@ public sealed class FxCliTests : IDisposable
     }
 
     /// <summary>Weekday fixings, 10.00 plus 0.01 per day into September 2026; USD and CAD alike.</summary>
-    private sealed class FakeFx : IFxRateSource
+    internal sealed class FakeFx : IFxRateSource
     {
         public List<(string Currency, DateOnly First, DateOnly Last)> Calls { get; } = [];
 
         public Exception? Fails { get; set; }
+
+        /// <summary>Gets or sets the last day with a fixing (a stale series), or null for every weekday asked.</summary>
+        public DateOnly? Until { get; set; }
 
         public DataSourceInfo Source => RiksbankFxSource.Riksbank;
 
@@ -181,7 +184,7 @@ public sealed class FxCliTests : IDisposable
             var rates = new List<FxRate>();
             for (DateOnly d = first; d <= last; d = d.AddDays(1))
             {
-                if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
+                if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday) && (Until is not { } until || d <= until))
                 {
                     rates.Add(new FxRate(d, 10m + (0.01m * (d.DayNumber - new DateOnly(2026, 9, 1).DayNumber))));
                 }

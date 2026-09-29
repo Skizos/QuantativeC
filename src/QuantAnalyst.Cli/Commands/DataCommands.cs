@@ -250,12 +250,14 @@ internal static class DataCommands
     }
 
     /// <summary>The calendar for import warnings, or null with a note when it can't be loaded (imports still run).</summary>
-    public static MarketCalendar? TryLoadCalendar(string? explicitDir, out string? note)
+    /// <summary>The calendar of <paramref name="mic"/> (a share's own market, ADR 0005), or null with a note when it can't be loaded.</summary>
+    public static MarketCalendar? TryLoadCalendar(string? explicitDir, out string? note, string mic = "XSTO")
     {
         try
         {
-            MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(ResolveConfigDir(explicitDir));
-            note = calendar.IsVerified ? null : $"Calendar check used the UNVERIFIED draft for {string.Join(", ", calendar.UnverifiedYears)}.";
+            MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(ResolveConfigDir(explicitDir), mic);
+            string which = mic == Markets.Stockholm.Mic ? string.Empty : mic + " ";
+            note = calendar.IsVerified ? null : $"Calendar check used the UNVERIFIED {which}draft for {string.Join(", ", calendar.UnverifiedYears)}.";
             return calendar;
         }
         catch (Exception ex) when (ex is ArgumentException or CalendarConfigException)

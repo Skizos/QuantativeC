@@ -41,7 +41,7 @@ internal static class InstrumentImport
             throw new ArgumentException("--from is after --to.");
         }
 
-        MarketCalendar? calendar = DataCommands.TryLoadCalendar(configDir, out string? calendarNote);
+        MarketCalendar? calendar = DataCommands.TryLoadCalendar(configDir, out string? calendarNote, Markets.ForCurrency(instrument.Currency)?.Mic ?? Markets.Stockholm.Mic);
         using HistoryStore history = HistoryStore.Open(storePath);
         FxImportReport? fxReport = Markets.ForCurrency(instrument.Currency) is not null && Markets.IsForeign(instrument.Currency)
             ? await FxImporter.ImportAsync(history, fx, instrument.Currency, from.AddDays(-FxLeadDays), to, TimeProvider.System, ct).ConfigureAwait(false)

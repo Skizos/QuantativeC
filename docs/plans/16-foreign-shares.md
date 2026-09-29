@@ -174,3 +174,40 @@
   Stockholm schedule unchanged; the FX table. OrderPreparation no longer refuses USD (the rule moved to the gateway),
   so its test row went with it.
 - All 1210 managed tests pass (1 skipped).
+### Step 6: one session across markets (done 2026-09-29)
+
+- **`PaperSession` takes a list of markets** (`SessionMarket`: schedule, decision, which instruments are its own). Each
+  market decides once a day on its own date and clock, its queued intents go only while its window is open (a closed
+  market's leftovers don't hold up another's), and its day orders end at its own close (`market-close` in the audit).
+  At the day's last close the day is booked (`end-of-day`) and reported once; stopped earlier, the report is partial.
+  With one market (a Swedish-only list) every line and record reads as before, apart from a `market` field in the
+  decision records.
+- **`qa paper run`:**
+  - the list's markets from the shares' currencies, Stockholm first; a foreign market needs its calendar and its
+    courtage class's foreign courtage, or its names are skipped with a warning
+  - history brought up to each market's previous trading day, checked against its own calendar (`qa history import`
+    of a US share too)
+  - the FX fixing at the start: each foreign currency brought up to date from the Riksbank, then the latest on or before
+    today; missing or more than 4 days old skips that market's names ("the Swedish ones still trade", ADR 0005)
+  - one decision per market on the whole list's bars through yesterday (all complete by then), so the targets are
+    the ones a backtest of the list computes; each market trades its own shares
+  - the gateway, book and channel get the day's FX table and the markets' schedules
+  - the session ends two minutes after the last close (22:02 with US names); a late start still trades the markets
+    whose window is open
+  - live (Confirm) sessions are unchanged: Stockholm's calendar, and the gateway refuses foreign shares
+- **`qa status`** names each market's decision and the end ("It decides per market (XSTO at 09:10, XNYS at 15:40),
+  trades, and ends after the 22:00 close"), with a line per foreign calendar. `qa paper status` shows a foreign
+  position's last fill with its currency.
+- **Tests (8 new):**
+  - the session over a day in Stockholm and New York: decisions at 09:10 and 15:40, Stockholm's close alone, one
+    end-of-day and report at 22:00
+  - a US holiday (Stockholm's close ends the day)
+  - a late start with Stockholm's leftovers not holding up New York's orders
+  - a partial report
+  - `qa paper run` with ERIC B and AAPL against the fake Avanza: the fixing, both decisions, the US share bought and
+    booked in kronor, no order route called; a stale fixing skipping AAPL while ERIC B trades; the default stop at
+    22:02 with one report
+  - `qa status` before, during and after the day
+- The spy's depth now matches the recorded poll's prices: with two different prices the R5 collar tripped whenever
+  the poll landed between the decision and the check (a test harness race, not a product fault).
+- All 1218 managed tests pass (1 skipped).

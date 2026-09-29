@@ -190,7 +190,7 @@ internal static partial class AvanzaCommands
         WriteChecks(output, startup, "Confirm startup checks: all passed.");
         var halts = new HaltController(audit, time);
         List<InstrumentSpec> specs = await LiveSpecsAsync(ctx, setup).ConfigureAwait(false);
-        await RefreshHistoryForLiveAsync(ctx, storePath, setup, time, output).ConfigureAwait(false);
+        await RefreshHistoryForLiveAsync(ctx, storePath, setup, specs, time, output).ConfigureAwait(false);
 
         var quotes = new LiveQuotes();
         var account = new GatewayAccountState(ctx.Connection.Gateway, live.Account, quotes, time, stateDir);
@@ -316,7 +316,7 @@ internal static partial class AvanzaCommands
         }
 
         List<InstrumentSpec> specs = await LiveSpecsAsync(ctx, setup).ConfigureAwait(false);
-        await RefreshHistoryForLiveAsync(ctx, storePath, setup, time, output).ConfigureAwait(false);
+        await RefreshHistoryForLiveAsync(ctx, storePath, setup, specs, time, output).ConfigureAwait(false);
         var quotes = new LiveQuotes();
         foreach (InstrumentSpec spec in specs)
         {
@@ -355,11 +355,12 @@ internal static partial class AvanzaCommands
         return specs;
     }
 
-    private static async Task RefreshHistoryForLiveAsync(Ctx ctx, string storePath, PaperSetup setup, TimeProvider time, TextWriter output)
+    /// <summary>Live trading is Swedish (ADR 0005: foreign shares on paper only), so every name is brought up to Stockholm's yesterday.</summary>
+    private static async Task RefreshHistoryForLiveAsync(Ctx ctx, string storePath, PaperSetup setup, IReadOnlyList<InstrumentSpec> specs, TimeProvider time, TextWriter output)
     {
         try
         {
-            await RefreshHistoryAsync(ctx, storePath, setup, time, output).ConfigureAwait(false);
+            await RefreshHistoryAsync(ctx, storePath, [new PaperMarket(Markets.Stockholm, setup.Calendar, setup.Schedule, specs)], time, output).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is BrokerException or HistoryImportException)
         {
