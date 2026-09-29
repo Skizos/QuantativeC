@@ -1,8 +1,10 @@
 # 17 — An intraday strategy (research first, then paper)
 
-- **Status:** planned 2026-09-29 at the owner's request: "yes plan an intraday strategy" (after asking whether the
-  current model can place orders through the day without a decision: it can't; it decides once a day per market).
-- **Decisions:** ADR 0006 (Proposed). The owner's choices below decide the details; nothing here is built yet.
+- **Status:** Phase A started 2026-09-29. Planned the same day at the owner's request: "yes plan an intraday strategy"
+  (after asking whether the current model can place orders through the day without a decision: it can't; it decides
+  once a day per market).
+- **Decisions:** ADR 0006, accepted 2026-09-29: "go with your recommendations, start phase A". D1–D7 below are the
+  recommended options.
 - **Gate for every step:** all tests green with new ones per step; native ABI tests on both sides for any ABI change;
   the daily strategies, `qa backtest` and `qa paper run` unchanged; nothing live called by me.
 
@@ -39,9 +41,9 @@ So the plan has two phases:
 - **Phase A** (research, no trading code) answers "is there an intraday strategy worth running here, after costs?"
 - **Phase B** (trading) is built only if the owner says go after seeing A's report.
 
-## Decisions for the owner (my recommendation first)
+## Decisions (the owner chose the recommended option for each, 2026-09-29)
 
-| # | Question | Recommended | Alternatives |
+| # | Question | Chosen | Not chosen |
 |---|---|---|---|
 | D1 | Build order | **Research first (A), trading (B) only after a go** | build both now |
 | D2 | Strategy to test | **ORB long-only** as the candidate; an adapted "late-day momentum" and a buy-open/sell-close baseline as controls | intraday mean reversion to VWAP; the daily strategies on 5-minute bars |
@@ -54,8 +56,8 @@ So the plan has two phases:
 ## Phase A: research (each step green, committed, pushed)
 
 1. **The data probe and research notes.**
-   - A read-only, public (no login) probe: `qa probe chart ERIC-B` asks each period once and records the resolutions
-     the server allows. **The owner runs it** (CLAUDE.md: live calls only when asked).
+   - A read-only, public (no login) probe: `qa intraday probe [ERIC-B]` asks each period once and records the
+     resolutions the server allows. **The owner runs it** (CLAUDE.md: live calls only when asked).
    - `docs/research/avanza-endpoints.md`: the chart periods and resolutions with the commit URLs; how many days of
      minute and 5-minute bars each period gives.
    - The owner checks the Start class's 500-trade allowance on Avanza's price list.
@@ -147,3 +149,22 @@ the screen all day.
 - **Phase A:** about as much work as plan 16. The data then needs months to accumulate; the code does not wait for it
   (every step is tested on recorded and synthetic bars).
 - **Phase B:** somewhat less work.
+
+## Step notes
+### A1: the decisions and the chart probe (done 2026-09-29)
+
+- ADR 0006 accepted with the recommended D1–D7.
+- `PriceHistory.AvailableResolutions`: the resolutions the chart says it gives for a period (already in the DTO, now
+  passed on; no DTO change).
+- **`qa intraday probe [TICKER | --id N]`:**
+  - asks the public price chart **without a login**: today, one week, one month and three months with the server's
+    own resolution, then each offered 1- or 5-minute resolution
+  - prints the bars, the Stockholm days they cover, the offered resolutions, and a summary ("5-minute bars: today 1
+    day(s) …; one_week 5 day(s) …")
+  - records the raw answers (`--no-record` to skip), to be sanitized into fixtures
+  - one question failing (e.g. HTTP 400 for a combination) is an error row and the probe goes on; a chart that wants
+    a login (401/403) stops it, and no login is tried
+- **Tests (4 new):** the questions and the table over fake answers shaped like the recording; no login, GET only, six
+  answers recorded; a failing question; a login-wanting chart; the ticker from the instrument master.
+- **Waiting on the owner:** run `.\qa intraday probe` once on a trading day (after 09:30, so "today" has bars) and
+  share the output, or sanitize the recording into `recordings/fixtures/`. Step A2 stores what it shows.

@@ -1,7 +1,7 @@
 # ADR 0006 — An intraday strategy: research first, paper only
 
-- **Status:** Proposed (2026-09-29). The owner decides D1–D7 in `docs/plans/17-intraday.md`; this ADR is accepted, or
-  changed, with those answers.
+- **Status:** Accepted (2026-09-29). The owner: "go with your recommendations, start phase A" (D1–D7 in
+  `docs/plans/17-intraday.md`, each the recommended option).
 - **Related:** ADR 0003 (modes, limits R10–R16, unchanged here), ADR 0004 (automation), ADR 0005 (foreign shares),
   CLAUDE.md "Backtesting rules", docs/plans/17-intraday.md
 
@@ -26,7 +26,7 @@ Four facts shape the answer (sources below):
    - Intraday momentum is documented for the S&P 500 ETF and several markets, and reported weak in Stockholm.
    - Nothing published is known to survive our costs at our sizes.
 
-## Decision (proposed; the owner's answers replace the recommendations)
+## Decision
 
 1. **Research before trading.**
    - Phase A: collect 1- and 5-minute bars (the allowlist plus a research list of at most 30 names) and measured
@@ -65,9 +65,9 @@ Four facts shape the answer (sources below):
 
 ## Open items
 
-1. The owner runs the read-only chart probe (which periods give minute and 5-minute bars, and how many days).
+1. The owner runs the read-only chart probe, `qa intraday probe` (which periods give minute and 5-minute bars, and how
+   many days).
 2. The owner checks the Start class's 500-trade allowance and Mini's terms on Avanza's price list.
-3. The owner answers D1–D7.
 
 ## References
 
