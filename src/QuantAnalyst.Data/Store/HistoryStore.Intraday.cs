@@ -108,6 +108,26 @@ public sealed partial class HistoryStore
     public IReadOnlyList<DateOnly> GetIntradayDays(OrderbookId id, ChartResolution resolution, string source) =>
         [.. GetIntradayBars(id, resolution, source).Select(b => DateOnly.FromDateTime(MarketTime.ToStockholm(b.Bar.TimestampUtc).DateTime)).Distinct()];
 
+    /// <summary>
+    /// The distinct Stockholm trading dates with intraday bars of this resolution for any share (the collection's
+    /// calendar; plan 17's holdout counts back from its end).
+    /// </summary>
+    public IReadOnlyList<DateOnly> GetIntradayCollectedDays(ChartResolution resolution, string source)
+    {
+        // Hours are few (about nine a day), and each converts to its Stockholm date without guessing the offset in SQL.
+        using DuckDBCommand cmd = Command(
+            "SELECT DISTINCT date_trunc('hour', bar_start) FROM intraday_bars WHERE resolution = $resolution AND source = $source",
+            ("resolution", resolution.ToString()), ("source", source));
+        using DbDataReader r = cmd.ExecuteReader();
+        var days = new SortedSet<DateOnly>();
+        while (r.Read())
+        {
+            days.Add(DateOnly.FromDateTime(MarketTime.ToStockholm(FromStoredTime(r.GetDateTime(0))).DateTime));
+        }
+
+        return [.. days];
+    }
+
     // ---- spread samples ----
 
     /// <summary>

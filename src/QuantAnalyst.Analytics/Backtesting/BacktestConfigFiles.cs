@@ -51,6 +51,68 @@ public sealed record HoldoutPolicy(bool Locked, DateOnly Start, string Path)
         root.TryGetProperty(name, out JsonElement e) && e.ValueKind == JsonValueKind.String && e.GetString() is { Length: > 0 } s ? s : null;
 }
 
+/// <summary>
+/// The intraday research's final holdout (config/holdout.intraday.json, ADR 0006): the last <see cref="Days"/> trading
+/// days with collected intraday bars, locked until the owner unlocks it. It rolls with the collection, so the newest
+/// days are never read by a locked run. The daily holdout (config/holdout.json) keeps guarding the daily bars; intraday
+/// bars exist only from plan 17's collection on, all after its start. Only the owner edits the file.
+/// </summary>
+public sealed record IntradayHoldout(bool Locked, int Days, string Path)
+{
+    public const string FileName = "holdout.intraday.json";
+
+    /// <summary>Reads the policy. A missing or malformed file is an error (fail closed), as for the daily holdout.</summary>
+    public static IntradayHoldout Load(string path)
+    {
+        if (!File.Exists(path))
+        {
+            throw new BacktestConfigException($"Intraday holdout policy {path} not found. Intraday backtests do not run without it.");
+        }
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+            JsonElement root = doc.RootElement;
+            if (root.GetProperty("format").GetString() != "qa-intraday-holdout/1")
+            {
+                throw new BacktestConfigException($"{path}: format must be qa-intraday-holdout/1.");
+            }
+
+            bool locked = root.GetProperty("locked").GetBoolean();
+            int days = root.GetProperty("days").GetInt32();
+            if (days is < 1 or > 250)
+            {
+                throw new BacktestConfigException($"{path}: days must be 1..250, got {days}.");
+            }
+
+            if (!locked && (Text(root, "unlocked_by") is null || Text(root, "unlocked_on") is null || Text(root, "reason") is null))
+            {
+                throw new BacktestConfigException($"{path}: an unlocked holdout needs unlocked_by, unlocked_on and reason.");
+            }
+
+            return new IntradayHoldout(locked, days, path);
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            throw new BacktestConfigException($"{path} is not a valid intraday holdout policy: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// The policy for the runner over the collected trading days (any order): the holdout starts at the
+    /// <see cref="Days"/>-th last of them. Null when fewer days than that are collected (then every day is held out).
+    /// </summary>
+    public HoldoutPolicy? For(IEnumerable<DateOnly> collectedDays)
+    {
+        ArgumentNullException.ThrowIfNull(collectedDays);
+        DateOnly[] days = [.. collectedDays.Distinct().OrderDescending()];
+        return days.Length < Days ? null : new HoldoutPolicy(Locked, days[Days - 1], Path);
+    }
+
+    private static string? Text(JsonElement root, string name) =>
+        root.TryGetProperty(name, out JsonElement e) && e.ValueKind == JsonValueKind.String && e.GetString() is { Length: > 0 } s ? s : null;
+}
+
 /// <summary>A courtage class's courtage for shares in a foreign currency, in that currency (ADR 0005): max(min, rate × value).</summary>
 public sealed record ForeignCourtage(decimal Min, decimal Rate);
 

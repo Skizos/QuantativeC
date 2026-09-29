@@ -19,10 +19,11 @@ internal static partial class AvanzaCommands
 
     private static Command Intraday(AvanzaCliServices services)
     {
-        var command = new Command("intraday", "Intraday research (plan 17, ADR 0006): what intraday history Avanza gives. Read-only; no orders.");
+        var command = new Command("intraday", "Intraday research (plan 17, ADR 0006): collect intraday bars and backtest intraday strategies on them. Read-only; no orders.");
         command.Subcommands.Add(IntradayProbe(services));
         command.Subcommands.Add(IntradayImport(services));
         command.Subcommands.Add(IntradayResearch(services));
+        command.Subcommands.Add(IntradayBacktestCommands.Backtest());
         return command;
     }
 
@@ -233,7 +234,7 @@ internal static partial class AvanzaCommands
     }
 
     /// <summary>Shares named on the command line: from the research list, else the instrument master.</summary>
-    private static List<IntradayName> NamedShares(string storePath, string configDir, IReadOnlyList<string> tickers)
+    internal static List<IntradayName> NamedShares(string storePath, string configDir, IReadOnlyList<string> tickers)
     {
         ResearchList research = LoadResearch(Path.Combine(configDir, ResearchList.FileName));
         var names = new List<IntradayName>();

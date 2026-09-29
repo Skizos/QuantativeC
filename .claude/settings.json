@@ -45,6 +45,8 @@
       "Write(./secrets/**)",
       "Edit(./config/holdout.json)",
       "Write(./config/holdout.json)",
+      "Edit(./config/holdout.intraday.json)",
+      "Write(./config/holdout.intraday.json)",
       "Edit(./promotion/state.json)",
       "Write(./promotion/state.json)",
       "Bash(qa promote:*)",

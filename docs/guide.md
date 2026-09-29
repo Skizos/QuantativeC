@@ -263,6 +263,12 @@ says whether an intraday strategy is worth trying on paper. What you do:
 3. **Every trading day:** nothing new. `.\qa paper run` stores the spreads it saw and, after 17:30, the day's bars.
    On a day without a session, run `.\qa intraday import` in the evening (or schedule it, e.g. 18:05 on weekdays).
    A missed day can't be fetched later if Avanza only gives today's minute bars; the probe tells.
+4. **Whenever you like, once there are some weeks of bars:** `.\qa intraday backtest --strategy orb-long` (or
+   `late-momentum`, `open-close`; `--grid range=5,15,30` tries several). It uses only the days before the intraday
+   holdout: the newest 20 collected days stay unseen until you unlock `config/holdout.intraday.json` (your file, like
+   `holdout.json`). Every run is logged, mine too, and counts against the result (Deflated Sharpe, PBO). A few weeks
+   of data prove nothing, so read these runs as a check that it works, not as a verdict. The verdict is the go/no-go
+   report after about six months.
 
 ## 4. What the numbers mean
 

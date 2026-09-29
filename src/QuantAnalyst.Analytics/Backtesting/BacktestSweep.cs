@@ -62,7 +62,7 @@ public static class BacktestSweep
         PboResult? pbo = null;
         if (ok.Length >= 2)
         {
-            int periods = ok[0].Returns.Count;
+            int periods = ok[0].DailyReturns.Count; // per day for intraday bars (plan 17)
             if (periods >= MinPeriodsForPbo)
             {
                 int blocks = Pbo.ChooseBlocks(periods);
@@ -71,7 +71,7 @@ public static class BacktestSweep
                 {
                     for (int t = 0; t < periods; t++)
                     {
-                        matrix[(t * ok.Length) + j] = ok[j].Returns[t];
+                        matrix[(t * ok.Length) + j] = ok[j].DailyReturns[t];
                     }
                 }
 

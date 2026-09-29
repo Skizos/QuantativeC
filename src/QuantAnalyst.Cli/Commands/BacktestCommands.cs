@@ -81,7 +81,7 @@ internal static class BacktestCommands
         new("--ledger") { Description = $"Ledger file (default: <repository>/{TrialLedger.DefaultPath})" };
 
     /// <summary>Everything a run needs except the strategy (shared by run and sweep).</summary>
-    private sealed record Setup(BacktestRequest Template, IReadOnlyList<string> Notes);
+    internal sealed record Setup(BacktestRequest Template, IReadOnlyList<string> Notes);
 
     private static Setup Prepare(ParseResult parse, Inputs o, StrategyDefinition strategy)
     {
@@ -258,33 +258,39 @@ internal static class BacktestCommands
                 return 0;
             }
 
-            WriteHeader(w, setup, sweep.Trials[0].Record);
-            var table = new TextTable(("id", false), ("parameters", false), ("status", false), ("SR/yr", true), ("PSR(0)", true), ("return", true), ("max DD", true));
-            foreach (BacktestResult r in sweep.Trials.OrderByDescending(t => t.Record.Metrics?.SharpePerPeriod ?? double.NegativeInfinity).Take(parse.GetValue(top)))
-            {
-                TrialMetrics? m = r.Record.Metrics;
-                table.Add(r.Record.Id, Describe(r.Record.Parameters), Status(r.Record.Status), F(m?.SharpeAnnualised, "0.00"), F(m?.Psr0, "0.000"),
-                    Pct(m?.TotalReturn), Pct(m?.MaxDrawdown));
-            }
-
-            table.Write(w);
-            int ok = sweep.Trials.Count(t => t.Ok);
-            w.WriteLine($"{sweep.Trials.Count} configurations run and logged ({ok} ok).");
-            if (sweep.Best is { } best)
-            {
-                w.WriteLine($"Best: {best.Record.Id} {Describe(best.Record.Parameters)}, SR/yr {best.Record.Metrics!.SharpeAnnualised:0.00}.");
-                w.WriteLine(sweep.BestDsr is { } dsr
-                    ? $"Deflated Sharpe Ratio of the best: {dsr:0.000} over {sweep.StudyTrials} trials in the study ({(dsr >= 0.95 ? "significant at 5 %" : "NOT significant at 5 %")})."
-                    : "Deflated Sharpe Ratio of the best: n/a (needs 2+ completed trials with different Sharpe ratios).");
-            }
-
-            w.WriteLine(sweep.Pbo is { } pbo
-                ? $"PBO (CSCV, S = {pbo.Blocks}, {pbo.Combinations} splits): {pbo.Probability:0.000}; P(best in-sample loses out-of-sample): {pbo.ProbabilityOfOosLoss:0.000}."
-                : $"PBO: n/a (needs 2+ completed configurations and at least {BacktestSweep.MinPeriodsForPbo} return periods).");
-            w.WriteLine($"Ledger: {setup.Template.Ledger!.Path}. Model output; not financial advice.");
+            WriteSweep(w, setup, sweep, parse.GetValue(top));
             return 0;
         }));
         return command;
+    }
+
+    /// <summary>The text report of a sweep: the top rows by Sharpe, the best's Deflated Sharpe Ratio and the PBO.</summary>
+    internal static void WriteSweep(TextWriter w, Setup setup, SweepResult sweep, int top)
+    {
+        WriteHeader(w, setup, sweep.Trials[0].Record);
+        var table = new TextTable(("id", false), ("parameters", false), ("status", false), ("SR/yr", true), ("PSR(0)", true), ("return", true), ("max DD", true));
+        foreach (BacktestResult r in sweep.Trials.OrderByDescending(t => t.Record.Metrics?.SharpePerPeriod ?? double.NegativeInfinity).Take(top))
+        {
+            TrialMetrics? m = r.Record.Metrics;
+            table.Add(r.Record.Id, Describe(r.Record.Parameters), Status(r.Record.Status), F(m?.SharpeAnnualised, "0.00"), F(m?.Psr0, "0.000"),
+                Pct(m?.TotalReturn), Pct(m?.MaxDrawdown));
+        }
+
+        table.Write(w);
+        int ok = sweep.Trials.Count(t => t.Ok);
+        w.WriteLine($"{sweep.Trials.Count} configurations run and logged ({ok} ok).");
+        if (sweep.Best is { } best)
+        {
+            w.WriteLine($"Best: {best.Record.Id} {Describe(best.Record.Parameters)}, SR/yr {best.Record.Metrics!.SharpeAnnualised:0.00}.");
+            w.WriteLine(sweep.BestDsr is { } dsr
+                ? $"Deflated Sharpe Ratio of the best: {dsr:0.000} over {sweep.StudyTrials} trials in the study ({(dsr >= 0.95 ? "significant at 5 %" : "NOT significant at 5 %")})."
+                : "Deflated Sharpe Ratio of the best: n/a (needs 2+ completed trials with different Sharpe ratios).");
+        }
+
+        w.WriteLine(sweep.Pbo is { } pbo
+            ? $"PBO (CSCV, S = {pbo.Blocks}, {pbo.Combinations} splits): {pbo.Probability:0.000}; P(best in-sample loses out-of-sample): {pbo.ProbabilityOfOosLoss:0.000}."
+            : $"PBO: n/a (needs 2+ completed configurations and at least {BacktestSweep.MinPeriodsForPbo} return periods).");
+        w.WriteLine($"Ledger: {setup.Template.Ledger!.Path}. Model output; not financial advice.");
     }
 
     // ---- qa trials list / verify ------------------------------------------------------------------------
@@ -442,7 +448,7 @@ internal static class BacktestCommands
     private static string Sek(decimal amount) => amount.ToString("N0", CultureInfo.InvariantCulture) + " SEK";
 
     /// <summary>A cost model by class name (config/costs.&lt;name&gt;.json) or by path.</summary>
-    private static CostModel LoadCosts(string configDir, string nameOrPath) =>
+    internal static CostModel LoadCosts(string configDir, string nameOrPath) =>
         CostModel.Load(nameOrPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || nameOrPath.Contains(Path.DirectorySeparatorChar) || nameOrPath.Contains('/')
             ? nameOrPath
             : Path.Combine(configDir, $"costs.{nameOrPath}.json"));
@@ -547,7 +553,7 @@ internal static class BacktestCommands
     internal static TickSizeTable Scaled(TickSizeTable table, decimal sekPerUnit) =>
         new([.. table.Bands.Select(b => new TickSizeBand(b.Min * sekPerUnit, b.Max * sekPerUnit, b.Tick * sekPerUnit))]);
 
-    private static TickSizeTable ParseTickTable(string json)
+    internal static TickSizeTable ParseTickTable(string json)
     {
         using JsonDocument doc = JsonDocument.Parse(json);
         return new TickSizeTable([.. doc.RootElement.EnumerateArray().Select(b =>
@@ -556,7 +562,7 @@ internal static class BacktestCommands
 
     // ---- output -----------------------------------------------------------------------------------------
 
-    private static void WriteHeader(TextWriter w, Setup setup, TrialRecord record)
+    internal static void WriteHeader(TextWriter w, Setup setup, TrialRecord record)
     {
         BacktestRequest t = setup.Template;
         MarketPanel d = t.Data;
@@ -570,7 +576,7 @@ internal static class BacktestCommands
         w.WriteLine($"Study: {record.Study}");
     }
 
-    private static void WriteResult(TextWriter w, BacktestResult r, BacktestRequest t)
+    internal static void WriteResult(TextWriter w, BacktestResult r, BacktestRequest t)
     {
         TrialRecord rec = r.Record;
         w.WriteLine($"Trial {rec.Id}: {rec.Strategy}{(rec.Parameters.Count == 0 ? string.Empty : " " + Describe(rec.Parameters))} → {Status(rec.Status)}{(rec.Note is null ? string.Empty : $" ({rec.Note})")}");
@@ -643,7 +649,7 @@ internal static class BacktestCommands
         return result;
     }
 
-    private static (string Key, string Value) SplitPair(string item, string option)
+    internal static (string Key, string Value) SplitPair(string item, string option)
     {
         int eq = item.IndexOf('=', StringComparison.Ordinal);
         return eq <= 0 || eq == item.Length - 1
@@ -719,7 +725,7 @@ internal static class BacktestCommands
         throw new ArgumentException($"Not inside the repository, so the default ledger ({TrialLedger.DefaultPath}) is unknown; pass --ledger.");
     }
 
-    private static int Execute(ParseResult parse, Func<TextWriter, int> body) => DataCommands.Execute(parse, w =>
+    internal static int Execute(ParseResult parse, Func<TextWriter, int> body) => DataCommands.Execute(parse, w =>
     {
         try
         {

@@ -257,3 +257,70 @@ the screen all day.
 - **Tests (7 new):** the repository's Start class, three kinds of broken allowance, a chain refused, trades past the
   allowance paying Mini off the equity, and the window rolling.
 - All 1261 managed tests pass (1 skipped).
+
+### A5: the strategies and `qa intraday backtest` (done 2026-09-29)
+
+- **The frame** (`IntradayStrategy`), shared by the three:
+  - each day's open and close come from the XSTO calendar (`IntradayClock`; half days close early)
+  - a decision is made at a bar's close (its start plus the bar length) and trades at the next bar's open
+  - state never carries overnight
+  - each name is waiting, in, or done for the day: at most one entry per name per day
+  - `weight` of equity per position (default 0.1, R6's 500 kr at 5 000 kr), at most ⌊1/weight⌋ names at once; when
+    more want in on the same bar, the strongest signal goes first
+  - from `exit` minutes before the close (at least 10: R16) everything goes flat and nothing enters
+  - bars on a day the calendar has closed fail the run instead of being guessed
+- **`orb-long`** (`range` 15, `skip` 5, `buffer` 0 bps, `exit` 20):
+  - the range is the high and low of the bars in the `range` minutes from `skip` after the open (09:05: the opening
+    auction's bar is left out, as the plan says)
+  - a close above high × (1 + buffer) buys
+  - a close below the low sells: a stop at a bar's close, not inside the bar (no stop orders, ADR 0006 §3)
+  - no take-profit
+- **`late-momentum`** (`lookback` 60, `threshold` 0 bps, `entry` 60, `exit` 15):
+  - the first hour's return, from the first open to the close at 10:00
+  - buys at 16:30 when it is above the threshold, and sells at 17:15
+- **`open-close`** (`entry` 10, `exit` 20): every name at 09:10, out at 17:10, each with min(weight, 1/N).
+- **They live in `IntradayStrategyCatalog`, not `StrategyCatalog`:** `qa paper strategy` cannot choose them (Phase B
+  comes only after a go).
+- **The runner:** on intraday bars a market exit is sent even after a bar without trades (it needs no price). Before,
+  a quiet decision minute before the close could carry a position overnight. Daily bars are unchanged.
+- **`BacktestResult.DailyReturns`:** one return per day. A sweep's PBO now uses them, so on intraday bars it is per day,
+  as plan 17 says, not per bar.
+- **`qa intraday backtest`:**
+  - reads the collected bars of one resolution (5 minutes by default) for the allowlist's Stockholm shares and the
+    research list, or `--tickers`
+  - bars outside each day's session are dropped; a share's day whose bars stop more than 30 minutes before the close
+    is left out (a mid-day import or a halt), and the output counts both
+  - half-spreads: a share's median from the Paper sessions' samples once there are 30, else the cost model's
+  - market orders at the next bar's open; costs from `backtest-defaults.json` (Start with its free-trade allowance)
+  - `--grid` sweeps and prints PBO and the best's Deflated Sharpe
+  - every run is logged; the data source is named with the resolution (`avanza-price-chart:5m`), so 1- and 5-minute
+    runs are separate studies
+- **The intraday holdout, `config/holdout.intraday.json`** (new, locked, 20 days):
+  - the last 20 trading days with collected bars are never read while it is locked
+  - it rolls with the collection, so the newest days are always unseen
+  - with fewer days collected, nothing runs
+  - `--to` into it is refused and logged, as for the daily holdout
+  - like `holdout.json`, only the owner edits it: added to the settings deny list and to hook rule 5, with hook tests
+  - `holdout.json` still guards the daily bars. Intraday bars exist only from this collection on, all inside the daily
+    holdout window, so ADR 0006's own holdout is the one that applies to them.
+- **Tests (25 new):**
+  - the strategies on hand-made bars:
+    - the breakout at the next open and out at 17:10; the range after `skip`; the buffer
+    - the stop, one entry a day, and a new day
+    - the strongest taking the slots
+    - late momentum up and down, with a threshold
+    - open-close at 1/N
+    - a half day's early exit
+    - an exit after a minute without trades (it fails without the runner change)
+    - daily bars and a weekend refused
+    - bad parameters, and the catalog's defaults
+  - `qa intraday backtest` on a temporary store:
+    - a run up to the holdout
+    - a sweep
+    - `--to` into the holdout refused and logged
+    - an unlocked holdout read and marked
+    - too few days
+    - an incomplete day left out and a measured spread used
+    - a daily strategy refused
+    - the holdout rule
+- All 1285 managed tests pass (1 skipped); the hook tests pass.

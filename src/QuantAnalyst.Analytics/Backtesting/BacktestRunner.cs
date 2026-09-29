@@ -78,6 +78,13 @@ public sealed record BacktestResult(
     public IReadOnlyList<TimedFill> Fills { get; init; } = [];
 
     /// <summary>
+    /// Gets the returns the statistics are on: one per trading day (plan 17). For daily bars these are
+    /// <see cref="Returns"/>; for intraday bars, each day's last equity against the previous day's (the first against
+    /// the starting cash).
+    /// </summary>
+    public IReadOnlyList<double> DailyReturns { get; init; } = [];
+
+    /// <summary>
     /// Gets the courtage paid after a class's free trades ran out (plan 17 A4), in SEK: already taken off
     /// <see cref="Equity"/>, not part of <see cref="FinalState"/> (the engine charged the free class).
     /// </summary>
@@ -371,6 +378,14 @@ public static class BacktestRunner
         for (int i = 0; i < targets.Length; i++)
         {
             double w = targets[i];
+            if (!double.IsNaN(w) && w == 0 && positions[i] > 0 && !data.IsValid(t, i) && data.IsIntraday && execution.OrderType != BacktestOrderType.Limit)
+            {
+                // Plan 17: a market exit needs no price, so a share that did not trade in this minute still leaves at
+                // the next one that trades (else a quiet last minute would carry the position overnight).
+                orders.Add(new BacktestOrder(i, BacktestSide.Sell, execution.OrderType, positions[i], 0));
+                continue;
+            }
+
             if (double.IsNaN(w) || !data.IsValid(t, i))
             {
                 continue; // hold, or no price today
@@ -546,6 +561,9 @@ public static class BacktestRunner
 
         return new BacktestResult(record, data.Dates, outcome.Equity, outcome.Returns, outcome.State, outcome.Positions, outcome.Traded)
         {
+            DailyReturns = data.IsIntraday && outcome.Equity.Length > 0
+                ? Returns(DayEndEquity(data, outcome.Equity, (double)request.InitialCash))
+                : outcome.Returns,
             Fills = outcome.Fills,
             AllowanceCourtage = outcome.AllowanceCourtage,
         };
