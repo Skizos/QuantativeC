@@ -26,7 +26,7 @@ public sealed class PaperSpyTests : IDisposable
     {
         Directory.CreateDirectory(Config);
         string repo = Path.Combine(RepoRoot(), "config");
-        foreach (string f in new[] { "risk-limits.json", "costs.avanza-start.json", "market-calendar.XSTO.2026.json", "market-calendar.XSTO.2027.json" })
+        foreach (string f in new[] { "risk-limits.json", "costs.avanza-start.json", "costs.avanza-mini.json", "market-calendar.XSTO.2026.json", "market-calendar.XSTO.2027.json" })
         {
             File.Copy(Path.Combine(repo, f), Path.Combine(Config, f));
         }

@@ -27,7 +27,7 @@ public sealed class ForeignPaperSpyTests : IDisposable
         string repo = Path.Combine(PaperSpyTests.RepoRoot(), "config");
         foreach (string f in new[]
                  {
-                     "costs.avanza-start.json", "market-calendar.XSTO.2026.json", "market-calendar.XSTO.2027.json", "market-calendar.XNYS.2026.json",
+                     "costs.avanza-start.json", "costs.avanza-mini.json", "market-calendar.XSTO.2026.json", "market-calendar.XSTO.2027.json", "market-calendar.XNYS.2026.json",
                      "market-calendar.XNYS.2027.json",
                  })
         {

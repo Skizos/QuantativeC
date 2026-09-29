@@ -235,3 +235,25 @@ the screen all day.
   - reading the next bar's time, and an intraday leakage canary caught by the truncation replay
   - daily bars having no times
 - All 1254 managed and 138 native tests pass (1 skipped).
+
+### A4: the free-trade allowance (done 2026-09-29)
+
+- **`config/costs.avanza-start.json`** gains `free_trades`: 500 trades per 12 months, then `avanza-mini`,
+  `verified_on` null (from market-rules.md §4, a search-engine extract; the owner's screenshot of 2026-09-26 did not
+  show the footnote). **The owner checks it.**
+- **`CostModel.FreeTrades`** (`FreeTradeAllowance`): the class it turns into is read from its own file beside it. The
+  next class may not have an allowance of its own, and that is refused before it could loop. Also refused: pointing
+  at itself, a missing file, a bad count or window.
+- **The backtest:**
+  - the engine charges the free class
+  - the runner then counts the trades on Swedish shares in a rolling window
+  - each trade past the allowance pays the next class's courtage, taken off the equity from its bar on
+    (`BacktestResult.AllowanceCourtage`, included in the trial's total costs)
+  - the note says when the free trades ran out, and that the allowance is unverified
+  - foreign trades pay their own courtage and don't count
+  - approximation (stated): the engine's cash check did not see this courtage
+- **`BacktestResult.Fills`:** every fill with its bar, for the per-trade statistics of A6.
+- Tests that copy the Start class into a temporary config folder copy Mini too, as a real config folder has it.
+- **Tests (7 new):** the repository's Start class, three kinds of broken allowance, a chain refused, trades past the
+  allowance paying Mini off the equity, and the window rolling.
+- All 1261 managed tests pass (1 skipped).

@@ -73,7 +73,19 @@ public sealed record BacktestResult(
     double TradedNotional)
 {
     public bool Ok => Record.Status == TrialStatus.Ok;
+
+    /// <summary>Gets every fill with the bar it happened on (plan 17: the per-trade statistics).</summary>
+    public IReadOnlyList<TimedFill> Fills { get; init; } = [];
+
+    /// <summary>
+    /// Gets the courtage paid after a class's free trades ran out (plan 17 A4), in SEK: already taken off
+    /// <see cref="Equity"/>, not part of <see cref="FinalState"/> (the engine charged the free class).
+    /// </summary>
+    public double AllowanceCourtage { get; init; }
 }
+
+/// <summary>One fill and the bar it happened on.</summary>
+public readonly record struct TimedFill(int Bar, BacktestFill Fill);
 
 /// <summary>
 /// Runs a strategy through the native engine bar by bar and logs the evaluation to the TrialLedger, whatever the
@@ -129,8 +141,9 @@ public static class BacktestRunner
             return Finish(request, TrialStatus.RejectedLeakage, leak, null, touchesHoldout, sim.ToOutcome());
         }
 
-        TrialMetrics metrics = ComputeMetrics(request, sim);
         var notes = new List<string>();
+        sim = ApplyFreeTrades(request, sim, notes);
+        TrialMetrics metrics = ComputeMetrics(request, sim);
         if (!request.Costs.Verified)
         {
             notes.Add($"costs UNVERIFIED: {request.Costs.Name} has no verified_on");
@@ -200,6 +213,7 @@ public static class BacktestRunner
         var orders = new List<BacktestOrder>(n);
         var pending = new List<BacktestOrder>(n);
         var equity = new double[periods];
+        var log = new List<TimedFill>();
         var checkpoints = LeakageCheckpoints(periods, request.LeakageCheckpoints).ToDictionary(t => t, _ => Array.Empty<double>());
         double traded = 0;
         BacktestState state = default;
@@ -215,6 +229,7 @@ public static class BacktestRunner
             for (int k = 0; k < filled; k++)
             {
                 traded += fills[k].Quantity * fills[k].Price;
+                log.Add(new TimedFill(t, fills[k]));
             }
 
             equity[t] = state.Equity;
@@ -242,7 +257,71 @@ public static class BacktestRunner
         }
 
         engine.GetPositions(positions);
-        return new Simulation(equity, state, positions, traded, checkpoints);
+        return new Simulation(equity, state, positions, traded, checkpoints) { Fills = log };
+    }
+
+    /// <summary>
+    /// Plan 17 A4: a class free for its first trades (Avanza Start: 500 per 12 months, then Mini; UNVERIFIED). The
+    /// engine charged the free class; here each trade on a Swedish share past the allowance within the rolling window
+    /// pays the next class's courtage, taken off the equity from its bar on. (The cash check inside the engine did not
+    /// see it: an approximation, stated in the note.)
+    /// </summary>
+    private static Simulation ApplyFreeTrades(BacktestRequest request, Simulation sim, List<string> notes)
+    {
+        if (request.Costs.FreeTrades is not { } allowance || sim.Fills.Count == 0)
+        {
+            return sim;
+        }
+
+        MarketPanel data = request.Data;
+        var counted = new Queue<DateOnly>();
+        var extraAt = new double[sim.Equity.Length];
+        double extra = 0;
+        DateOnly? ranOut = null;
+        foreach (TimedFill f in sim.Fills)
+        {
+            if (data.Instruments[f.Fill.Instrument].ForeignCurrency)
+            {
+                continue; // foreign trades pay their own courtage and don't use the allowance
+            }
+
+            DateOnly day = data.Dates[f.Bar];
+            while (counted.Count > 0 && counted.Peek() <= day.AddMonths(-allowance.Months))
+            {
+                counted.Dequeue();
+            }
+
+            if (counted.Count >= allowance.Trades)
+            {
+                ranOut ??= day;
+                decimal notional = (decimal)(f.Fill.Quantity * f.Fill.Price);
+                double owed = (double)(allowance.Then.Courtage(notional) - request.Costs.Courtage(notional));
+                if (owed > 0)
+                {
+                    extra += owed;
+                    extraAt[f.Bar] += owed;
+                }
+            }
+
+            counted.Enqueue(day);
+        }
+
+        if (ranOut is null)
+        {
+            return sim;
+        }
+
+        var equity = (double[])sim.Equity.Clone();
+        double running = 0;
+        for (int t = 0; t < equity.Length; t++)
+        {
+            running += extraAt[t];
+            equity[t] -= running;
+        }
+
+        notes.Add(string.Create(CultureInfo.InvariantCulture,
+            $"{request.Costs.DisplayName ?? request.Costs.Name}'s {allowance.Trades} free trades per {allowance.Months} months ran out on {ranOut:yyyy-MM-dd}; later trades paid {allowance.Then.DisplayName ?? allowance.Then.Name}'s courtage ({extra:N2} SEK{(allowance.VerifiedOn is null ? ", allowance UNVERIFIED" : string.Empty)})"));
+        return sim with { Equity = equity, AllowanceCourtage = extra };
     }
 
     /// <summary>
@@ -424,7 +503,7 @@ public static class BacktestRunner
             vol,
             PerformanceStatistics.MaxDrawdown(equity),
             turnover,
-            sim.FinalState.TotalCosts,
+            sim.FinalState.TotalCosts + sim.AllowanceCourtage,
             psr0,
             dsr,
             sharpes.Count,
@@ -465,7 +544,11 @@ public static class BacktestRunner
             record = request.Ledger.Append(record);
         }
 
-        return new BacktestResult(record, data.Dates, outcome.Equity, outcome.Returns, outcome.State, outcome.Positions, outcome.Traded);
+        return new BacktestResult(record, data.Dates, outcome.Equity, outcome.Returns, outcome.State, outcome.Positions, outcome.Traded)
+        {
+            Fills = outcome.Fills,
+            AllowanceCourtage = outcome.AllowanceCourtage,
+        };
     }
 
     /// <summary>The starting cash, then the equity after each trading day's last bar.</summary>
@@ -508,12 +591,21 @@ public static class BacktestRunner
 
     private static Outcome Empty(MarketPanel data) => new([], [], default, new long[data.InstrumentCount], 0);
 
-    private sealed record Outcome(double[] Equity, double[] Returns, BacktestState State, long[] Positions, double Traded);
+    private sealed record Outcome(double[] Equity, double[] Returns, BacktestState State, long[] Positions, double Traded)
+    {
+        public List<TimedFill> Fills { get; init; } = [];
+
+        public double AllowanceCourtage { get; init; }
+    }
 
     private sealed record Simulation(
         double[] Equity, BacktestState FinalState, long[] Positions, double TradedNotional, Dictionary<int, double[]> Checkpoints)
     {
-        public Outcome ToOutcome() => new(Equity, Returns(Equity), FinalState, Positions, TradedNotional);
+        public List<TimedFill> Fills { get; init; } = [];
+
+        public double AllowanceCourtage { get; init; }
+
+        public Outcome ToOutcome() => new(Equity, Returns(Equity), FinalState, Positions, TradedNotional) { Fills = Fills, AllowanceCourtage = AllowanceCourtage };
     }
 }
 

@@ -55,6 +55,13 @@ public sealed record HoldoutPolicy(bool Locked, DateOnly Start, string Path)
 public sealed record ForeignCourtage(decimal Min, decimal Rate);
 
 /// <summary>
+/// A class that is free for its first trades (plan 17 A4; Avanza Start: 500 trades per 12 months, then Mini,
+/// UNVERIFIED): trades on Swedish shares past <see cref="Trades"/> within <see cref="Months"/> pay <see cref="Then"/>'s
+/// courtage.
+/// </summary>
+public sealed record FreeTradeAllowance(int Trades, int Months, CostModel Then, string? SourceUrl, DateOnly? VerifiedOn);
+
+/// <summary>
 /// A cost model (config/costs.&lt;name&gt;.json): courtage, FX fee, spread, slippage and participation cap, and the courtage
 /// for US and Canadian shares (<c>foreign_courtage</c>, ADR 0005). Money amounts stay decimal here and become double only
 /// for the engine.
@@ -85,6 +92,9 @@ public sealed record CostModel(
 
     /// <summary>Gets the courtage for shares in each foreign currency (USD, CAD), in that currency; empty when the file has none.</summary>
     public IReadOnlyDictionary<string, ForeignCourtage> Foreign { get; init; } = new Dictionary<string, ForeignCourtage>(StringComparer.Ordinal);
+
+    /// <summary>Gets the free-trade allowance (Start's 500 trades a year), or null when every trade pays the courtage.</summary>
+    public FreeTradeAllowance? FreeTrades { get; init; }
 
     /// <summary>Gets where the foreign courtage comes from.</summary>
     public string? ForeignSourceUrl { get; init; }
@@ -139,7 +149,10 @@ public sealed record CostModel(
         ParticipationCap = (double)ParticipationCap,
     };
 
-    public static CostModel Load(string path)
+    public static CostModel Load(string path) => Load(path, allowFreeTrades: true);
+
+    /// <param name="allowFreeTrades">False for the class an allowance turns into: it may not have one itself.</param>
+    private static CostModel Load(string path, bool allowFreeTrades)
     {
         if (!File.Exists(path))
         {
@@ -195,6 +208,13 @@ public sealed record CostModel(
                         ? DateOnly.ParseExact(fv.GetString()!, "yyyy-MM-dd", CultureInfo.InvariantCulture)
                         : null,
                 };
+            }
+
+            if (root.TryGetProperty("free_trades", out JsonElement free))
+            {
+                model = allowFreeTrades
+                    ? model with { FreeTrades = ReadFreeTrades(free, model.Name, path) }
+                    : throw new BacktestConfigException($"{path}: this class is what another's free trades turn into, and has an allowance of its own; one step only.");
             }
 
             if (model.CourtageMin < 0 || model.CourtageRate < 0 || model.FxFeeRate < 0 || model.SlippageBps < 0 || model.HalfSpreadBps < 0
@@ -257,6 +277,36 @@ public sealed record CostModel(
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// <c>free_trades</c>: <c>{"trades": 500, "months": 12, "then": "avanza-mini", "source_url", "verified_on", "basis"}</c>.
+    /// The class it turns into is read from its own file beside this one and may not have an allowance itself.
+    /// </summary>
+    private static FreeTradeAllowance ReadFreeTrades(JsonElement free, string name, string path)
+    {
+        int trades = free.GetProperty("trades").GetInt32();
+        int months = free.GetProperty("months").GetInt32();
+        string then = free.GetProperty("then").GetString()!;
+        if (trades < 1 || months < 1 || months > 60)
+        {
+            throw new BacktestConfigException($"{path}: free_trades needs trades >= 1 and months in 1..60.");
+        }
+
+        if (then == name)
+        {
+            throw new BacktestConfigException($"{path}: free_trades.then must be another courtage class, not {name} itself.");
+        }
+
+        string thenPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, $"costs.{then}.json");
+        CostModel next = Load(thenPath, allowFreeTrades: false); // refuses a chain before it could loop
+
+        DateOnly? verified = free.TryGetProperty("verified_on", out JsonElement v) && v.ValueKind == JsonValueKind.String
+            ? DateOnly.TryParseExact(v.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly d)
+                ? d
+                : throw new BacktestConfigException($"{path}: free_trades.verified_on must be null or a yyyy-MM-dd date.")
+            : null;
+        return new FreeTradeAllowance(trades, months, next, OptionalString(free, "source_url"), verified);
     }
 
     private static string? OptionalString(JsonElement e, string name) =>
