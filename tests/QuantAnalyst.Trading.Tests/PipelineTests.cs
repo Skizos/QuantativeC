@@ -70,7 +70,6 @@ public sealed class OrderPreparationTests
 
     public static TheoryData<string, long, decimal?, string, string> Refusals => new()
     {
-        { "USD", 10, 100m, "SEK", "trades in USD" },
         { "SEK", 5, 100m, "SEK lot 10", "less than one lot of 10" },
         { "SEK", 10, 0m, "SEK", "must be positive" },
         { "SEK", 10, -1m, "SEK", "must be positive" },

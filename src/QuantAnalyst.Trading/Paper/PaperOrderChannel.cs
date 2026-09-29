@@ -18,8 +18,9 @@ namespace QuantAnalyst.Trading.Paper;
 /// limit; a touch is not a fill), at the limit, capped at 10 % of the traded-volume increment since the order last
 /// looked. Several resting orders in one instrument share that 10 %, oldest first.</item>
 /// <item>Courtage from the book's courtage class, charged per order: each fill pays the difference between the courtage
-/// on the order's cumulative filled value and what it has paid so far, so the minimum fee is paid once. FX fee for
-/// non-SEK instruments.</item>
+/// on the order's cumulative filled value and what it has paid so far, so the minimum fee is paid once. A US or
+/// Canadian share (ADR 0005) pays the class's foreign courtage, in its currency, converted to SEK at the day's rate, and
+/// the FX fee on its value. Buying power, reservations and fees are SEK; prices stay in the share's currency.</item>
 /// <item>Day orders: <see cref="EndOfDay"/> ends every resting order.</item>
 /// </list>
 /// Fill and end events are raised under the channel's lock, so they reach the OMS in order and never race a cancel.
@@ -39,10 +40,13 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
     private readonly IQuoteSource _quotes;
     private readonly IInstrumentCatalog _instruments;
     private readonly TimeProvider _time;
+    private readonly IFxRates _fx;
     private long _next;
 
-    public PaperOrderChannel(PaperBook book, CostModel costs, IQuoteSource quotes, IInstrumentCatalog instruments, TimeProvider time)
+    /// <param name="fx">SEK per unit of each foreign currency traded (ADR 0005); default SEK only.</param>
+    public PaperOrderChannel(PaperBook book, CostModel costs, IQuoteSource quotes, IInstrumentCatalog instruments, TimeProvider time, IFxRates? fx = null)
     {
+        _fx = fx ?? FxTable.SekOnly;
         _book = book ?? throw new ArgumentNullException(nameof(book));
         _costs = costs ?? throw new ArgumentNullException(nameof(costs));
         _quotes = quotes ?? throw new ArgumentNullException(nameof(quotes));
@@ -67,9 +71,12 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
         }
     }
 
-    /// <summary>Courtage plus FX fee the model charges for an order of <paramref name="value"/> (the risk engine's R9 input).</summary>
+    /// <summary>
+    /// Courtage plus FX fee, in SEK, the model charges for an order of <paramref name="value"/> in <paramref name="currency"/>
+    /// (the risk engine's R9 input).
+    /// </summary>
     public decimal EstimateFees(decimal value, string currency) =>
-        Round(_costs.Courtage(value)) + FxFee(value, currency);
+        CourtageSek(value, currency) + FxFee(value, currency);
 
     public Task<OrderSubmitResult> PlaceAsync(ApprovedOrder order, CancellationToken ct)
     {
@@ -91,7 +98,7 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
             string currency = spec.Currency;
             if (order.Side == OrderSide.Buy)
             {
-                decimal needed = order.Volume * order.LimitPrice + EstimateFees(order.Volume * order.LimitPrice, currency);
+                decimal needed = (order.Volume * order.LimitPrice * Rate(currency)) + EstimateFees(order.Volume * order.LimitPrice, currency);
                 decimal available = _book.Cash - _book.Reserved;
                 if (needed > available)
                 {
@@ -213,31 +220,34 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
         }
     }
 
-    /// <summary>Ends every resting order (day orders at the close, or a shutdown). Returns how many ended.</summary>
-    public int EndOfDay(string reason)
+    /// <summary>
+    /// Ends the resting orders (day orders at the close, or a shutdown): all of them, or only those of the instruments
+    /// <paramref name="which"/> picks (one market's close, ADR 0005). Returns how many ended.
+    /// </summary>
+    public int EndOfDay(string reason, Func<InstrumentSpec, bool>? which = null)
     {
         lock (_lock)
         {
-            List<Resting> all = [.. _resting.Values.OrderBy(r => r.Sequence)];
-            _resting.Clear();
-            foreach (Resting r in all)
+            List<Resting> ending = [.. _resting.Values.Where(r => which is null || which(r.Spec)).OrderBy(r => r.Sequence)];
+            foreach (Resting r in ending)
             {
+                _resting.Remove(r.BrokerId);
                 _book.Release(r.Order.ClientOrderId);
                 Ended?.Invoke(r.BrokerId, reason);
             }
 
-            return all.Count;
+            return ending.Count;
         }
     }
 
     private void Fill(Resting r, long quantity, decimal price, string why)
     {
-        decimal cumulative = r.FilledValue + quantity * price;
-        decimal courtage = Math.Max(0m, Round(_costs.Courtage(cumulative)) - r.CourtagePaid);
+        decimal cumulative = r.FilledValue + (quantity * price);
+        decimal courtage = Math.Max(0m, CourtageSek(cumulative, r.Spec.Currency) - r.CourtagePaid);
         decimal fx = FxFee(quantity * price, r.Spec.Currency);
         DateTimeOffset now = _time.GetUtcNow();
 
-        _book.ApplyFill(r.Order.ClientOrderId, r.Order.OrderbookId, r.Spec.Ticker, r.Order.Side, quantity, price, courtage, fx, now);
+        _book.ApplyFill(r.Order.ClientOrderId, r.Order.OrderbookId, r.Spec.Ticker, r.Order.Side, quantity, price, courtage, fx, now, r.Spec.Currency, Rate(r.Spec.Currency));
         r.Filled += quantity;
         r.FilledValue = cumulative;
         _deals.Add(new BrokerDeal($"{r.BrokerId}-{_deals.Count + 1}", r.BrokerId, r.Order.Account, r.Order.OrderbookId, r.Order.Side, price, quantity, now));
@@ -263,14 +273,22 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
             return;
         }
 
-        // The rest at the limit plus the courtage still to pay on the whole order.
+        // The rest at the limit (in SEK) plus the courtage still to pay on the whole order and the FX fee.
         decimal rest = r.Remaining * r.Order.LimitPrice;
-        decimal courtageLeft = Math.Max(0m, Round(_costs.Courtage(r.FilledValue + rest)) - r.CourtagePaid);
-        _book.Reserve(r.Order.ClientOrderId, rest + courtageLeft + FxFee(rest, r.Spec.Currency));
+        decimal courtageLeft = Math.Max(0m, CourtageSek(r.FilledValue + rest, r.Spec.Currency) - r.CourtagePaid);
+        _book.Reserve(r.Order.ClientOrderId, (rest * Rate(r.Spec.Currency)) + courtageLeft + FxFee(rest, r.Spec.Currency));
     }
 
+    /// <summary>SEK per unit of <paramref name="currency"/> (1 for SEK). The gateway refuses a foreign order without a rate first.</summary>
+    private decimal Rate(string currency) =>
+        _fx.SekPerUnit(currency) ?? throw new InvalidOperationException($"No {currency}/SEK rate is known to the paper channel.");
+
+    /// <summary>The class's courtage on <paramref name="value"/> in the share's currency, in SEK (ADR 0005).</summary>
+    private decimal CourtageSek(decimal value, string currency) => Round(_costs.CourtageIn(currency, value) * Rate(currency));
+
+    /// <summary>The FX fee on a foreign share's <paramref name="value"/>, in SEK; none for SEK.</summary>
     private decimal FxFee(decimal value, string currency) =>
-        string.Equals(currency, _costs.Currency, StringComparison.Ordinal) ? 0m : Round(_costs.FxFeeRate * value);
+        string.Equals(currency, _costs.Currency, StringComparison.Ordinal) ? 0m : Round(_costs.FxFeeRate * value * Rate(currency));
 
     private static long Lots(long quantity, long lot) => quantity <= 0 ? 0 : quantity / lot * lot;
 

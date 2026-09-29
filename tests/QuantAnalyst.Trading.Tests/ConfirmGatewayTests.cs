@@ -184,6 +184,22 @@ public sealed class ConfirmGatewayTests : IDisposable
         Assert.True(AuditLog.Verify(_dir.Path).Valid);
     }
 
+    [Fact]
+    public async Task AUsShare_IsRefusedBeforeAnyCard_ForeignSharesTradeOnPaperOnly()
+    {
+        _spec = OrderCardTests.Spec with { Currency = "USD" };
+        using OrderGateway gateway = New(_channel, TradingMode.Confirm, e => e with { Fx = new FxTable(new Dictionary<string, decimal> { ["USD"] = 10m }) });
+
+        SubmitResult r = await gateway.SubmitAsync(Intent(), Ct);
+
+        Assert.Equal(SubmitStatus.NotPrepared, r.Status);
+        Assert.Equal("ERIC B trades in USD: foreign shares trade on paper only (ADR 0005); Confirm refuses them.", r.Message);
+        Assert.Empty(_confirm.Cards);
+        Assert.Empty(_preflight.Requests);
+        Assert.Empty(_channel.Placed);
+        Assert.Equal(["gateway-start", "intent", "not-prepared"], AuditKinds());
+    }
+
     public static TheoryData<ConfirmationVerdict, string> NotConfirmed() => new()
     {
         { ConfirmationVerdict.Declined, "another ticker" },

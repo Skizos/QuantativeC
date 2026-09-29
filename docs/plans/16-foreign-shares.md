@@ -144,3 +144,33 @@
   - ABI 1.3: version, per-instrument courtage, the cash check, bad input, after the first step
 - All 1196 managed and 131 native tests pass.
 
+### Step 5: the trading core in SEK (done 2026-09-29)
+
+- **Money in SEK, prices in the share's currency.** `IFxRates` / `FxTable` (Trading.Model) give SEK per unit; SEK is
+  always 1. A Paper session uses one table for the day (step 6 fills it from the latest fixing).
+- **The gateway** (`GatewayEnvironment.Fx`, `Schedules`):
+  - shares in SEK, USD and CAD only; another currency is not prepared, with the reason
+  - USD and CAD in Paper and Backtest only: Confirm (and Auto) refuse them before any card, preflight or risk check
+  - a foreign share without a known rate is not prepared (its value in SEK can't be judged)
+  - `OpenOrders` carry each order's rate, so R7, R8 and the planner count working buys in SEK
+- **The risk checks:** R6–R9 compare the order's value in SEK (the R6 line shows both: "7,518.00 SEK (751.80 at
+  10.0000 SEK per unit)"). R16 judges a foreign order on its own market's clock and calendar ("09:45:00 New York (Full
+  day, XNYS)", window "09:35–15:50 New York"); a holiday there or a missing schedule fails it. A SEK order is judged as
+  before.
+- **Per-market schedules** (`TradingSchedule` with the Stockholm calendar): a foreign market keeps Stockholm's
+  distances from the session in its own time: window from 5 minutes after the open to 10 minutes before the close
+  (early closes too), decision 10 minutes after the open (09:40 New York = 15:40 Stockholm, 14:40 in the March weeks
+  when only the US is on summer time). Stockholm's plan is unchanged.
+- **The paper book and channel:** buying power, reservations, cash, cost basis and fees in SEK; fills in the share's
+  currency at the day's rate; the class's foreign courtage in the share's currency, converted, plus the FX fee.
+  Positions keep their currency (written to `book.json` and `fills.jsonl` for foreign shares only, so a Swedish book
+  reads and writes as before) and are valued at the mark × the rate. `EndOfDay` can end one market's orders.
+- **The planner** sizes a foreign share at its SEK price and keeps the limit in its currency; without a rate it skips
+  the share with a note.
+- **Tests (16 new):** a US buy and sell through the gateway, OMS, channel and book, and the book reopened; a Swedish
+  book unchanged; R6 in SEK; R16 on New York's clock, on Thanksgiving and without a schedule; no rate; another
+  currency; Confirm refusing a US share; reservations in SEK and one market's orders ending; the planner in SEK and its
+  working-buy room; the US schedule (a full day, the early close, the March DST gap, phases and the next decision); the
+  Stockholm schedule unchanged; the FX table. OrderPreparation no longer refuses USD (the rule moved to the gateway),
+  so its test row went with it.
+- All 1210 managed tests pass (1 skipped).

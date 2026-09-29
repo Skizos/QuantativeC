@@ -12,7 +12,7 @@ public sealed class OrderPreparationException(string message) : Exception(messag
 /// </summary>
 public static class OrderPreparation
 {
-    /// <summary>Only SEK instruments in v1: every risk limit is in SEK and there is no FX conversion yet.</summary>
+    /// <summary>The account's currency: every risk limit is in SEK (a USD or CAD share's order is converted, ADR 0005).</summary>
     public const string Currency = "SEK";
 
     public static PreparedOrder Prepare(OrderIntent intent, InstrumentSpec spec)
@@ -22,11 +22,6 @@ public static class OrderPreparation
         if (intent.OrderbookId != spec.OrderbookId)
         {
             throw new ArgumentException("The instrument spec does not belong to the intent.", nameof(spec));
-        }
-
-        if (!string.Equals(spec.Currency, Currency, StringComparison.Ordinal))
-        {
-            throw new OrderPreparationException($"{spec.Ticker} trades in {spec.Currency}; v1 trades SEK instruments only.");
         }
 
         long volume = Normalize(intent.Quantity, spec.LotSize);

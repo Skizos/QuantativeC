@@ -9,12 +9,16 @@ namespace QuantAnalyst.Trading.Paper;
 /// <summary>A paper book operation that must not happen (a sell above the position, cash below zero): a bug upstream.</summary>
 public sealed class PaperBookException(string message) : Exception(message);
 
-public sealed record PaperPosition(OrderbookId OrderbookId, string Ticker, long Quantity, decimal CostBasis, decimal LastFillPrice);
+/// <param name="CostBasis">In SEK, fees included.</param>
+/// <param name="LastFillPrice">In the share's currency.</param>
+/// <param name="Currency">The share's currency (ADR 0005): its value in SEK is quantity × price × the day's rate.</param>
+public sealed record PaperPosition(OrderbookId OrderbookId, string Ticker, long Quantity, decimal CostBasis, decimal LastFillPrice, string Currency = "SEK");
 
 /// <summary>
 /// The paper account: cash, positions and fees, in SEK. It is the Paper source of truth for the account state (the
 /// risk engine's inputs) and for reconciliation. With a directory it persists to <c>state/paper/book.json</c> after
-/// every change (atomic replace) and appends each fill to <c>fills.jsonl</c>.
+/// every change (atomic replace) and appends each fill to <c>fills.jsonl</c>. A US or Canadian share (ADR 0005) is
+/// bought and sold at the rate of the day (<see cref="Fx"/>): cash and cost in SEK, prices in its own currency.
 /// </summary>
 public sealed class PaperBook : IAccountState
 {
@@ -34,6 +38,7 @@ public sealed class PaperBook : IAccountState
     private readonly Lock _lock = new();
     private readonly string? _directory;
     private readonly IQuoteSource? _marks;
+    private readonly IFxRates _fx;
     private readonly TimeProvider _time;
     private readonly Dictionary<OrderbookId, PaperPosition> _positions = [];
     private readonly Dictionary<Guid, decimal> _reserved = [];
@@ -43,7 +48,7 @@ public sealed class PaperBook : IAccountState
     private DateOnly? _startOfDayDate;
     private decimal _startOfDayValue;
 
-    private PaperBook(string? directory, string costs, decimal startingCash, IQuoteSource? marks, TimeProvider time)
+    private PaperBook(string? directory, string costs, decimal startingCash, IQuoteSource? marks, TimeProvider time, IFxRates? fx)
     {
         _directory = directory;
         Costs = costs;
@@ -51,7 +56,11 @@ public sealed class PaperBook : IAccountState
         _cash = startingCash;
         _marks = marks;
         _time = time;
+        _fx = fx ?? FxTable.SekOnly;
     }
+
+    /// <summary>Gets the rates foreign positions are valued at (ADR 0005).</summary>
+    public IFxRates Fx => _fx;
 
     public AccountId Account { get; } = new(PaperConfig.AccountId);
 
@@ -119,17 +128,17 @@ public sealed class PaperBook : IAccountState
     public string? BookPath => _directory is null ? null : Path.Combine(_directory, FileName);
 
     /// <summary>A book that is never saved (tests and dry runs).</summary>
-    public static PaperBook InMemory(decimal cash, string costs, IQuoteSource? marks, TimeProvider time)
+    public static PaperBook InMemory(decimal cash, string costs, IQuoteSource? marks, TimeProvider time, IFxRates? fx = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(cash);
-        return new PaperBook(null, costs, cash, marks, time);
+        return new PaperBook(null, costs, cash, marks, time, fx);
     }
 
     /// <summary>
     /// Opens <c>book.json</c> in <paramref name="directory"/>, or starts a new book from the config. An existing book
     /// wins over the config (it has history); <paramref name="notes"/> says when they differ.
     /// </summary>
-    public static PaperBook OpenOrCreate(string directory, PaperConfig config, IQuoteSource? marks, TimeProvider time, out IReadOnlyList<string> notes)
+    public static PaperBook OpenOrCreate(string directory, PaperConfig config, IQuoteSource? marks, TimeProvider time, out IReadOnlyList<string> notes, IFxRates? fx = null)
     {
         ArgumentNullException.ThrowIfNull(config);
         Directory.CreateDirectory(directory);
@@ -138,7 +147,7 @@ public sealed class PaperBook : IAccountState
         notes = said;
         if (!File.Exists(path))
         {
-            var fresh = new PaperBook(directory, config.Costs, config.Cash, marks, time);
+            var fresh = new PaperBook(directory, config.Costs, config.Cash, marks, time, fx);
             fresh.Save();
             said.Add($"new paper book: {config.Cash:N0} SEK, courtage class {config.Costs}");
             return fresh;
@@ -159,7 +168,7 @@ public sealed class PaperBook : IAccountState
             throw new PaperBookException($"{path}: format must be {Format}.");
         }
 
-        var book = new PaperBook(directory, file.Costs, file.StartingCash, marks, time)
+        var book = new PaperBook(directory, file.Costs, file.StartingCash, marks, time, fx)
         {
             _cash = file.Cash,
             _fees = file.FeesPaid,
@@ -170,7 +179,7 @@ public sealed class PaperBook : IAccountState
         foreach (PositionFile p in file.Positions)
         {
             var id = new OrderbookId(p.OrderbookId);
-            book._positions[id] = new PaperPosition(id, p.Ticker, p.Quantity, p.CostBasis, p.LastFillPrice);
+            book._positions[id] = new PaperPosition(id, p.Ticker, p.Quantity, p.CostBasis, p.LastFillPrice, p.Currency ?? "SEK");
         }
 
         if (file.Costs != config.Costs || file.StartingCash != config.Cash)
@@ -205,7 +214,7 @@ public sealed class PaperBook : IAccountState
             foreach (PaperPosition p in _positions.Values)
             {
                 quantities[p.OrderbookId] = p.Quantity;
-                values[p.OrderbookId] = p.Quantity * Mark(p);
+                values[p.OrderbookId] = ValueSek(p);
             }
 
             decimal value = _cash + values.Values.Sum();
@@ -243,16 +252,21 @@ public sealed class PaperBook : IAccountState
         }
     }
 
-    /// <summary>Books a fill: cash, position, cost basis, realised P&amp;L and fees. Persisted before it returns.</summary>
-    internal void ApplyFill(Guid clientOrderId, OrderbookId id, string ticker, OrderSide side, long quantity, decimal price, decimal courtage, decimal fxFee, DateTimeOffset atUtc)
+    /// <summary>
+    /// Books a fill: cash, position, cost basis, realised P&amp;L and fees. Persisted before it returns. The price is in the
+    /// share's <paramref name="currency"/>; courtage and FX fee are SEK; the value is booked in SEK at <paramref name="sekPerUnit"/>.
+    /// </summary>
+    internal void ApplyFill(
+        Guid clientOrderId, OrderbookId id, string ticker, OrderSide side, long quantity, decimal price, decimal courtage, decimal fxFee, DateTimeOffset atUtc,
+        string currency = "SEK", decimal sekPerUnit = 1m)
     {
-        if (quantity <= 0 || price <= 0 || courtage < 0 || fxFee < 0)
+        if (quantity <= 0 || price <= 0 || courtage < 0 || fxFee < 0 || sekPerUnit <= 0)
         {
-            throw new PaperBookException($"fill {quantity} @ {price} (fees {courtage} + {fxFee}) is not valid");
+            throw new PaperBookException($"fill {quantity} @ {price} {currency} at {sekPerUnit} SEK (fees {courtage} + {fxFee}) is not valid");
         }
 
         decimal fees = courtage + fxFee;
-        decimal value = quantity * price;
+        decimal value = sekPerUnit == 1m ? quantity * price : decimal.Round(quantity * price * sekPerUnit, 2, MidpointRounding.AwayFromZero);
         lock (_lock)
         {
             PaperPosition? held = _positions.GetValueOrDefault(id);
@@ -264,7 +278,7 @@ public sealed class PaperBook : IAccountState
                 }
 
                 _cash -= value + fees;
-                _positions[id] = new PaperPosition(id, ticker, (held?.Quantity ?? 0) + quantity, (held?.CostBasis ?? 0) + value + fees, price);
+                _positions[id] = new PaperPosition(id, ticker, (held?.Quantity ?? 0) + quantity, (held?.CostBasis ?? 0) + value + fees, price, currency);
             }
             else
             {
@@ -289,7 +303,8 @@ public sealed class PaperBook : IAccountState
 
             _fees += fees;
             Save();
-            AppendFill(new FillLine(atUtc, clientOrderId, id.Value, ticker, side.ToString(), quantity, price, courtage, fxFee, _cash));
+            AppendFill(new FillLine(atUtc, clientOrderId, id.Value, ticker, side.ToString(), quantity, price, courtage, fxFee, _cash,
+                Markets.IsForeign(currency) ? currency : null, Markets.IsForeign(currency) ? sekPerUnit : null));
         }
     }
 
@@ -298,6 +313,10 @@ public sealed class PaperBook : IAccountState
         Quote? q = _marks?.Latest(p.OrderbookId);
         return q?.Last ?? (q is { Bid: { } bid, Ask: { } ask } ? (bid + ask) / 2 : p.LastFillPrice);
     }
+
+    /// <summary>A position's value in SEK: at the mark and the day's rate, or at cost when its currency has no rate.</summary>
+    private decimal ValueSek(PaperPosition p) =>
+        _fx.SekPerUnit(p.Currency) is { } rate ? p.Quantity * Mark(p) * rate : p.CostBasis;
 
     private void Save()
     {
@@ -316,7 +335,8 @@ public sealed class PaperBook : IAccountState
             _realized,
             _startOfDayDate,
             _startOfDayValue,
-            [.. _positions.Values.OrderBy(p => p.Ticker, StringComparer.Ordinal).Select(p => new PositionFile(p.OrderbookId.Value, p.Ticker, p.Quantity, p.CostBasis, p.LastFillPrice))],
+            [.. _positions.Values.OrderBy(p => p.Ticker, StringComparer.Ordinal).Select(p => new PositionFile(p.OrderbookId.Value, p.Ticker, p.Quantity, p.CostBasis, p.LastFillPrice,
+                Markets.IsForeign(p.Currency) ? p.Currency : null))],
             _time.GetUtcNow());
         string path = Path.Combine(_directory, FileName);
         string temp = path + ".tmp";
@@ -345,7 +365,10 @@ public sealed class PaperBook : IAccountState
         IReadOnlyList<PositionFile> Positions,
         DateTimeOffset SavedUtc);
 
-    private sealed record PositionFile(string OrderbookId, string Ticker, long Quantity, decimal CostBasis, decimal LastFillPrice);
+    /// <summary>A position; <c>currency</c> is written for a foreign share only, so a Swedish book reads as before.</summary>
+    private sealed record PositionFile(string OrderbookId, string Ticker, long Quantity, decimal CostBasis, decimal LastFillPrice, string? Currency = null);
 
-    private sealed record FillLine(DateTimeOffset AtUtc, Guid ClientOrderId, string OrderbookId, string Ticker, string Side, long Quantity, decimal Price, decimal Courtage, decimal FxFee, decimal CashAfter);
+    private sealed record FillLine(
+        DateTimeOffset AtUtc, Guid ClientOrderId, string OrderbookId, string Ticker, string Side, long Quantity, decimal Price, decimal Courtage, decimal FxFee, decimal CashAfter,
+        string? Currency = null, decimal? SekPerUnit = null);
 }

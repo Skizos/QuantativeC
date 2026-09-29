@@ -22,7 +22,8 @@ public sealed record PlanResult(IReadOnlyList<OrderIntent> Intents, IReadOnlyLis
 /// <see cref="OrderGateway.OpenOrders"/>), and for R8 the buys already planned in this decision.</item>
 /// </list>
 /// The equity it invests is the account's value, but at most the limits' account cap (<see cref="RiskLimits.SizingValue"/>),
-/// the same value the limits are sized on.
+/// the same value the limits are sized on. A US or Canadian share (ADR 0005) is sized in SEK at the day's rate
+/// (<paramref name="fx"/>): its price in SEK decides the share count and every cap; its limit stays in its own currency.
 /// </summary>
 public static class DailyPlanner
 {
@@ -36,8 +37,10 @@ public static class DailyPlanner
         PreTradeRiskEngine risk,
         ExecutionOptions execution,
         string strategyId,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc,
+        IFxRates? fx = null)
     {
+        fx ??= FxTable.SekOnly;
         ArgumentNullException.ThrowIfNull(targets);
         ArgumentNullException.ThrowIfNull(instruments);
         ArgumentNullException.ThrowIfNull(account);
@@ -56,7 +59,7 @@ public static class DailyPlanner
         decimal investable = sizing * (1m - (decimal)execution.CashBuffer);
         decimal perOrder = Math.Min(limits.MaxOrderValueSek, limits.MaxOrderValuePctOfAccount * sizing);
         OpenOrderView[] workingBuys = [.. openOrders.Where(o => o.Side == OrderSide.Buy)];
-        decimal WorkingBuyValue(OrderbookId? id) => workingBuys.Where(o => id is null || o.OrderbookId == id).Sum(o => o.RemainingVolume * o.LimitPrice);
+        decimal WorkingBuyValue(OrderbookId? id) => workingBuys.Where(o => id is null || o.OrderbookId == id).Sum(o => o.RemainingValueSek);
         decimal grossRoom = limits.MaxGrossExposurePct * sizing - account.PositionValues.Values.Sum() - WorkingBuyValue(null);
         decimal offset = (decimal)execution.LimitOffsetBps / 10_000m;
         var intents = new List<OrderIntent>();
@@ -76,6 +79,12 @@ public static class DailyPlanner
                 continue;
             }
 
+            if (fx.SekPerUnit(spec.Currency) is not { } rate)
+            {
+                notes.Add($"{spec.Ticker}: skipped, no {spec.Currency}/SEK rate");
+                continue;
+            }
+
             Quote? quote = quotes.Latest(spec.OrderbookId);
             if (risk.ReferencePrice(quote, nowUtc) is not { } reference)
             {
@@ -83,9 +92,10 @@ public static class DailyPlanner
                 continue;
             }
 
+            decimal sekPrice = reference * rate;
             long lot = spec.LotSize;
             long current = account.Positions.GetValueOrDefault(spec.OrderbookId);
-            long target = (long)decimal.Floor((decimal)w * investable / reference / lot) * lot;
+            long target = (long)decimal.Floor((decimal)w * investable / sekPrice / lot) * lot;
             long delta = target - current;
             if (delta == 0)
             {
@@ -93,9 +103,9 @@ public static class DailyPlanner
                 continue;
             }
 
-            decimal value = Math.Abs(delta) * reference;
+            decimal value = Math.Abs(delta) * sekPrice;
             bool entryOrExit = target == 0 || current == 0;
-            if ((!entryOrExit && value < (decimal)execution.RebalanceBand * Math.Max(target, current) * reference)
+            if ((!entryOrExit && value < (decimal)execution.RebalanceBand * Math.Max(target, current) * sekPrice)
                 || (target != 0 && value < execution.MinTradeValue))
             {
                 notes.Add(string.Create(c, $"{spec.Ticker}: {delta:+#;-#} inside the no-trade band"));
@@ -123,7 +133,7 @@ public static class DailyPlanner
             }
 
             long wanted = Math.Abs(delta);
-            long allowed = cap <= 0 ? 0 : (long)decimal.Floor(cap / limit / lot) * lot;
+            long allowed = cap <= 0 ? 0 : (long)decimal.Floor(cap / (limit * rate) / lot) * lot;
             long quantity = Math.Min(wanted, allowed);
             if (quantity <= 0)
             {
@@ -136,7 +146,7 @@ public static class DailyPlanner
             intents.Add(new OrderIntent(spec.OrderbookId, spec.Ticker, side, quantity, limit, reason, reference, nowUtc, strategyId));
             if (side == OrderSide.Buy)
             {
-                grossRoom -= quantity * limit;
+                grossRoom -= quantity * limit * rate;
             }
 
             notes.Add(string.Create(c, $"{spec.Ticker}: {side} {quantity} @ ~{limit:0.###} ({reason})"));
