@@ -168,3 +168,36 @@ the screen all day.
   answers recorded; a failing question; a login-wanting chart; the ticker from the instrument master.
 - **Waiting on the owner:** run `.\qa intraday probe` once on a trading day (after 09:30, so "today" has bars) and
   share the output, or sanitize the recording into `recordings/fixtures/`. Step A2 stores what it shows.
+
+### A2: collecting intraday bars and spreads (done 2026-09-29)
+
+- **The store** gains `intraday_bars` (orderbook, resolution, bar start UTC, OHLCV, known_at, source) and
+  `spread_samples` (orderbook, time, bid, ask, their volumes, source), added in place; the schema version stays 1.
+  Bars are append-only with restatements, like the daily ones; a spread sample is an observation, kept once.
+- **`IntradayImporter`** (1- and 5-minute bars, periods up to three months):
+  - the answer must be the resolution asked for
+  - every bar must start on its grid (whole minutes; :00, :05, … for 5 minutes) and the starts must rise
+  - otherwise nothing is stored (Tier B strictness); a bar still open when asked is left out
+  - the source is the daily bars' own: NOT point-in-time, NOT survivorship-free
+- **The research list** `config/research-universe.json` (`qa intraday research add|remove|list`, at most 30):
+  - Stockholm shares found by exact ticker with the public search (no login); the SEK listing only
+  - no orderbook id is ever typed in or guessed
+  - never tradable because of the list (it is not R2's allowlist)
+- **`qa intraday import`** (public, no login): the allowlist's Stockholm shares and the research list by default,
+  foreign shares skipped. One name failing is reported and the others go on (exit 1).
+- **The Paper session:**
+  - `SpreadSampler` keeps the first fresh, two-sided quote per name per minute; the samples are stored when the
+    session ends (source `session-quotes`, point-in-time)
+  - after Stockholm's close, the day's bars are collected like `qa intraday import`
+  - research data only: a failure is a warning, and the day's trading and report are untouched
+- **Tests (17 new):**
+  - the store: versions and restatements, bad bars, spread samples, an old store gaining the tables
+  - the importer: open bars left out, another resolution, off the grid, out of order, only 1/5 minutes and short
+    periods
+  - the research list, and the sampler
+  - the CLI: research add/remove/list over the recorded search (the foreign listing ignored), import of the
+    allowlist and the list without a login, a failing name, the refusals
+  - the Paper spy: spreads kept; bars collected after the close, not before
+- All 1242 managed tests pass (1 skipped).
+- **Still waiting on the owner's probe:** whether "today" is the only period with minute bars decides whether a
+  missed day can be caught up (`--period one_week`).

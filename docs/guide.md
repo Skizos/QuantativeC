@@ -251,6 +251,19 @@ On an exchange holiday the command simply says there is no session today.
   - that the first evening session gets live (not delayed) US quotes. With delayed ones, R15 rejects the orders and the
     report shows it.
 
+### Intraday research (plan 17, ADR 0006)
+
+Nothing trades intraday yet. For about six months the program collects 1- and 5-minute bars and spreads; then a report
+says whether an intraday strategy is worth trying on paper. What you do:
+
+1. **Once, on a trading day after 09:30:** `.\qa intraday probe`. It asks Avanza's public chart (no login) how much
+   minute history it gives. Send me the output (or sanitize its recording into `recordings/fixtures`, as it says).
+2. **Once:** put up to 30 Stockholm shares on the research list, e.g. the large ones you know:
+   `.\qa intraday research add VOLV-B SEB-A ATCO-A`. The search needs no login; nothing on the list is traded.
+3. **Every trading day:** nothing new. `.\qa paper run` stores the spreads it saw and, after 17:30, the day's bars.
+   On a day without a session, run `.\qa intraday import` in the evening (or schedule it, e.g. 18:05 on weekdays).
+   A missed day can't be fetched later if Avanza only gives today's minute bars; the probe tells.
+
 ## 4. What the numbers mean
 
 - **The limits** (ADR 0003 §4, `config/risk-limits.json`): every order must pass R1–R21. The rejection message names the check, e.g. "R6 order value 620 SEK > 500 SEK".

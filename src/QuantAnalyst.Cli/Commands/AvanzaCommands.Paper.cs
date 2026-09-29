@@ -207,7 +207,8 @@ internal static partial class AvanzaCommands
                     todays.Length > 0 ? todays.Min(p => p.DecisionUtc) : null, definition.Spec.Describe(), ObservedInstruments(storePath, specs, OrderGateway.StockholmDate(start))));
             }
 
-            var pumps = subscriptions.Select(s => PumpQuotesAsync(s, quotes, channel, observer, time)).ToList();
+            var spreads = new SpreadSampler();
+            var pumps = subscriptions.Select(s => PumpQuotesAsync(s, quotes, channel, observer, time, spreads)).ToList();
             var feeds = composers.Select(c => StopAllOnFailure(c.RunAsync(stop.Token), stop)).ToList();
             string EndOfDayReport(DateOnly day)
             {
@@ -259,6 +260,7 @@ internal static partial class AvanzaCommands
             }
 
             output.WriteLine($"Reconciliation: {(summary.ReconciliationClean ? "clean" : "MISMATCH (see the audit log)")}. Audit: {audit.Directory} (check with 'qa audit verify').");
+            await KeepIntradayResearchAsync(ctx, storePath, setup, spreads, time, output).ConfigureAwait(false);
             return summary.Killed ? ExitHalt : 0;
         }, live: true));
         return command;
@@ -524,7 +526,8 @@ internal static partial class AvanzaCommands
     }
 
     private static async Task PumpQuotesAsync(
-        Data.Live.Broadcaster<Quote>.Subscription subscription, LatestQuotes quotes, PaperOrderChannel channel, ISessionObserver? observer, TimeProvider time)
+        Data.Live.Broadcaster<Quote>.Subscription subscription, LatestQuotes quotes, PaperOrderChannel channel, ISessionObserver? observer, TimeProvider time,
+        SpreadSampler? spreads = null)
     {
         DateTimeOffset? told = null;
         try
@@ -533,6 +536,7 @@ internal static partial class AvanzaCommands
             {
                 quotes.Set(q);
                 channel.OnQuote(q);
+                spreads?.Offer(q);
                 DateTimeOffset now = time.GetUtcNow();
                 if (observer is not null && (told is not { } t || now - t >= ObserverQuoteEvery))
                 {
@@ -544,6 +548,46 @@ internal static partial class AvanzaCommands
         catch (Exception) when (subscription.Reader.Completion.IsFaulted)
         {
             // The composer's failure is reported by its run task.
+        }
+    }
+
+    /// <summary>
+    /// Plan 17 step A2, after the session: its once-a-minute bid/ask samples go to the store, and after Stockholm's
+    /// close today's 1- and 5-minute bars are collected for the allowlist's Stockholm shares and the research list
+    /// (public chart, no login). Research data only: a failure is a warning and changes nothing about the day.
+    /// </summary>
+    private static async Task KeepIntradayResearchAsync(Ctx ctx, string storePath, PaperSetup setup, SpreadSampler spreads, TimeProvider time, TextWriter output)
+    {
+        try
+        {
+            IReadOnlyList<SpreadSample> samples = spreads.Drain();
+            if (samples.Count > 0)
+            {
+                using HistoryStore history = HistoryStore.Open(storePath);
+                history.RegisterSource(SpreadSampler.Source);
+                int added = history.AddSpreadSamples(samples, SpreadSampler.Source);
+                output.WriteLine($"Spreads: {added} bid/ask sample(s) stored for intraday research.");
+            }
+
+            DateTimeOffset now = time.GetUtcNow();
+            if (setup.Schedule.Plan(OrderGateway.StockholmDate(now)) is not { } today || now < today.CloseUtc)
+            {
+                return;
+            }
+
+            IReadOnlyList<IntradayName> names = CollectedShares(storePath, setup.ConfigDir, output);
+            if (names.Count > 0)
+            {
+                await CollectIntradayAsync(ctx.Connection.Gateway, storePath, names, ChartPeriod.Today, IntradayImporter.Resolutions, time, output, ctx.Ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            output.WriteLine("Intraday bars not collected (stopped); run 'qa intraday import' this evening.");
+        }
+        catch (Exception ex) when (ex is BrokerException or ArgumentException or HistoryStoreException or IOException || DataCommands.IsStoreFailure(ex))
+        {
+            output.WriteLine($"WARNING: intraday research data not kept ({ex.Message}); run 'qa intraday import' this evening.");
         }
     }
 

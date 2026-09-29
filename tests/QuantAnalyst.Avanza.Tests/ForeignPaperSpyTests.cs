@@ -223,6 +223,10 @@ public sealed class ForeignPaperSpyTests : IDisposable
         Assert.True(aapl.Success, output);
         Assert.Contains("Reconciliation: clean", output, StringComparison.Ordinal);
 
+        // Plan 17 A2: the session's bid/ask samples are kept; before Stockholm's close no bars are collected.
+        Assert.Matches(@"Spreads: \d+ bid/ask sample\(s\) stored for intraday research\.", output);
+        Assert.DoesNotContain("Intraday:", output, StringComparison.Ordinal);
+
         // The paper book holds AAPL in dollars, its cost in kronor at 10.27 plus the courtage (0.25 %, at least 1 USD;
         // Start has no FX fee).
         var c = System.Globalization.CultureInfo.InvariantCulture;
@@ -279,5 +283,11 @@ public sealed class ForeignPaperSpyTests : IDisposable
         Assert.Matches(@"22:00:0\d XNYS close: 0 order\(s\) expired\. Value", output);
         Assert.Contains("Report: 2026-09-28", output, StringComparison.Ordinal);
         Assert.DoesNotContain("partial day", output, StringComparison.Ordinal);
+
+        // Plan 17 A2: after the close today's intraday bars are collected, Stockholm shares only. This fake chart
+        // answers daily bars whatever is asked, so the import refuses them, and the day is not affected.
+        Assert.Contains("AAPL: skipped, intraday research is Stockholm only (ADR 0006).", output, StringComparison.Ordinal);
+        Assert.Contains("ERIC B 1-minute: FAILED (Avanza answered with Day bars for Today, not Minute; nothing was stored.", output, StringComparison.Ordinal);
+        Assert.Contains("2 import(s) failed", output, StringComparison.Ordinal);
     }
 }

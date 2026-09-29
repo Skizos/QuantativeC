@@ -71,5 +71,18 @@ public sealed record StoredBar(DailyBar Bar, DateTimeOffset KnownAtUtc, string S
 /// <summary>One stored FX rate (ADR 0005) and when it became known.</summary>
 public sealed record StoredFxRate(string Currency, FxRate Rate, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
 
+/// <summary>One stored intraday bar (plan 17): its resolution and when it became known.</summary>
+public sealed record StoredIntradayBar(Bar Bar, ChartResolution Resolution, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
+
+/// <summary>
+/// The best bid and ask of one instrument at one moment, as a running session saw them (plan 17: the backtest's spread
+/// cost comes from these, not from a guess).
+/// </summary>
+public sealed record SpreadSample(OrderbookId OrderbookId, DateTimeOffset AtUtc, decimal Bid, decimal Ask, decimal BidVolume, decimal AskVolume)
+{
+    /// <summary>Gets the spread as a share of the mid (0.001 = 10 bps).</summary>
+    public decimal RelativeSpread => (Ask - Bid) / ((Ask + Bid) / 2m);
+}
+
 /// <summary>What an append-only write did: rows new to the store, rows that changed (restatements) and unchanged rows.</summary>
 public sealed record WriteCounts(int New, int Restated, int Unchanged);

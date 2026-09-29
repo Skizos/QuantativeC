@@ -21,7 +21,7 @@ public sealed class HistoryStoreException(string message, Exception? inner = nul
 /// Prices are <c>DECIMAL(18,6)</c> (values with more decimals are refused, never rounded); volumes <c>BIGINT</c>.
 /// One writer per file: open, work, dispose (the CLI does this per command).
 /// </summary>
-public sealed class HistoryStore : IDisposable
+public sealed partial class HistoryStore : IDisposable
 {
     public const int SchemaVersion = 1;
     public const int PriceScale = 6;
@@ -53,6 +53,19 @@ public sealed class HistoryStore : IDisposable
             currency VARCHAR NOT NULL, valid_from DATE NOT NULL, sek_per_unit DECIMAL(18,6) NOT NULL,
             known_at TIMESTAMP NOT NULL, source VARCHAR NOT NULL, source_version VARCHAR NOT NULL,
             PRIMARY KEY (currency, source, valid_from, known_at))
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS intraday_bars (
+            orderbook_id VARCHAR NOT NULL, resolution VARCHAR NOT NULL, bar_start TIMESTAMP NOT NULL,
+            open DECIMAL(18,6) NOT NULL, high DECIMAL(18,6) NOT NULL, low DECIMAL(18,6) NOT NULL, close DECIMAL(18,6) NOT NULL,
+            volume BIGINT NOT NULL, known_at TIMESTAMP NOT NULL, source VARCHAR NOT NULL, source_version VARCHAR NOT NULL,
+            PRIMARY KEY (orderbook_id, source, resolution, bar_start, known_at))
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS spread_samples (
+            orderbook_id VARCHAR NOT NULL, sampled_at TIMESTAMP NOT NULL,
+            bid DECIMAL(18,6) NOT NULL, ask DECIMAL(18,6) NOT NULL, bid_volume DECIMAL(18,6) NOT NULL, ask_volume DECIMAL(18,6) NOT NULL,
+            source VARCHAR NOT NULL, PRIMARY KEY (orderbook_id, source, sampled_at))
         """,
     ];
 
