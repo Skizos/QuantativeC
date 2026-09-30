@@ -1,11 +1,17 @@
 using System.CommandLine;
 using System.Globalization;
 using System.Runtime.Versioning;
+using QuantAnalyst.Analytics.Backtesting;
 using QuantAnalyst.Avanza.Credentials;
 using QuantAnalyst.Core;
+using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.Calendar;
+using QuantAnalyst.Data.History;
+using QuantAnalyst.Data.Store;
 using QuantAnalyst.Trading;
 using QuantAnalyst.Trading.Audit;
 using QuantAnalyst.Trading.Modes;
+using QuantAnalyst.Trading.Paper;
 using QuantAnalyst.Trading.Reports;
 using QuantAnalyst.Trading.Risk;
 
@@ -14,11 +20,12 @@ namespace QuantAnalyst.Cli.Commands;
 internal static partial class TradingCommands
 {
     public const string DefaultReportsDir = "reports/eod";
+    public const string DefaultWeeksDir = "reports/week";
     public const string DefaultPromotionDir = "promotion";
 
     // ---- qa report eod | gate --------------------------------------------------------------------------
 
-    private static Command ReportCommand()
+    private static Command ReportCommand(TimeProvider time)
     {
         var command = new Command("report", "End-of-day reports (ADR 0003 §3/§8), rebuilt from the audit log: orders, risk rejections, fills vs the market's VWAP, reconciliation, violations.");
 
@@ -98,7 +105,126 @@ internal static partial class TradingCommands
 
         command.Subcommands.Add(eod);
         command.Subcommands.Add(gate);
+        command.Subcommands.Add(WeekCommand(time));
         return command;
+    }
+
+    // ---- qa report week (plan 20) ------------------------------------------------------------------------
+
+    private static Command WeekCommand(TimeProvider time)
+    {
+        var week = new Option<string?>("--week") { Description = "ISO week, e.g. 2026-W40 (default: the week of the last day a session ran)" };
+        var date = new Option<string?>("--date") { Description = "Any day of the week, yyyy-MM-dd" };
+        var json = new Option<bool>("--json") { Description = "Print the summary JSON" };
+        var auditDir = AuditDirOption();
+        var weeksDir = new Option<string>("--weeks-dir") { Description = "Weekly summaries folder", DefaultValueFactory = _ => DefaultWeeksDir };
+        var store = DataCommands.StoreOption();
+        var configDir = ConfigDirOption();
+        var ledger = new Option<string?>("--ledger") { Description = $"Trial ledger (default: <repository>/{TrialLedger.DefaultPath})" };
+        var command = new Command(
+            "week",
+            "The weekly summary (plan 20): the week's Paper days, Paper's return against the saved strategy's recorded backtest (this week and since the start), the limit fill rate, and the intraday collection. Offline; saves reports/week/YYYY-Www.json.");
+        foreach (Option o in new Option[] { week, date, json, auditDir, weeksDir, store, configDir, ledger })
+        {
+            command.Options.Add(o);
+        }
+
+        command.SetAction(parse => Execute(parse, w =>
+        {
+            string audit = parse.GetValue(auditDir)!;
+            string config = ResolveConfigDir(parse.GetValue(configDir));
+            string storePath = parse.GetValue(store)!;
+            IReadOnlyList<DateOnly> days = AuditDays(audit);
+            if (parse.GetValue(week) is not null && parse.GetValue(date) is not null)
+            {
+                throw new ArgumentException("Give --week or --date, not both.");
+            }
+
+            DateTimeOffset now = time.GetUtcNow();
+            DateOnly today = OrderGateway.StockholmDate(now);
+            DateOnly day = parse.GetValue(week) is { } iso ? WeeklyReport.ParseWeek(iso)
+                : DataCommands.ParseDate(parse.GetValue(date), "--date") ?? (days.Count > 0 ? days[^1] : today);
+            MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(config);
+            DateOnly monday = WeeklyReport.MondayOf(day);
+
+            // Up to today: a later day has had no session yet, and today's intraday bars come in the evening.
+            DateOnly[] trading = [.. Enumerable.Range(0, 5).Select(monday.AddDays).Where(d => d <= today && calendar.Years.Contains(d.Year) && calendar.Classify(d).IsTradingDay)];
+
+            List<EodReport> reports = [.. days.Select(d => EodReport.Build(audit, d, TimeProvider.System))];
+            GateResult gate = PromotionGate.Confirm(reports, AuditLog.Verify(audit));
+            WeeklyReport report = WeeklyReport.Build(day, trading, reports, gate, Expectation(config, parse.GetValue(ledger)),
+                IntradayWeek(storePath, config, [.. trading.Where(d => d < today)], out int? needed), needed, now);
+            string path = report.Save(parse.GetValue(weeksDir)!);
+            if (parse.GetValue(json))
+            {
+                w.WriteLine(File.ReadAllText(path));
+                return 0;
+            }
+
+            foreach (string line in report.Lines())
+            {
+                w.WriteLine(line);
+            }
+
+            w.WriteLine($"  saved to {path}");
+            return 0;
+        }));
+        return command;
+    }
+
+    /// <summary>The saved strategy's recorded backtest, on today's allowlist if there is one (plan 20); null without either.</summary>
+    private static BacktestExpectation? Expectation(string configDir, string? ledgerPath)
+    {
+        if (PaperConfig.Load(Path.Combine(configDir, PaperConfig.FileName)).Strategy is not { } saved)
+        {
+            return null;
+        }
+
+        var ledger = new TrialLedger(BacktestCommands.ResolveLedger(ledgerPath));
+        if (!File.Exists(ledger.Path))
+        {
+            return null;
+        }
+
+        StrategySpec spec = StrategyCatalog.Create(saved.Name, saved.Parameters).Spec;
+        string[] allowlist = [.. Universe.Load(Path.Combine(configDir, Universe.FileName)).Entries.Select(e => e.Ticker)];
+        return BacktestExpectation.Find(ledger.ReadAll(), spec, allowlist);
+    }
+
+    /// <summary>
+    /// The research shares' intraday bars over the week's trading days, and the days the go/no-go needs (plan 17: 120
+    /// before the intraday holdout's days). Null before any collection.
+    /// </summary>
+    private static IntradayCoverage? IntradayWeek(string storePath, string configDir, IReadOnlyList<DateOnly> trading, out int? needed)
+    {
+        needed = null;
+        if (!File.Exists(storePath))
+        {
+            return null;
+        }
+
+        IReadOnlyList<IntradayName> names = AvanzaCommands.CollectedShares(storePath, configDir, TextWriter.Null);
+        IntradayCoverage coverage;
+        using (HistoryStore history = HistoryStore.Open(storePath))
+        {
+            coverage = IntradayCoverage.Measure(history, names.Select(n => (n.Id, n.Ticker)), trading, AvanzaChartImporter.AvanzaPriceChart.Name);
+        }
+
+        if (coverage.CollectedDays == 0 && names.Count == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            needed = IntradayReport.MinDays + IntradayHoldout.Load(Path.Combine(configDir, IntradayHoldout.FileName)).Days;
+        }
+        catch (BacktestConfigException)
+        {
+            // Without the holdout policy the need is unknown; the line says only what was collected.
+        }
+
+        return coverage;
     }
 
     // ---- qa promote (the owner's command; Claude is blocked by hook rule 6 and the settings deny rules) ---------

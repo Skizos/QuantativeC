@@ -163,6 +163,75 @@ public sealed class CliUsabilityTests : IDisposable
     }
 
     [Fact]
+    public void ReportWeek_ComparesThePaperWeekWithTheRecordedBacktest_AndShowsTheIntradayCollection()
+    {
+        // Plan 20. Saturday after the week: two Paper days (Mon +0.20 %, Tue -0.40 %, about half invested), none after.
+        _time.SetUtcNow(new DateTimeOffset(2026, 10, 3, 10, 0, 0, TimeSpan.Zero));
+        File.WriteAllText(Path.Combine(Config, "universe.json"),
+            """{ "format": "qa-universe/1", "instruments": [ { "orderbook_id": "5240", "ticker": "ERIC B", "name": "Ericsson B" } ] }""");
+        Assert.Equal(0, Qa("paper", "strategy", "buy-and-hold", "--config-dir", Config, "--ledger", Ledger).Code);
+        new Analytics.Backtesting.TrialLedger(Ledger).Append(new Analytics.Backtesting.TrialRecord
+        {
+            Id = "-",
+            RecordedAtUtc = Saturday,
+            Runner = "owner",
+            Study = "s",
+            Strategy = "buy-and-hold",
+            Parameters = new Dictionary<string, string> { ["entry"] = "5" },
+            Universe = ["ERIC B"],
+            DataSource = AvanzaChartImporter.AvanzaPriceChart.Name,
+            PointInTime = false,
+            SurvivorshipFree = false,
+            From = new DateOnly(2016, 1, 4),
+            To = new DateOnly(2026, 9, 25),
+            Seed = 1,
+            CostModel = "avanza-start",
+            CostsVerified = true,
+            HoldoutTouched = false,
+            Status = Analytics.Backtesting.TrialStatus.Ok,
+            Metrics = new Analytics.Backtesting.TrialMetrics(500, 0.05, 0.79, 0, 3, 0.1, 0.05, 0.16, 0.2, 1, 100, 0.9, null, 1, null),
+        });
+        foreach ((int day, decimal start, decimal end, decimal cash) in new[] { (28, 5000m, 5010m, 2500m), (29, 5010m, 4990m, 2490m) })
+        {
+            var log = new Trading.Audit.AuditLog(Audit, new FakeTimeProvider(new DateTimeOffset(2026, 9, day, 7, 0, 0, TimeSpan.Zero)));
+            log.Append("session-start", new { mode = "Paper" });
+            log.Append("end-of-day", new { day = new { startOfDayValue = start, accountValue = end, cash, feesPaid = 0m } });
+        }
+
+        string ticks = InstrumentRecord.CanonicalTickTable(new TickSizeTable([new TickSizeBand(0m, 99_999m, 0.01m)]));
+        using (HistoryStore store = HistoryStore.Open(Store))
+        {
+            store.UpsertInstrument(new InstrumentRecord(new OrderbookId("5240"), null, "ERIC B", "Ericsson B", "SEK", "XSTO", "STOCK", TradingModel.Continuous, 1m, ticks, new DateOnly(2026, 9, 1)),
+                "test", "test", Saturday);
+            Bar Nine(int d) => new(new DateTimeOffset(2026, 9, d, 7, 0, 0, TimeSpan.Zero), 70m, 71m, 69m, 70m, 1_000);
+            store.RegisterSource(AvanzaChartImporter.AvanzaPriceChart);
+            store.UpsertIntradayBars(new OrderbookId("5240"), ChartResolution.FiveMinutes, [Nine(28)], AvanzaChartImporter.AvanzaPriceChart, "test", Saturday);
+            store.UpsertIntradayBars(new OrderbookId("5240"), ChartResolution.TenMinutes, [Nine(29)], AvanzaChartImporter.AvanzaPriceChart, "test", Saturday);
+        }
+
+        string policy = Path.Combine(Config, Analytics.Backtesting.IntradayHoldout.FileName);
+        File.Copy(Path.Combine(RepoRoot(), "config", Analytics.Backtesting.IntradayHoldout.FileName), policy);
+        int needed = Analytics.Backtesting.IntradayReport.MinDays + Analytics.Backtesting.IntradayHoldout.Load(policy).Days;
+
+        string weeks = Path.Combine(_root, "weeks");
+        string[] common = ["--audit-dir", Audit, "--weeks-dir", weeks, "--store", Store, "--config-dir", Config, "--ledger", Ledger];
+        (int code, string output, string error) = Qa(["report", "week", .. common]); // default: the week of the last session
+        Assert.True(code == 0, error);
+        Assert.Contains("Week 2026-W40, Mon 2026-09-28 to Sun 2026-10-04", output, StringComparison.Ordinal);
+        Assert.Contains("  Fri 2026-10-02  no session", output, StringComparison.Ordinal);
+        Assert.Contains("Week: -0.20% (value 4,990.00 SEK), fees 0.00 SEK; 2 of 5 trading day(s) clean, 3 without a session; Confirm gate: 2 of 10 clean Paper days in a row.", output, StringComparison.Ordinal);
+        Assert.Contains("Against the backtest T000001, buy-and-hold(entry=5) on ERIC B, 2016-01-04..2026-09-25, costs avanza-start", output, StringComparison.Ordinal);
+        Assert.Contains("  this week: 2 day(s) at 50 % invested: Paper -0.20%; the backtest expects +0.05% (95 % range -1.35% to +1.45%): within the range", output, StringComparison.Ordinal);
+        Assert.Contains(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"Intraday bars, 5 trading day(s): ERIC B 2 (1 at 10 minutes) (missing 09-30, 10-01, 10-02); 2 day(s) collected so far of the {needed} the go/no-go needs."), output, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(weeks, "2026-W40.json")));
+
+        Assert.Contains("Week 2026-W40", Qa(["report", "week", "--week", "2026-w40", .. common]).Output, StringComparison.Ordinal);
+        Assert.Contains("\"week\": \"2026-W40\"", Qa(["report", "week", "--date", "2026-10-01", "--json", .. common]).Output, StringComparison.Ordinal);
+        Assert.Contains("not both", Qa(["report", "week", "--week", "2026-W40", "--date", "2026-10-01", .. common]).Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Status_ReportsABrokenFile_AsAFailLine_NotACrash()
     {
         File.WriteAllText(Path.Combine(Config, "paper.json"), "{ not json");

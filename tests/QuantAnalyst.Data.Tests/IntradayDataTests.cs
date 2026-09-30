@@ -272,6 +272,25 @@ public sealed class IntradayDataTests : IDisposable
         Assert.Null(IntradayImporter.Gaps([], Week, Evening.GetUtcNow()));
     }
 
+    [Fact]
+    public void TheCoverage_SaysPerShareWhichDaysHaveFineBars_OnlyTheCatchUp_OrNone()
+    {
+        // Plan 20: 1-minute bars on the 22nd, 5-minute on the 23rd, only the 10-minute catch-up on the 25th, nothing on the 28th.
+        using HistoryStore store = Store();
+        DataSourceInfo source = AvanzaChartImporter.AvanzaPriceChart;
+        store.UpsertIntradayBars(Eric, ChartResolution.Minute, Minutes(NineOn(22), 2, TimeSpan.FromMinutes(1)), source, "v", Evening.GetUtcNow());
+        store.UpsertIntradayBars(Eric, ChartResolution.FiveMinutes, Minutes(NineOn(23), 2, TimeSpan.FromMinutes(5)), source, "v", Evening.GetUtcNow());
+        store.UpsertIntradayBars(Eric, ChartResolution.TenMinutes, [.. Minutes(NineOn(23), 2, TimeSpan.FromMinutes(10)), .. Minutes(NineOn(25), 2, TimeSpan.FromMinutes(10))],
+            source, "v", Evening.GetUtcNow());
+
+        IntradayCoverage c = IntradayCoverage.Measure(store, [(Eric, "ERIC B"), (new OrderbookId("1"), "NEW")], Sept(22, 23, 25, 28), source.Name);
+
+        Assert.Equal(("ERIC B", 2, 1), (c.Shares[0].Ticker, c.Shares[0].Fine, c.Shares[0].Coarse)); // the 23rd counts as fine, not twice
+        Assert.Equal(Sept(28), c.Shares[0].Missing);
+        Assert.Equal((0, 0, 4), (c.Shares[1].Fine, c.Shares[1].Coarse, c.Shares[1].Missing.Count));
+        Assert.Equal(3, c.CollectedDays); // any share, any resolution, any day
+    }
+
     // ---- the research list ----
 
     [Fact]

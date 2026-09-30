@@ -28,7 +28,7 @@ internal static partial class TradingCommands
         yield return RiskLimitsCommand();
         yield return AuditCommand();
         yield return KillCommand();
-        yield return ReportCommand();
+        yield return ReportCommand(services.Time);
         yield return PromoteCommand(services);
     }
 

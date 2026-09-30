@@ -204,6 +204,7 @@ Reconciliation: clean. Audit: audit (check with 'qa audit verify').
 | read the day's report | `.\qa report eod` (it is also printed at the end of the session) |
 | see how often the limit orders fill, and what the unfilled ones cost | the `Limits:` part of `.\qa report eod`, its `limit` lines, and its last line `All N days …` |
 | see the progress towards Confirm | `.\qa report gate` |
+| the week at a glance (Friday evening or the weekend) | `.\qa report week` |
 
 **Reading the fill rate** (plan 19). The backtest fills an order whole whenever the day trades through its limit. Paper
 fills a resting order only from trades after it was placed, and at most 10 % of their volume. "Missed vs the backtest"
@@ -212,6 +213,16 @@ adds up what the unfilled part of the orders the backtest *would* have filled mi
   that much better than Paper can do. Consistently positive over a few weeks is evidence for a limit further toward the
   market (a different strategy cost: re-run the backtest with it).
 - around zero or negative: the unfilled orders did not cost anything; keep the limits as they are.
+
+**Reading the weekly summary** (plan 20). `.\qa report week` compares Paper's return with what the strategy's recorded
+backtest (the one in the trial ledger) makes on an average day, scaled by how much of the account Paper had invested:
+- "within the range" is the normal answer for a week: a week is too short to tell much. Look at the "since" line, whose
+  range narrows relative to the expectation as the weeks add up.
+- "BELOW the range" on the since-line, week after week, means Paper does not do what the backtest did: read the fill
+  rate and what the limits missed, and tell Claude.
+- "no session" days count against nothing, but each one is a day the Confirm gate and the fill statistics did not get.
+- The intraday line says whether the evening collection ran, and how far the collection is from the intraday
+  go/no-go.
 
 A day is **clean** when it ran to the close with:
 - no violations
