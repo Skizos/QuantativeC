@@ -89,6 +89,25 @@ public sealed class CliTradingTests : IDisposable
     }
 
     [Fact]
+    public void Universe_RefusesAShareThatDoesNotTradeContinuously()
+    {
+        // Plan 18, P5: the Paper decision loads the whole list the way the backtest does, which refuses such a share, so
+        // one of them on the list would stop every decision.
+        using (var store = Data.Store.HistoryStore.Open(Store))
+        {
+            string ticks = Data.Store.InstrumentRecord.CanonicalTickTable(new Core.Instruments.TickSizeTable([new Core.Instruments.TickSizeBand(0m, 99_999m, 0.01m)]));
+            store.UpsertInstrument(new Data.Store.InstrumentRecord(new Core.OrderbookId("9999"), null, "SMALL", "Small AB", "SEK", "TEST-MARKET", "STOCK",
+                Data.Store.TradingModel.Unknown, 1m, ticks, new DateOnly(2026, 9, 1)), "test", "test", DateTimeOffset.UtcNow);
+        }
+
+        (int code, _, string error) = Qa("universe", "add", "SMALL", "--config-dir", Config, "--store", Store);
+        Assert.Equal(1, code);
+        Assert.Contains("SMALL is listed on 'TEST-MARKET', not Nasdaq Stockholm's main market (XSTO), and its trading model is Unknown", error, StringComparison.Ordinal);
+        Assert.Contains("on the allowlist it would stop the decisions for every share", error, StringComparison.Ordinal);
+        Assert.Empty(Trading.Risk.Universe.Load(Path.Combine(Config, Trading.Risk.Universe.FileName)).Entries);
+    }
+
+    [Fact]
     public void Universe_RefusesASixthName_ThePaperSessionCouldNotStreamIt()
     {
         string file = Path.Combine(Config, Trading.Risk.Universe.FileName);

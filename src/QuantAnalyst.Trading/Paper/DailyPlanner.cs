@@ -1,6 +1,7 @@
 using System.Globalization;
 using QuantAnalyst.Analytics.Backtesting;
 using QuantAnalyst.Core;
+using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
 using QuantAnalyst.Trading.Model;
 using QuantAnalyst.Trading.Risk;
@@ -28,15 +29,35 @@ public sealed record PlanResult(IReadOnlyList<OrderIntent> Intents, IReadOnlyLis
 public static class DailyPlanner
 {
     /// <summary>
-    /// True when every share has a price <see cref="Plan"/> can use (a fresh last trade, or a bid and an ask): what a
-    /// session's <see cref="Scheduling.PriceGate"/> waits for before deciding.
+    /// How many shares have a price the plan and the risk checks can use: a reference price (a fresh last trade, or a bid
+    /// and an ask) on a quote that is not stale (R15). What a session's <see cref="Scheduling.PriceGate"/> waits for.
     /// </summary>
-    public static bool HasPrices(IEnumerable<InstrumentSpec> instruments, IQuoteSource quotes, PreTradeRiskEngine risk, DateTimeOffset nowUtc)
+    public static Scheduling.PriceCoverage Coverage(IEnumerable<InstrumentSpec> instruments, IQuoteSource quotes, PreTradeRiskEngine risk, DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(instruments);
         ArgumentNullException.ThrowIfNull(quotes);
         ArgumentNullException.ThrowIfNull(risk);
-        return instruments.All(s => risk.ReferencePrice(quotes.Latest(s.OrderbookId), nowUtc) is not null);
+        int ready = 0, total = 0;
+        string? missing = null;
+        foreach (InstrumentSpec s in instruments)
+        {
+            total++;
+            Quote? q = quotes.Latest(s.OrderbookId);
+            string? why = q is null ? "no quote yet"
+                : q.IsStale ? $"stale: {q.StaleReason}"
+                : risk.ReferencePrice(q, nowUtc) is null ? "no fresh last trade and no bid/ask"
+                : null;
+            if (why is null)
+            {
+                ready++;
+            }
+            else
+            {
+                missing ??= $"{s.Ticker}: {why}";
+            }
+        }
+
+        return new Scheduling.PriceCoverage(ready, total, missing);
     }
 
     /// <param name="openOrders">The orders still open (working, partly filled or Unknown), as the risk checks see them.</param>
@@ -125,7 +146,7 @@ public static class DailyPlanner
             }
 
             OrderSide side = delta > 0 ? OrderSide.Buy : OrderSide.Sell;
-            decimal limit = reference * (side == OrderSide.Buy ? 1 + offset : 1 - offset);
+            decimal limit = TowardTheMarket(spec, reference, reference * (side == OrderSide.Buy ? 1 + offset : 1 - offset), side, risk.Limits.PriceCollarPct);
             decimal cap = perOrder;
             string clippedBy = "R6 order value";
             if (side == OrderSide.Buy)
@@ -162,8 +183,71 @@ public static class DailyPlanner
             }
 
             notes.Add(string.Create(c, $"{spec.Ticker}: {side} {quantity} @ ~{limit:0.###} ({reason})"));
+            if (RestsInsideTheSpread(spec, quote, limit, side) is { } rests)
+            {
+                notes.Add(rests);
+            }
         }
 
         return new PlanResult(intents, notes);
+    }
+
+    /// <summary>
+    /// Plan 18: after the passive rounding the gateway applies, a buy's limit is still at least one price step above the
+    /// reference and a sell's one below. On a share whose step is large against its price (a share under 1 SEK), the
+    /// 0.5 % offset would otherwise round away and leave the limit at the last price. A step that would take the limit
+    /// outside R5's <paramref name="collar"/> is not taken: a resting order is better than a rejected one.
+    /// </summary>
+    internal static decimal TowardTheMarket(InstrumentSpec spec, decimal reference, decimal limit, OrderSide side, decimal collar)
+    {
+        try
+        {
+            decimal rounded = spec.TickSizes.RoundForOrder(limit, side);
+            if (side == OrderSide.Buy ? rounded > reference : rounded < reference)
+            {
+                return limit;
+            }
+
+            decimal step = spec.TickSizes.TickAt(reference);
+            decimal stepped = side == OrderSide.Buy
+                ? spec.TickSizes.Round(reference, TickRounding.Down) + step
+                : spec.TickSizes.Round(reference, TickRounding.Up) - step;
+            return Math.Abs(stepped - reference) <= collar * reference ? stepped : limit;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return limit; // outside the tick table: order preparation refuses it, as before
+        }
+    }
+
+    /// <summary>
+    /// Plan 18: "FASTAT: the buy limit 0.642 is below the ask 0.645 (spread 0.94 %): it rests until a trade prints
+    /// through it." A limit inside the spread is the strategy's choice (the backtest assumes it), but the owner should see
+    /// why an order waits.
+    /// </summary>
+    private static string? RestsInsideTheSpread(InstrumentSpec spec, Quote? quote, decimal limit, OrderSide side)
+    {
+        if (quote is not { Bid: { } bid, Ask: { } ask } || bid <= 0 || ask < bid)
+        {
+            return null;
+        }
+
+        decimal shown;
+        try
+        {
+            shown = spec.TickSizes.RoundForOrder(limit, side);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+
+        decimal spread = (ask - bid) / ((ask + bid) / 2);
+        CultureInfo c = CultureInfo.InvariantCulture;
+        return side == OrderSide.Buy && shown < ask
+            ? string.Create(c, $"{spec.Ticker}: the buy limit {shown:0.####} is below the ask {ask:0.####} (spread {spread:P2}): it rests until a trade prints through it")
+            : side == OrderSide.Sell && shown > bid
+                ? string.Create(c, $"{spec.Ticker}: the sell limit {shown:0.####} is above the bid {bid:0.####} (spread {spread:P2}): it rests until a trade prints through it")
+                : null;
     }
 }

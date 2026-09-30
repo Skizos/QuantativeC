@@ -21,6 +21,17 @@ public sealed record IntradayCatchUpReport(OrderbookId OrderbookId, IReadOnlyLis
     public IReadOnlyList<DateOnly> Lost => [.. Missed.Except(Filled)];
 }
 
+/// <summary>What the intraday collection misses (plan 18, P6), for <c>qa status</c>.</summary>
+/// <param name="Last">The last day with bars, of any share and resolution.</param>
+/// <param name="CatchUp">Trading days without bars that the 10-minute catch-up still reaches.</param>
+/// <param name="Lost">Trading days without bars that are too old for it.</param>
+/// <param name="TodayDue">Today is a trading day, its session has closed, and its bars are not stored yet: Avanza drops
+/// the 1- and 5-minute bars at midnight.</param>
+public sealed record IntradayGaps(DateOnly Last, IReadOnlyList<DateOnly> CatchUp, IReadOnlyList<DateOnly> Lost, bool TodayDue)
+{
+    public bool None => CatchUp.Count == 0 && Lost.Count == 0 && !TodayDue;
+}
+
 /// <summary>
 /// Intraday bars from Avanza's public price chart into the store (plan 17 step A2, ADR 0006):
 /// <list type="bullet">
@@ -45,6 +56,47 @@ public static class IntradayImporter
 
     /// <summary>Calendar days back that <c>one_week</c> reaches (the probe: 7 days, today included).</summary>
     public const int FallbackDays = 7;
+
+    /// <summary>How far back <see cref="Gaps"/> looks for missing days.</summary>
+    public const int GapLookBackDays = 14;
+
+    /// <summary>
+    /// Plan 18 (P6): the trading days of the last <see cref="GapLookBackDays"/> days, since the collection's first day,
+    /// on which no share has intraday bars; those the catch-up still reaches (the last <see cref="FallbackDays"/> days,
+    /// as <see cref="CatchUpAsync"/> counts them) apart from the lost ones. Null before the first collected day. Days
+    /// the calendar has not loaded are skipped, never guessed.
+    /// </summary>
+    /// <param name="collected">The Stockholm dates with intraday bars (<see cref="HistoryStore.GetIntradayCollectedDays(string)"/>).</param>
+    public static IntradayGaps? Gaps(IReadOnlyCollection<DateOnly> collected, MarketCalendar calendar, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(collected);
+        ArgumentNullException.ThrowIfNull(calendar);
+        if (collected.Count == 0)
+        {
+            return null;
+        }
+
+        DateOnly today = DateOnly.FromDateTime(MarketTime.ToStockholm(now).DateTime);
+        DateOnly reach = today.AddDays(-FallbackDays);
+        DateOnly first = collected.Min();
+        DateOnly back = today.AddDays(-GapLookBackDays);
+        DateOnly from = back > first ? back : first;
+        var catchUp = new List<DateOnly>();
+        var lost = new List<DateOnly>();
+        for (DateOnly d = from; d < today; d = d.AddDays(1))
+        {
+            if (calendar.Years.Contains(d.Year) && calendar.Classify(d).IsTradingDay && !collected.Contains(d))
+            {
+                (d >= reach ? catchUp : lost).Add(d);
+            }
+        }
+
+        bool todayDue = !collected.Contains(today)
+            && calendar.Years.Contains(today.Year)
+            && calendar.Classify(today) is { IsTradingDay: true, Close: { } close }
+            && now >= calendar.ToUtc(today, close);
+        return new IntradayGaps(collected.Max(), catchUp, lost, todayDue);
+    }
 
     /// <summary>A bar's length.</summary>
     public static TimeSpan Length(ChartResolution resolution) => resolution switch

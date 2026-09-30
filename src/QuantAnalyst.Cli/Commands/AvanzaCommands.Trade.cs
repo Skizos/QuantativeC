@@ -254,7 +254,7 @@ internal static partial class AvanzaCommands
 
         var session = new ConfirmSession(gateway, account, kill, reconciler, new GatewayBrokerState(ctx.Connection.Gateway, time), halts, setup.Schedule, audit, time,
             Plan, output, decideAtStart, EndOfDayReport, costAssumptionBps: setup.Costs.HalfSpreadBps + setup.Costs.SlippageBps,
-            pricesReady: now => DailyPlanner.HasPrices(specs, quotes, risk, now));
+            prices: now => DailyPlanner.Coverage(specs, quotes, risk, now));
         ConfirmSessionSummary summary;
         try
         {

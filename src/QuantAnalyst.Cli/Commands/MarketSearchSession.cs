@@ -4,6 +4,7 @@ using QuantAnalyst.Core;
 using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.Store;
 using QuantAnalyst.Trading.Risk;
 
 namespace QuantAnalyst.Cli.Commands;
@@ -54,7 +55,7 @@ internal sealed class MarketSearchSession
             IBrokerGateway gateway = connection.Gateway;
             InstrumentTradingParams p = await gateway.GetTradingParamsAsync(id, ct).ConfigureAwait(false);
             string ticker = p.TickerSymbol ?? throw new ArgumentException($"{p.Name} has no ticker at Avanza, so it can't be added.");
-            Allowlist.Check(Universe.Load(Path.Combine(configDir, Universe.FileName)), p.OrderbookId, ticker, p.Currency);
+            Allowlist.Check(Universe.Load(Path.Combine(configDir, Universe.FileName)), InstrumentRecord.FromTradingParams(p));
             InstrumentImportResult imported = await InstrumentImport.ImportAsync(
                 gateway, _fx ?? throw new InvalidOperationException("The search session has not started."), p, storePath, configDir,
                 today.AddYears(-InstrumentImport.AppYears), today, ct).ConfigureAwait(false);

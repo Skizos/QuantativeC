@@ -2,17 +2,34 @@ using System.Globalization;
 
 namespace QuantAnalyst.Trading.Scheduling;
 
+/// <summary>How many of a decision's shares have a price the risk checks accept, and the first one that has none.</summary>
+/// <param name="Missing">E.g. "ERIC B: stale: depth stream reconnecting (HTTP 429)"; null when every share is ready.</param>
+public readonly record struct PriceCoverage(int Ready, int Total, string? Missing)
+{
+    public bool All => Ready >= Total;
+
+    public bool None => Ready == 0 && Total > 0;
+}
+
 /// <summary>
-/// Holds a day's decision until every share has a usable live price, for at most <see cref="Wait"/> after the decision
-/// became due. A session started after its decision time (or one that decides at start) otherwise decides in its first
-/// second, before the quote feeds' first answer, and the planner skips every share ("no fresh live price") for the
-/// whole day. After the wait it decides anyway; a share still without a price is skipped as before.
+/// Holds a day's decision until every share has a price the risk checks accept (plan 18). A session started after its
+/// decision time, or one that decides at start, would otherwise decide in its first second, before the quote feeds'
+/// first answer, and skip every share for the day.
+/// <list type="bullet">
+/// <item>some shares ready: decide after <see cref="Wait"/>; the others are skipped for the day</item>
+/// <item>none ready (a feed outage, or Confirm's stream refused): keep waiting, up to <see cref="OutageWait"/>, so a short
+/// outage delays the decision instead of costing the day; then decide anyway</item>
+/// </list>
+/// Every message names the first share that is missing and why.
 /// </summary>
-/// <param name="ready">True when every share of the decision has a usable price at that moment; null: always ready.</param>
-public sealed class PriceGate(Func<DateTimeOffset, bool>? ready)
+/// <param name="coverage">The shares' coverage at that moment; null: never waits.</param>
+public sealed class PriceGate(Func<DateTimeOffset, PriceCoverage>? coverage)
 {
     /// <summary>The quote feeds poll at once and then every 5 s, so a minute is ample for a share that trades.</summary>
     public static readonly TimeSpan Wait = TimeSpan.FromSeconds(60);
+
+    /// <summary>How long a decision waits while no share has a price at all.</summary>
+    public static readonly TimeSpan OutageWait = TimeSpan.FromMinutes(30);
 
     private DateOnly? _day;
     private DateTimeOffset _since;
@@ -25,7 +42,7 @@ public sealed class PriceGate(Func<DateTimeOffset, bool>? ready)
     public bool Open(DateOnly day, DateTimeOffset now, Action<string> say)
     {
         ArgumentNullException.ThrowIfNull(say);
-        if (ready is null)
+        if (coverage is null)
         {
             return true;
         }
@@ -37,22 +54,33 @@ public sealed class PriceGate(Func<DateTimeOffset, bool>? ready)
             _told = false;
         }
 
-        if (ready(now))
+        PriceCoverage c = coverage(now);
+        if (c.All)
         {
             return true;
         }
 
-        if (now - _since >= Wait)
+        TimeSpan waited = now - _since;
+        CultureInfo ci = CultureInfo.InvariantCulture;
+        if (!c.None && waited >= Wait)
         {
-            say(string.Create(CultureInfo.InvariantCulture,
-                $"no live price for every share after {Wait.TotalSeconds:0} s; deciding anyway (a share without one is skipped)."));
+            say(string.Create(ci,
+                $"no usable live price for {c.Total - c.Ready} of {c.Total} share(s) after {Wait.TotalSeconds:0} s ({c.Missing}); deciding anyway (they are skipped today)."));
+            return true;
+        }
+
+        if (c.None && waited >= OutageWait)
+        {
+            say(string.Create(ci,
+                $"no usable live price for any share after {OutageWait.TotalMinutes:0} minutes ({c.Missing}); deciding anyway (they are skipped today)."));
             return true;
         }
 
         if (!_told)
         {
             _told = true;
-            say(string.Create(CultureInfo.InvariantCulture, $"waiting for live prices before deciding (at most {Wait.TotalSeconds:0} s)."));
+            say(string.Create(ci,
+                $"waiting for live prices before deciding ({c.Ready} of {c.Total} ready; {c.Missing}): at most {Wait.TotalSeconds:0} s, or {OutageWait.TotalMinutes:0} minutes while none has one."));
         }
 
         return false;

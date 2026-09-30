@@ -1,6 +1,11 @@
 using Microsoft.Extensions.Time.Testing;
 using QuantAnalyst.Cli;
 using QuantAnalyst.Cli.Commands;
+using QuantAnalyst.Core;
+using QuantAnalyst.Core.Instruments;
+using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.History;
+using QuantAnalyst.Data.Store;
 
 namespace QuantAnalyst.Avanza.Tests;
 
@@ -11,6 +16,8 @@ namespace QuantAnalyst.Avanza.Tests;
 public sealed class CliUsabilityTests : IDisposable
 {
     private static readonly DateTimeOffset Saturday = new(2026, 9, 26, 10, 0, 0, TimeSpan.Zero); // 12:00 Stockholm
+
+    private static readonly int[] IntradayDays = [14, 21, 22, 24];
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "qa-cli-usability", Guid.NewGuid().ToString("N"));
     private readonly FakeAvanza _server = new();
@@ -120,6 +127,39 @@ public sealed class CliUsabilityTests : IDisposable
         steps = Steps(output);
         Assert.Contains("qa kill --reset", steps[0], StringComparison.Ordinal);
         Assert.DoesNotContain(steps, s => s.Contains("qa paper run", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Status_FlagsAShareThatDoesNotTradeContinuously_AndTheIntradayDaysStillToCatchUp()
+    {
+        // Plan 18, P5: a share off the main market would stop every Paper decision. P6: missed intraday evenings.
+        string ticks = InstrumentRecord.CanonicalTickTable(new TickSizeTable([new TickSizeBand(0m, 99_999m, 0.01m)]));
+        using (HistoryStore store = HistoryStore.Open(Store))
+        {
+            store.UpsertInstrument(new InstrumentRecord(new OrderbookId("5240"), null, "ERIC B", "Ericsson B", "SEK", "XSTO", "STOCK", TradingModel.Continuous, 1m, ticks, new DateOnly(2026, 9, 1)),
+                "test", "test", Saturday);
+            store.UpsertInstrument(new InstrumentRecord(new OrderbookId("9999"), null, "SMALL", "Small AB", "SEK", "TEST-MARKET", "STOCK", TradingModel.Unknown, 1m, ticks, new DateOnly(2026, 9, 1)),
+                "test", "test", Saturday);
+            store.RegisterSource(AvanzaChartImporter.AvanzaPriceChart);
+            Bar[] bars = [.. IntradayDays.Select(d => new Bar(new DateTimeOffset(2026, 9, d, 7, 0, 0, TimeSpan.Zero), 100m, 101m, 99m, 100m, 1_000))];
+            store.UpsertIntradayBars(new OrderbookId("5240"), ChartResolution.FiveMinutes, bars, AvanzaChartImporter.AvanzaPriceChart, "test", Saturday);
+        }
+
+        File.WriteAllText(Path.Combine(Config, "universe.json"),
+            """{ "format": "qa-universe/1", "instruments": [ { "orderbook_id": "5240", "ticker": "ERIC B", "name": "Ericsson B" }, { "orderbook_id": "9999", "ticker": "SMALL", "name": "Small AB" } ] }""");
+
+        (int code, string output, string error) = Status();
+        Assert.True(code == 0, error);
+        Assert.Contains("FAIL  Allowlist", output, StringComparison.Ordinal);
+        Assert.Contains("SMALL is listed on 'TEST-MARKET', not Nasdaq Stockholm's main market (XSTO), and its trading model is Unknown", output, StringComparison.Ordinal);
+        Assert.Contains(
+            "warn  Intraday bars  collected to 2026-09-24; missing 2026-09-23, 2026-09-25 (the catch-up still reaches them as 10-minute bars); lost 2026-09-15, 2026-09-16, 2026-09-17, 2026-09-18 (older than a week)",
+            output, StringComparison.Ordinal);
+
+        string[] steps = Steps(output);
+        Assert.StartsWith("1. Take SMALL off the allowlist: qa universe remove SMALL", steps[0], StringComparison.Ordinal);
+        Assert.Contains(steps, s => s.EndsWith("Catch up the missed intraday day(s) while Avanza still has them (until 2026-09-30 for the first): qa intraday import", StringComparison.Ordinal));
+        Assert.DoesNotContain(steps, s => s.Contains("qa paper run", StringComparison.Ordinal)); // every decision would fail
     }
 
     [Fact]

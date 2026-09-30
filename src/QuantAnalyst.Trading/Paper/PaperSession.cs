@@ -35,10 +35,10 @@ public sealed record SessionMarket(TradingSchedule Schedule, Func<CancellationTo
     public string Mic => Schedule.Mic;
 
     /// <summary>
-    /// Gets whether every share of this market has a usable live price now (<see cref="PriceGate"/>): the decision waits
-    /// for it, at most a minute. Null: no wait.
+    /// Gets how many of this market's shares have a price the risk checks accept (<see cref="PriceGate"/>): the decision
+    /// waits for all of them, a minute at most, or half an hour while none has one. Null: no wait.
     /// </summary>
-    public Func<DateTimeOffset, bool>? PricesReady { get; init; }
+    public Func<DateTimeOffset, PriceCoverage>? Prices { get; init; }
 }
 
 /// <summary>
@@ -356,7 +356,7 @@ public sealed class PaperSession(
         public string Mic => Market.Mic;
 
         /// <summary>Gets the wait for live prices before the day's decision.</summary>
-        public PriceGate Gate { get; } = new(market.PricesReady);
+        public PriceGate Gate { get; } = new(market.Prices);
 
         public DateOnly? DecidedOn { get; set; }
 

@@ -26,6 +26,8 @@ internal sealed class SettableQuotes : IQuoteSource
         _quotes[id] = q;
         return q;
     }
+
+    public void Put(Quote quote) => _quotes[quote.OrderbookId] = quote;
 }
 
 public sealed class PaperOrderChannelTests : IDisposable

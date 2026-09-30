@@ -140,6 +140,10 @@ internal static class StatusCommand
         MarketCalendar? calendar = Try(r, "Calendar", () => MarketCalendarLoader.LoadDirectory(configDir));
         Universe? universe = Try(r, "Allowlist", () => Universe.Load(Path.Combine(configDir, Universe.FileName)));
         IReadOnlyList<MarketInfo> foreign = universe is null ? [] : CheckAllowlist(r, universe, paths.Store, calendar);
+        if (calendar is not null)
+        {
+            CheckIntraday(r, paths.Store, calendar);
+        }
 
         if (universe is { Entries.Count: > 0 } && limits is not null && universe.Entries.Count * limits.MaxPositionPctOfAccount < 1m)
         {
@@ -368,6 +372,12 @@ internal static class StatusCommand
             foreign.AddRange(ForeignMarkets(history, universe));
             foreach (UniverseEntry e in universe.Entries)
             {
+                if (history.GetInstrument(e.OrderbookId)?.Instrument is { } record && Allowlist.NotContinuous(record) is { } why)
+                {
+                    r.Add(Mark.Fail, "Allowlist", why);
+                    r.Step(Priority.Allowlist, $"Take {e.Ticker} off the allowlist: qa universe remove {e.Ticker.Replace(' ', '-')}");
+                }
+
                 IReadOnlyList<StoredBar> bars = hasSource ? history.GetDailyBars(e.OrderbookId, source) : [];
                 DateOnly? last = bars.Count > 0 ? bars[^1].Bar.Date : null;
                 behind |= last is null || last < wanted;
@@ -378,6 +388,58 @@ internal static class StatusCommand
         }
 
         return foreign;
+    }
+
+    /// <summary>
+    /// Plan 18 (P6): Avanza keeps 1- and 5-minute bars for the day only, and the catch-up reaches back a week at 10
+    /// minutes, so a missed evening is noticed while it can still be collected. Silent until intraday bars are collected.
+    /// </summary>
+    private static void CheckIntraday(StatusReport r, string storePath, MarketCalendar calendar)
+    {
+        if (!File.Exists(storePath) || Try(r, "Intraday bars", () => HistoryStore.Open(storePath)) is not { } history)
+        {
+            return;
+        }
+
+        IntradayGaps? gaps;
+        using (history)
+        {
+            gaps = IntradayImporter.Gaps([.. history.GetIntradayCollectedDays(AvanzaChartImporter.AvanzaPriceChart.Name)], calendar, r.Now);
+        }
+
+        if (gaps is null)
+        {
+            return;
+        }
+
+        CultureInfo c = CultureInfo.InvariantCulture;
+        static string Days(IEnumerable<DateOnly> days) => string.Join(", ", days.Select(d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)));
+        if (gaps.None)
+        {
+            r.Add(Mark.Ok, "Intraday bars", string.Create(c, $"collected to {gaps.Last:yyyy-MM-dd}, no trading day missing in the last {IntradayImporter.GapLookBackDays} days"));
+            return;
+        }
+
+        var parts = new List<string> { string.Create(c, $"collected to {gaps.Last:yyyy-MM-dd}") };
+        if (gaps.TodayDue)
+        {
+            parts.Add("today's not yet (Avanza drops the 1- and 5-minute bars at midnight)");
+            r.Step(Priority.Advice, "Collect today's intraday bars before midnight: qa intraday import (or Start-ScheduledTask 'QuantAnalyst intraday import').");
+        }
+
+        if (gaps.CatchUp.Count > 0)
+        {
+            parts.Add($"missing {Days(gaps.CatchUp)} (the catch-up still reaches them as 10-minute bars)");
+            r.Step(Priority.Advice, string.Create(c,
+                $"Catch up the missed intraday day(s) while Avanza still has them (until {gaps.CatchUp[0].AddDays(IntradayImporter.FallbackDays):yyyy-MM-dd} for the first): qa intraday import"));
+        }
+
+        if (gaps.Lost.Count > 0)
+        {
+            parts.Add($"lost {Days(gaps.Lost)} (older than a week)");
+        }
+
+        r.Add(Mark.Warn, "Intraday bars", string.Join("; ", parts));
     }
 
     private static void CheckCalendar(StatusReport r, MarketCalendar calendar)

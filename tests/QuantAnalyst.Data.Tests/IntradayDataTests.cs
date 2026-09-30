@@ -244,6 +244,34 @@ public sealed class IntradayDataTests : IDisposable
         Assert.Equal([new DateOnly(2026, 9, 22), new DateOnly(2026, 9, 23)], store.GetIntradayCollectedDays(AvanzaChartImporter.AvanzaPriceChart.Name));
     }
 
+    // ---- the gaps qa status shows (plan 18, P6) ----
+
+    private static DateOnly[] Sept(params int[] days) => [.. days.Select(d => new DateOnly(2026, 9, d))];
+
+    [Fact]
+    public void TheGaps_SplitTheMissedTradingDays_IntoWhatTheCatchUpStillReaches_AndWhatIsLost()
+    {
+        // Two weeks back from Tuesday the 29th at 18:00: the 16th is older than the week the catch-up reaches, the 22nd
+        // and 28th are not; the 24th is a holiday and weekends don't count; today's session has closed without bars.
+        IntradayGaps gaps = IntradayImporter.Gaps(Sept(15, 17, 18, 21, 23, 25), Week, Evening.GetUtcNow())!;
+
+        Assert.Equal(new DateOnly(2026, 9, 25), gaps.Last);
+        Assert.Equal(Sept(22, 28), gaps.CatchUp);
+        Assert.Equal(Sept(16), gaps.Lost);
+        Assert.True(gaps.TodayDue);
+        Assert.False(gaps.None);
+
+        // At noon today's session is still open: nothing is due yet.
+        Assert.False(IntradayImporter.Gaps(Sept(15, 17, 18, 21, 23, 25), Week, new DateTimeOffset(2026, 9, 29, 10, 0, 0, TimeSpan.Zero))!.TodayDue);
+    }
+
+    [Fact]
+    public void TheGaps_StartAtTheFirstCollectedDay_AndAreNothingBeforeIt()
+    {
+        Assert.True(IntradayImporter.Gaps(Sept(22, 23, 25, 28, 29), Week, Evening.GetUtcNow())!.None); // nothing before the 22nd is "missing"
+        Assert.Null(IntradayImporter.Gaps([], Week, Evening.GetUtcNow()));
+    }
+
     // ---- the research list ----
 
     [Fact]

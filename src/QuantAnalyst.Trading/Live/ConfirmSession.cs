@@ -57,7 +57,7 @@ public sealed class ConfirmSession(
     bool decideAtStart = false,
     Func<DateOnly, string>? endOfDayReport = null,
     decimal? costAssumptionBps = null,
-    Func<DateTimeOffset, bool>? pricesReady = null)
+    Func<DateTimeOffset, PriceCoverage>? prices = null)
 {
     public static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan ReconcileEvery = TimeSpan.FromSeconds(30);
@@ -66,7 +66,7 @@ public sealed class ConfirmSession(
     public static readonly TimeSpan PaceBetweenOrders = TimeSpan.FromSeconds(13);
 
     private readonly HashSet<OrderbookId> _handled = [];
-    private readonly PriceGate _gate = new(pricesReady); // the first plan of the day waits for live prices, at most a minute
+    private readonly PriceGate _gate = new(prices); // the first plan of the day waits for prices R15 accepts
     private DateOnly? _tradingOn;
     private DateOnly? _doneOn;
     private DateOnly? _endedOn;

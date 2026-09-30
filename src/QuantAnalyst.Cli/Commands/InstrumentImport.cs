@@ -57,8 +57,10 @@ internal static class InstrumentImport
 
 /// <summary>
 /// Changing the allowlist (R2, <c>config/universe.json</c>). A name joins only from the instrument master, only in SEK,
-/// USD or CAD (ADR 0005: foreign shares trade on paper only), and only while there are fewer than <see cref="MaxNames"/>, because the Paper session streams every allowlisted
-/// name and refuses to start with more. Shared by <c>qa universe add|remove</c> and the app's share search.
+/// USD or CAD (ADR 0005: foreign shares trade on paper only), only when it trades continuously (plan 18: the backtest
+/// and every Paper decision refuse anything else), and only while there are fewer than <see cref="MaxNames"/>, because
+/// the Paper session streams every allowlisted name and refuses to start with more. Shared by
+/// <c>qa universe add|remove</c> and the app's share search.
 /// </summary>
 internal static class Allowlist
 {
@@ -69,26 +71,49 @@ internal static class Allowlist
     {
         ArgumentNullException.ThrowIfNull(universe);
         InstrumentRecord r = DataCommands.FindInstrument(history, ticker, null, null).Instrument;
-        Check(universe, r.OrderbookId, r.Ticker, r.Currency);
+        Check(universe, r);
         var entry = new UniverseEntry(r.OrderbookId, r.Ticker, r.Name);
         return (universe.With(entry), entry);
     }
 
     /// <summary>Throws with the reason when the instrument may not join <paramref name="universe"/> (a name already on it may).</summary>
-    public static void Check(Universe universe, OrderbookId id, string ticker, string currency)
+    public static void Check(Universe universe, InstrumentRecord instrument)
     {
         ArgumentNullException.ThrowIfNull(universe);
-        if (Markets.ForCurrency(currency) is null)
+        ArgumentNullException.ThrowIfNull(instrument);
+        if (Markets.ForCurrency(instrument.Currency) is null)
         {
-            throw new ArgumentException($"{ticker} trades in {currency}; the program trades shares in {Markets.CurrencyList} (ADR 0005).");
+            throw new ArgumentException($"{instrument.Ticker} trades in {instrument.Currency}; the program trades shares in {Markets.CurrencyList} (ADR 0005).");
         }
 
-        if (!universe.Contains(id) && universe.Entries.Count >= MaxNames)
+        if (NotContinuous(instrument) is { } why)
+        {
+            throw new ArgumentException(why);
+        }
+
+        if (!universe.Contains(instrument.OrderbookId) && universe.Entries.Count >= MaxNames)
         {
             throw new ArgumentException(
                 $"The allowlist already has {universe.Entries.Count} names, the most a Paper session can stream ({MaxNames}). Remove one first.");
         }
     }
+
+    /// <summary>
+    /// Plan 18 (P5): why a share that does not trade continuously can't be on the list, or null when it does. Only
+    /// Nasdaq Stockholm's main market (XSTO) and the US and Canadian exchanges are known as continuous; a First North
+    /// share may trade only in auctions. The backtest refuses such a share, and the Paper decision loads the whole list
+    /// the same way, so one of them would stop every decision, for every share.
+    /// </summary>
+    public static string? NotContinuous(InstrumentRecord instrument)
+    {
+        ArgumentNullException.ThrowIfNull(instrument);
+        return instrument.TradingModel == TradingModel.Continuous
+            ? null
+            : $"{instrument.Ticker} is listed on {Marketplace(instrument)}, not Nasdaq Stockholm's main market (XSTO), and its trading model is {instrument.TradingModel}: "
+                + "the backtest and every Paper decision refuse a share that does not trade continuously, so on the allowlist it would stop the decisions for every share (docs/plans/18-trading-lessons.md).";
+    }
+
+    private static string Marketplace(InstrumentRecord r) => string.IsNullOrWhiteSpace(r.MarketPlace) ? "an unknown marketplace" : $"'{r.MarketPlace}'";
 
     /// <summary>Adds <paramref name="ticker"/> to the allowlist file in <paramref name="configDir"/> and saves it.</summary>
     public static UniverseEntry AddAndSave(string configDir, string storePath, string ticker)
