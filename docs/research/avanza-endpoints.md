@@ -226,6 +226,20 @@ Its replacement is **Server-Sent Events** (Go SDK, `internal/sse/subscription.go
 - **Other events:** the Go SDK tests show `event: info` with plain-text data (`connected`, `heartbeat`) on the same stream ([`order_depth_test.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/order_depth_test.go)).
 - **Re-checked 2026-09-25 (Phase 4):** both client HEADs are unchanged (Qluxzz `a6a18a94`, Go SDK `43f39025`).
 
+**First live use, 2026-09-30 (the owner's Paper session, 10:19): every order-depth connection was refused with HTTP 429**,
+from the first attempt and on every retry, for all three shares (connections already about a second apart), while the
+REST market-data polls worked. The stream has never been captured live; the only fixture is hand-written. Not yet known:
+- whether it is a rate or concurrency limit (another stream open, e.g. Avanza in a browser)
+- or a refusal of non-browser clients. The Go SDK (`internal/sse/subscription.go` at `43f39025`, fetched again
+  2026-09-30) sends a full browser header set on SSE requests: `Accept-Language`, `Pragma`, `Priority`, `Sec-Ch-Ua*`,
+  `Sec-Fetch-Dest/Mode/Site`, a browser `User-Agent`, and oddly `Content-Type: application/json`. We send our own
+  `User-Agent` (`QuantAnalyst/0.3 …`) and none of those.
+
+Since then a refusal's log line names the answering `Server` and any `Retry-After`, and `qa stream` (recording on by
+default) keeps the first three refused answers: status, header names and the body. That tells a block page from a
+rate limit. Imitating a browser would be the owner's decision: Avanza's user terms bar automated tools without written
+consent (`avanza-terms.md`).
+
 Open issue: [Qluxzz #140 "Event-stream (SSE)"](https://github.com/Qluxzz/avanza/issues/140) (2025-09-23) has no maintainer answer. The SSE protocol is known from the Go SDK only, so we need our own recorded fixtures (Phase 4) before relying on it.
 
 ## 6. Drift history (evidence for ADR 0002)

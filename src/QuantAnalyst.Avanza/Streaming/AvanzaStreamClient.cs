@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -30,6 +31,9 @@ internal sealed record StreamMessage(SseEvent Event, DateTimeOffset ReceivedUtc)
 /// connections that delivered no event</item>
 /// <item>transport errors, a closed stream, 408, 429, 5xx and protocol errors reconnect; 401/403 (session expired), 404
 /// (endpoint gone), any other status and a wrong content type (schema drift) stop the stream by throwing</item>
+/// <item>a refusal (408, 429, 5xx) waits at least the server's <c>Retry-After</c> (at most <see cref="MaxRetryAfter"/>); the
+/// log line names it and the answering <c>Server</c>, and the first <see cref="RecordedRefusals"/> refusals are recorded
+/// when recording is on, so a block can be told from a rate limit</item>
 /// </list>
 /// Never used for anything but GET streams; the pipeline behind it has no retry handler (this loop is the retry).
 /// </summary>
@@ -37,6 +41,14 @@ internal sealed class AvanzaStreamClient(HttpClient streamClient, AvanzaOptions 
 {
     public const string EventStreamMediaType = "text/event-stream";
     public const string StreamVersion = "event-stream/2026-09-25";
+
+    /// <summary>A longer <c>Retry-After</c> is not waited in full; the stream retries after this.</summary>
+    public static readonly TimeSpan MaxRetryAfter = TimeSpan.FromMinutes(10);
+
+    /// <summary>Refused connections recorded per stream (a refusal every few seconds all day would fill the folder).</summary>
+    public const int RecordedRefusals = 3;
+
+    private int _refusalsRecorded;
 
     public async IAsyncEnumerable<StreamItem> RunAsync(AvanzaRoute route, string path, string refererPath, [EnumeratorCancellation] CancellationToken ct)
     {
@@ -83,11 +95,16 @@ internal sealed class AvanzaStreamClient(HttpClient streamClient, AvanzaOptions 
             int failures = 0;
             while (true)
             {
-                (bool delivered, string reason) = await ConnectOnceAsync(route, path, referer, parser, writer, ct).ConfigureAwait(false);
+                (bool delivered, string reason, TimeSpan? retryAfter) = await ConnectOnceAsync(route, path, referer, parser, writer, ct).ConfigureAwait(false);
                 failures = delivered ? 0 : failures + 1;
                 TimeSpan serverRetry = parser.RetryMilliseconds is { } ms ? TimeSpan.FromMilliseconds(ms) : TimeSpan.Zero;
                 TimeSpan baseDelay = serverRetry > options.StreamMinRetry ? serverRetry : options.StreamMinRetry;
                 TimeSpan delay = Backoff(baseDelay, failures, options.StreamMaxBackoff, jitter.NextDouble());
+                if (retryAfter is { } wait && wait > delay)
+                {
+                    delay = wait < MaxRetryAfter ? wait : MaxRetryAfter; // the server asked for longer: never sooner
+                }
+
                 Log.StreamReconnecting(logger, route.Name, reason, (long)delay.TotalMilliseconds, failures);
                 await writer.WriteAsync(new StreamStateItem(StreamState.Reconnecting, reason, delay, time.GetUtcNow()), ct).ConfigureAwait(false);
                 await Task.Delay(delay, time, ct).ConfigureAwait(false);
@@ -108,7 +125,7 @@ internal sealed class AvanzaStreamClient(HttpClient streamClient, AvanzaOptions 
         }
     }
 
-    private async Task<(bool Delivered, string Reason)> ConnectOnceAsync(
+    private async Task<(bool Delivered, string Reason, TimeSpan? RetryAfter)> ConnectOnceAsync(
         AvanzaRoute route, string path, Uri referer, SseParser parser, ChannelWriter<StreamItem> writer, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
@@ -133,11 +150,11 @@ internal sealed class AvanzaStreamClient(HttpClient streamClient, AvanzaOptions 
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
-                return (false, $"no response within {options.AttemptTimeout.TotalSeconds:0} s");
+                return (false, $"no response within {options.AttemptTimeout.TotalSeconds:0} s", null);
             }
             catch (HttpRequestException)
             {
-                return (false, "transport error");
+                return (false, "transport error", null);
             }
         }
 
@@ -146,7 +163,23 @@ internal sealed class AvanzaStreamClient(HttpClient streamClient, AvanzaOptions 
             int code = (int)response.StatusCode;
             if (code is 408 or 429 or >= 500)
             {
-                return (false, $"HTTP {code}");
+                TimeSpan? retryAfter = RetryAfter(response);
+                if (recorder is not null && _refusalsRecorded < RecordedRefusals)
+                {
+                    _refusalsRecorded++;
+                    try
+                    {
+                        await recorder.RecordAsync(request, response, ct).ConfigureAwait(false); // status, headers and the short body
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or HttpRequestException)
+                    {
+                        // A diagnostic only: the stream goes on without it.
+                    }
+                }
+
+                string server = response.Headers.Server.Count > 0 ? $" from {response.Headers.Server}" : string.Empty;
+                string after = retryAfter is { } ra ? string.Create(CultureInfo.InvariantCulture, $", Retry-After {ra.TotalSeconds:0} s") : string.Empty;
+                return (false, $"HTTP {code}{server}{after}", retryAfter);
             }
 
             if (code is 401 or 403)
@@ -177,7 +210,7 @@ internal sealed class AvanzaStreamClient(HttpClient streamClient, AvanzaOptions 
                 await writer.WriteAsync(new StreamStateItem(StreamState.Connected, null, null, time.GetUtcNow()), ct).ConfigureAwait(false);
                 (bool delivered, string reason) = await ReadEventsAsync(response, parser, writer, recording, ct).ConfigureAwait(false);
                 endReason = reason;
-                return (delivered, reason);
+                return (delivered, reason, null);
             }
             finally
             {
@@ -189,6 +222,15 @@ internal sealed class AvanzaStreamClient(HttpClient streamClient, AvanzaOptions 
             }
         }
     }
+
+    /// <summary>The server's <c>Retry-After</c> as a wait from now (seconds or a date), or null.</summary>
+    private TimeSpan? RetryAfter(HttpResponseMessage response) =>
+        response.Headers.RetryAfter switch
+        {
+            { Delta: { } delta } => delta,
+            { Date: { } date } when date > time.GetUtcNow() => date - time.GetUtcNow(),
+            _ => null,
+        };
 
     private async Task<(bool Delivered, string Reason)> ReadEventsAsync(
         HttpResponseMessage response, SseParser parser, ChannelWriter<StreamItem> writer, StreamRecording? recording, CancellationToken ct)

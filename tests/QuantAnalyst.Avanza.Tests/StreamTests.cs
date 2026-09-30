@@ -108,6 +108,63 @@ public sealed class StreamTests
         Assert.Equal(4, StreamRequests(rig));
     }
 
+    private static void ServeRefusal(FakeAvanza server, HttpStatusCode status, int? retryAfterSeconds, string body = "<html>Too many requests</html>") =>
+        server.On(AvanzaRoutes.OrderDepthStream, _ =>
+        {
+            var response = new HttpResponseMessage(status) { Content = new StringContent(body, System.Text.Encoding.UTF8, "text/html") };
+            response.Headers.Server.ParseAdd("TestEdge/1.0");
+            if (retryAfterSeconds is { } seconds)
+            {
+                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(seconds));
+            }
+
+            return response;
+        });
+
+    [Fact]
+    public async Task ARefusal_WaitsAtLeastTheServersRetryAfter_AndSaysWhoRefused()
+    {
+        using TestRig rig = await LoggedIn();
+        ServeRefusal(rig.Server, HttpStatusCode.TooManyRequests, retryAfterSeconds: 45);
+        await using var stream = new StreamCollector(rig.Connection.Gateway.StreamOrderDepthAsync(Eric, Ct));
+
+        await stream.WaitFor(e => e.OfType<StreamStateChanged>().Any(s => s.State == StreamState.Reconnecting), "reconnecting");
+        StreamStateChanged r = stream.Of<StreamStateChanged>().Single(s => s.State == StreamState.Reconnecting);
+        Assert.Equal("HTTP 429 from TestEdge/1.0, Retry-After 45 s", r.Reason);
+        (TimeSpan delay, _) = Delay(rig);
+        Assert.Equal(45, delay.TotalSeconds, 3); // not the 6 s backoff: the server asked for 45
+    }
+
+    [Fact]
+    public async Task Refusals_AreRecorded_TheFirstFewOnly()
+    {
+        using var rig = new TestRig(record: true);
+        await rig.Connection.Authenticator.LoginAsync(Ct);
+        for (int i = 0; i < 5; i++)
+        {
+            ServeRefusal(rig.Server, HttpStatusCode.TooManyRequests, retryAfterSeconds: 1, body: "<html>Access denied, reference 18.abc</html>");
+        }
+
+        await using var stream = new StreamCollector(rig.Connection.Gateway.StreamOrderDepthAsync(Eric, Ct));
+        for (int attempt = 1; attempt <= 5; attempt++)
+        {
+            await stream.WaitFor(e => e.OfType<StreamStateChanged>().Count(s => s.State == StreamState.Reconnecting) == attempt, $"refusal {attempt}");
+            if (attempt < 5)
+            {
+                int before = StreamRequests(rig);
+                await AdvanceUntil(rig, () => StreamRequests(rig) > before, TimeSpan.FromSeconds(1), 60);
+            }
+        }
+
+        string[] files = [.. Directory.EnumerateFiles(Path.Combine(rig.Root, "recordings"), "*order-depth-stream*.json", SearchOption.AllDirectories)];
+        Assert.Equal(AvanzaStreamClient.RecordedRefusals, files.Length);
+        string recorded = File.ReadAllText(files[0]);
+        Assert.Contains("\"status\": 429", recorded, StringComparison.Ordinal);
+        Assert.Contains("Access denied, reference 18.abc", recorded, StringComparison.Ordinal); // what refused it
+        Assert.Contains("Retry-After", recorded, StringComparison.Ordinal); // header names only
+        Assert.DoesNotContain(FakeSecrets.SecurityToken, recorded, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(0, 3.0)]
     [InlineData(1, 6.0)]
