@@ -202,7 +202,16 @@ Reconciliation: clean. Audit: audit (check with 'qa audit verify').
 | You want to… | Command |
 |---|---|
 | read the day's report | `.\qa report eod` (it is also printed at the end of the session) |
+| see how often the limit orders fill, and what the unfilled ones cost | the `Limits:` part of `.\qa report eod`, its `limit` lines, and its last line `All N days …` |
 | see the progress towards Confirm | `.\qa report gate` |
+
+**Reading the fill rate** (plan 19). The backtest fills an order whole whenever the day trades through its limit. Paper
+fills a resting order only from trades after it was placed, and at most 10 % of their volume. "Missed vs the backtest"
+adds up what the unfilled part of the orders the backtest *would* have filled missed by the close:
+- positive (e.g. `+15.00 SEK (+71 bps)`): the price moved away from the unfilled orders, so the backtest's results are
+  that much better than Paper can do. Consistently positive over a few weeks is evidence for a limit further toward the
+  market (a different strategy cost: re-run the backtest with it).
+- around zero or negative: the unfilled orders did not cost anything; keep the limits as they are.
 
 A day is **clean** when it ran to the close with:
 - no violations

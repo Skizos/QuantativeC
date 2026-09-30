@@ -21,6 +21,8 @@ public enum QuoteSource
 /// <param name="AsOfUtc">The newest of <paramref name="DepthAtUtc"/> and <paramref name="PollAtUtc"/>: the age of our knowledge.</param>
 /// <param name="ComposedAtUtc">When this quote was composed.</param>
 /// <param name="IsStale">True when the quote must not be traded on; <paramref name="StaleReason"/> says why.</param>
+/// <param name="DayHigh">The day's highest trade so far, from the poll (plan 19); null when unknown.</param>
+/// <param name="DayLow">The day's lowest trade so far, from the poll (plan 19); null when unknown.</param>
 public sealed record Quote(
     OrderbookId OrderbookId,
     decimal? Bid,
@@ -37,7 +39,9 @@ public sealed record Quote(
     DateTimeOffset? AsOfUtc,
     DateTimeOffset ComposedAtUtc,
     bool IsStale,
-    string? StaleReason)
+    string? StaleReason,
+    decimal? DayHigh = null,
+    decimal? DayLow = null)
 {
     /// <summary>Age of the newest information at composition time, or null when there is none.</summary>
     public TimeSpan? Age => AsOfUtc is { } asOf ? ComposedAtUtc - asOf : null;

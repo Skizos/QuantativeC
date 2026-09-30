@@ -135,6 +135,7 @@ public sealed class ReportsViewModel : PageViewModel
                 $"fill {f.Side} {f.Volume} {f.Ticker} @ {f.Price} (limit {f.Limit}, {f.How}); {(f.DeviationBps is { } d ? $"{d:+0.0;-0.0} bps from the {f.ReferenceKind}" : "no reference")}"));
         }
 
+        details.AddRange((r.FillRate?.Orders ?? []).Select(o => "limit " + o.Describe())); // plan 19
         details.AddRange(r.Violations.Select(v => "VIOLATION: " + v));
         details.AddRange(r.Events.Select(e => "event: " + e));
         string state = r.Clean ? "CLEAN" : !r.Complete ? "INCOMPLETE" : "NOT CLEAN";

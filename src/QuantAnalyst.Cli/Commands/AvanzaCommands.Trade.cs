@@ -419,7 +419,7 @@ internal static partial class AvanzaCommands
     {
         DepthLevel? top = m.Depth.Count > 0 ? m.Depth[0] : null;
         return new Quote(m.OrderbookId, m.Bid, top?.BidVolume ?? 0m, m.Ask, top?.AskVolume ?? 0m, m.Last, m.TimeOfLastUtc, m.TotalVolumeTraded,
-            m.Depth, QuoteSource.Poll, m.DepthReceivedUtc, now, now, now, false, null);
+            m.Depth, QuoteSource.Poll, m.DepthReceivedUtc, now, now, now, false, null, m.High, m.Low);
     }
 
     private static async Task PumpLiveQuotesAsync(Broadcaster<Quote>.Subscription subscription, LiveQuotes quotes)

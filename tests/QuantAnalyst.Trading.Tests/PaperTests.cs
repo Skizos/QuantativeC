@@ -20,9 +20,11 @@ internal sealed class SettableQuotes : IQuoteSource
 
     public Quote? Latest(OrderbookId id) => _quotes.GetValueOrDefault(id);
 
-    public Quote Set(OrderbookId id, DateTimeOffset now, decimal? bid, decimal bidVolume, decimal? ask, decimal askVolume, decimal? last, decimal? totalVolume)
+    public Quote Set(
+        OrderbookId id, DateTimeOffset now, decimal? bid, decimal bidVolume, decimal? ask, decimal askVolume, decimal? last, decimal? totalVolume,
+        decimal? dayHigh = null, decimal? dayLow = null)
     {
-        var q = new Quote(id, bid, bidVolume, ask, askVolume, last, now.AddSeconds(-1), totalVolume, [], QuoteSource.Stream, now, now, now, now, false, null);
+        var q = new Quote(id, bid, bidVolume, ask, askVolume, last, now.AddSeconds(-1), totalVolume, [], QuoteSource.Stream, now, now, now, now, false, null, dayHigh, dayLow);
         _quotes[id] = q;
         return q;
     }

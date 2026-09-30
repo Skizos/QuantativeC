@@ -353,10 +353,15 @@ public sealed class ViewModelTests : IDisposable
         var monday = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 9, 28, 15, 32, 0, TimeSpan.Zero));
         var audit = new AuditLog(_ws.Workspace.AuditDir, monday);
         audit.Append("session-start", new { mode = "Paper" });
+        audit.Append("risk", new { passed = true, checks = Array.Empty<object>() });
+        audit.Append("oms-new", new { clientOrderId = "o1", orderbookId = "5240", ticker = "ERIC B", side = "Buy", volume = 10, limitPrice = 70m });
+        audit.Append("close-mark", new { orderbookId = "5240", last = 70.7m, dayHigh = 71m, dayLow = 69.8m, sekPerUnit = 1m });
+        audit.Append("oms-state", new { clientOrderId = "o1", to = "Cancelled" });
         audit.Append("end-of-day", new { day = new { startOfDayValue = 5000m, accountValue = 5001m, cash = 5001m, feesPaid = 0m } });
 
         await shell.Reports.RefreshAsync();
         ReportRow day = Assert.Single(shell.Reports.Days);
+        Assert.Contains("limit Buy 10 ERIC B @ 70: filled 0/10 (Cancelled); day low 69.8, high 71, close 70.7: the backtest fills it; missed +7.00 SEK (+100.0 bps)", day.Details); // plan 19
         Assert.Equal("2026-09-28 Mon", day.DateText);
         Assert.Equal("CLEAN", day.State);
         Assert.Same(day, shell.Reports.Selected);

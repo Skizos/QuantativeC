@@ -110,12 +110,13 @@ public sealed class QuoteComposerTests
     [Fact]
     public async Task TheNewerSourceProvidesBidAsk_LastTradeAlwaysFromThePoll()
     {
-        _gateway.Poll = id => FakeGateway.Snapshot(id, 90m, 91m, 90.5m, _time.GetUtcNow());
+        _gateway.Poll = id => FakeGateway.Snapshot(id, 90m, 91m, 90.5m, _time.GetUtcNow()) with { High = 91.4m, Low = 89.9m };
         QuoteComposer composer = Composer();
         using var cts = new CancellationTokenSource();
         Task run = composer.RunAsync(cts.Token);
         _gateway.Push(State(StreamState.Connected));
         await Eventually.True(() => composer.Current is { BidAskSource: QuoteSource.Poll }, "poll quote");
+        Assert.Equal((91.4m, 89.9m), (composer.Current!.DayHigh, composer.Current.DayLow)); // plan 19: the day's range, from the poll
 
         _time.Advance(TimeSpan.FromMilliseconds(200));
         _gateway.Push(FakeGateway.Depth(Eric, 92m, 93m, _time.GetUtcNow()));
@@ -123,6 +124,7 @@ public sealed class QuoteComposerTests
         Quote q = composer.Current!;
         Assert.Equal((92m, 500m, 93m, 600m), (q.Bid, q.BidVolume, q.Ask, q.AskVolume));
         Assert.Equal(90.5m, q.Last);
+        Assert.Equal((91.4m, 89.9m), (q.DayHigh, q.DayLow));
         Assert.Equal(q.DepthAtUtc, q.AsOfUtc);
 
         await Advance(TimeSpan.FromSeconds(5)); // next poll is newer again

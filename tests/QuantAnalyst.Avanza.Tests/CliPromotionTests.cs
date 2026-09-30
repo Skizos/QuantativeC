@@ -120,6 +120,47 @@ public sealed class CliPromotionTests : IDisposable
         Assert.Contains("clean Paper trading days in a row: 3 (need 10)", output, StringComparison.Ordinal);
     }
 
+    /// <summary>Plan 19: a Paper day whose ERIC B buy of 20 at 70.00 filled 5, while the day traded down to 69.90 and closed at 70.50.</summary>
+    private void UnfilledDay(DateOnly date)
+    {
+        var log = new AuditLog(Audit, new FakeTimeProvider(new DateTimeOffset(date.ToDateTime(new TimeOnly(8, 0)), TimeSpan.Zero)));
+        string id = Guid.NewGuid().ToString();
+        log.Append("session-start", new { mode = "Paper" });
+        log.Append("intent", new { ticker = "ERIC B", decisionPrice = 69.65m });
+        log.Append("risk", new { passed = true, checks = Array.Empty<object>() });
+        log.Append("oms-new", new { clientOrderId = id, orderbookId = "5240", ticker = "ERIC B", side = "Buy", volume = 20, limitPrice = 70.00m });
+        log.Append("submit", new { clientOrderId = id });
+        log.Append("submit-result", new { clientOrderId = id, outcome = "Accepted" });
+        log.Append("oms-fill", new { clientOrderId = id, volume = 5, price = 70.00m, value = 350m, fees = 0m, to = "PartiallyFilled" });
+        log.Append("close-mark", new { orderbookId = "5240", ticker = "ERIC B", currency = "SEK", last = 70.50m, bid = 70.48m, ask = 70.52m, dayHigh = 70.9m, dayLow = 69.9m, sekPerUnit = 1m });
+        log.Append("oms-state", new { clientOrderId = id, to = "Cancelled", why = "day order expired at the close" });
+        log.Append("reconcile", new { mismatches = Array.Empty<string>() });
+        log.Append("end-of-day", new { day = new { startOfDayValue = 5000m, accountValue = 5001m, cash = 4650m, feesPaid = 0m } });
+    }
+
+    [Fact]
+    public void ReportEod_ShowsWhatEachLimitMissed_AndTheFillRateOverAllDays()
+    {
+        UnfilledDay(new DateOnly(2026, 9, 29));
+        UnfilledDay(new DateOnly(2026, 9, 30));
+
+        (int code, string output, string error) = Qa(string.Empty, "report", "eod", "--date", "2026-09-30", "--audit-dir", Audit, "--reports-dir", Reports);
+        Assert.True(code == 0, error);
+        Assert.Contains(
+            "Limits: 1 limit order(s): 0 filled, 1 partly, 0 not (25 % of the volume); the backtest fills 1; missed vs the backtest +7.50 SEK (+71.4 bps).",
+            output, StringComparison.Ordinal);
+        Assert.Contains(
+            "  limit Buy 20 ERIC B @ 70: filled 5/20 (Cancelled); day low 69.9, high 70.9, close 70.5: the backtest fills it; missed +7.50 SEK (+71.4 bps)",
+            output, StringComparison.Ordinal);
+        Assert.Contains(
+            "All 2 days (2026-09-29 to 2026-09-30): 2 limit order(s): 0 filled, 2 partly, 0 not (25 % of the volume); the backtest fills 2; missed vs the backtest +15.00 SEK (+71.4 bps).",
+            output, StringComparison.Ordinal);
+
+        (_, output, _) = Qa(string.Empty, "report", "eod", "--date", "2026-09-30", "--json", "--audit-dir", Audit, "--reports-dir", Reports);
+        Assert.DoesNotContain("All 2 days", output, StringComparison.Ordinal); // JSON stays JSON
+        Assert.Contains("\"fillRate\"", output, StringComparison.Ordinal);
+    }
+
     /// <summary>One Confirm day: a confirmed ERIC B buy of 10 decided at 70.80, sent when the mid was 70.85, filled at 70.86.</summary>
     private void ConfirmDay(DateOnly date)
     {

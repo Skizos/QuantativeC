@@ -163,6 +163,7 @@ public sealed class ConfirmSession(
         if (_endedOn != today && now >= day.CloseUtc)
         {
             _endedOn = today;
+            gateway.AuditCloseMarks(); // plan 19: what an unfilled order missed
             await ReconcileAsync(ct).ConfigureAwait(false);
             ConfirmSessionSummary summary = await SummarizeAsync().ConfigureAwait(false);
             audit.Append("end-of-day", new { date = today, day = summary });

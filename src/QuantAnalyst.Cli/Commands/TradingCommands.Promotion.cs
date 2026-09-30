@@ -53,6 +53,13 @@ internal static partial class TradingCommands
                 WriteReport(w, report, path);
             }
 
+            // Plan 19: the fill rate over every day so far, the evidence for (or against) changing the limit policy.
+            if (!parse.GetValue(json) && days.Count > 1
+                && EodFillRate.Combine(days.Select(d => EodReport.Build(audit, d, TimeProvider.System))) is { } allDays)
+            {
+                w.WriteLine($"All {days.Count} days ({days[0]:yyyy-MM-dd} to {days[^1]:yyyy-MM-dd}): {allDays.Describe()}.");
+            }
+
             return 0;
         }));
 
@@ -278,6 +285,11 @@ internal static partial class TradingCommands
         {
             w.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"  fill {f.Side} {f.Volume} {f.Ticker} @ {f.Price} (limit {f.Limit}, {f.How}); {f.ReferenceKind} {(f.Reference is { } x ? x.ToString("0.####", CultureInfo.InvariantCulture) : "-")}, {(f.DeviationBps is { } d ? $"{d:+0.0;-0.0} bps" : "no reference")}"));
+        }
+
+        foreach (EodLimitOrder o in r.FillRate?.Orders ?? [])
+        {
+            w.WriteLine("  limit " + o.Describe());
         }
 
         foreach (string v in r.Violations)

@@ -211,6 +211,42 @@ public sealed class OrderGateway : IDisposable
     /// </summary>
     public IReadOnlyList<OpenOrderView> OpenOrders => [.. _oms.Open.Select(o => o.View() with { FxToSek = FxOf(o.OrderbookId) })];
 
+    /// <summary>
+    /// Plan 19: at a market's close, one <c>close-mark</c> audit record per allowlisted share of that market: the last
+    /// price and its time, bid, ask, the day's high and low, and SEK per unit. The end-of-day report reads from them what
+    /// an unfilled order missed and whether the backtest would have filled it. Returns how many were recorded.
+    /// </summary>
+    /// <param name="which">The market's shares; null: every allowlisted share.</param>
+    public int AuditCloseMarks(Func<InstrumentSpec, bool>? which = null)
+    {
+        int marked = 0;
+        foreach (UniverseEntry entry in _env.Universe.Entries)
+        {
+            if (_env.Instruments.Find(entry.OrderbookId) is not { } spec || (which is not null && !which(spec)))
+            {
+                continue;
+            }
+
+            Quote? q = _env.Quotes.Latest(spec.OrderbookId);
+            _audit.Append("close-mark", new
+            {
+                orderbookId = spec.OrderbookId.Value,
+                spec.Ticker,
+                spec.Currency,
+                last = q?.Last,
+                timeOfLast = q?.TimeOfLastUtc,
+                bid = q?.Bid,
+                ask = q?.Ask,
+                dayHigh = q?.DayHigh,
+                dayLow = q?.DayLow,
+                sekPerUnit = _env.Fx.SekPerUnit(spec.Currency),
+            });
+            marked++;
+        }
+
+        return marked;
+    }
+
     /// <summary>Runs one intent through the whole pipeline. Orders are processed one at a time.</summary>
     public async Task<SubmitResult> SubmitAsync(OrderIntent intent, CancellationToken ct)
     {

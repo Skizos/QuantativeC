@@ -261,7 +261,9 @@ public sealed class QuoteComposer
             asOf,
             now,
             staleReason is not null,
-            staleReason);
+            staleReason,
+            _poll?.High,
+            _poll?.Low);
     }
 
     private string? StaleReason(DateTimeOffset now, DateTimeOffset? asOf)

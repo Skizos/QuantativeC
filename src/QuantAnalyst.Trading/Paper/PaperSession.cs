@@ -207,6 +207,7 @@ public sealed class PaperSession(
     private async Task CloseAsync(MarketDay m, DateTimeOffset now, CancellationToken ct)
     {
         _queue.RemoveAll(q => q.Market == m);
+        gateway.AuditCloseMarks(_markets.Length == 1 ? null : m.Market.Trades); // plan 19: before the day orders end
         int ended = _markets.Length == 1 ? channel.EndOfDay("day order expired at the close") : channel.EndOfDay($"day order expired at the {m.Mic} close", m.Market.Trades);
         await ReconcileAsync(ct).ConfigureAwait(false);
         DateOnly today = OrderGateway.StockholmDate(now);

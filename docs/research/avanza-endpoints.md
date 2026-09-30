@@ -156,6 +156,9 @@ This is the first contact with the real API. The list below has **field names on
 - **Account fields:** `autoDistribution` and `isDiscretionaryAccount` are booleans. `interestRates` is `{currency: {deposit, loan}}` of value objects. `creditAccountClearingAccountNumber` was null everywhere.
 - **Account names:** `name.defaultName` is the account number, and the sanitizer replaces it.
 - **Timestamps:** marketdata `quote.timeOfLast`/`updated` are ISO **without offset**, in **Europe/Stockholm local time**. Proof: `timeOfLast` "17:29:40" equals `orderDepth.receivedTime` and `trades[].dealTime` (epoch ms) of 15:29:40Z. Transaction `date` is `yyyy-MM-ddT00:00:00`.
+- **Day range:** marketdata `quote.highest`/`lowest` are the day's high and low so far: last 94.96 lies between lowest
+  94.54 and highest 95.82 on 6,090,838 shares traded (`034-marketdata.json`). Plan 19 carries them into the composed
+  quote for the end-of-day fill-rate check; no field was added.
 - **Search prices** are Swedish-formatted strings (`"94,96"`). The search response also echoes `searchFilter`.
 - **Deals:** `{"deals": [], "fundDeals": []}`. The element fields are still unknown until the first fill.
 - **ERIC B orderbook:** 17 tick bands (0.02 at 50–99.98 SEK).
