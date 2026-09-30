@@ -190,6 +190,29 @@ public sealed class PaperBook : IAccountState
         return book;
     }
 
+    /// <summary>
+    /// The positions in <c>book.json</c> of <paramref name="directory"/>, read without opening the book (plan 21: whether a
+    /// share taken off the list is still held). Empty without a book.
+    /// </summary>
+    public static IReadOnlyDictionary<OrderbookId, long> HeldIn(string directory)
+    {
+        string path = Path.Combine(directory, FileName);
+        if (!File.Exists(path))
+        {
+            return new Dictionary<OrderbookId, long>();
+        }
+
+        try
+        {
+            BookFile file = JsonSerializer.Deserialize<BookFile>(File.ReadAllText(path), Json) ?? throw new JsonException("empty file");
+            return file.Positions.Where(p => p.Quantity > 0).ToDictionary(p => new OrderbookId(p.OrderbookId), p => p.Quantity);
+        }
+        catch (JsonException ex)
+        {
+            throw new PaperBookException($"{path} is not a valid paper book ({ex.Message}).");
+        }
+    }
+
     public long Position(OrderbookId id)
     {
         lock (_lock)

@@ -277,7 +277,7 @@ public sealed class MarketSearchTests : IDisposable
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() => session.RemoveAsync("NOPE", Config));
         Assert.Equal("NOPE is not in the allowlist.", ex.Message);
-        Assert.Equal(new OrderbookId("1"), (await session.RemoveAsync("t1-b", Config)).OrderbookId); // written as on the command line
+        Assert.Equal("removed T1 B (1)", await session.RemoveAsync("t1-b", Config)); // written as on the command line
         AddedShare added = await session.AddAsync(new OrderbookId("5240"), Store, Config, Today);
         session.Close();
         Assert.Equal(0, await run);

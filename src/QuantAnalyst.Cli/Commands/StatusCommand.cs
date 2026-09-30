@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Globalization;
 using System.Text.Json;
 using QuantAnalyst.Analytics.Backtesting;
+using QuantAnalyst.Core;
 using QuantAnalyst.Core.Market;
 using QuantAnalyst.Data.Calendar;
 using QuantAnalyst.Data.History;
@@ -140,6 +141,11 @@ internal static class StatusCommand
         MarketCalendar? calendar = Try(r, "Calendar", () => MarketCalendarLoader.LoadDirectory(configDir));
         Universe? universe = Try(r, "Allowlist", () => Universe.Load(Path.Combine(configDir, Universe.FileName)));
         IReadOnlyList<MarketInfo> foreign = universe is null ? [] : CheckAllowlist(r, universe, paths.Store, calendar);
+        if (universe is { Exiting.Count: > 0 })
+        {
+            CheckExiting(r, universe, paths);
+        }
+
         if (calendar is not null)
         {
             CheckIntraday(r, paths.Store, calendar);
@@ -388,6 +394,29 @@ internal static class StatusCommand
         }
 
         return foreign;
+    }
+
+    /// <summary>Plan 21: shares taken off the list while held are sold by the next session, then dropped by the owner.</summary>
+    private static void CheckExiting(StatusReport r, Universe universe, StatusPaths paths)
+    {
+        IReadOnlyDictionary<OrderbookId, long>? held = Try(r, "Exiting", () => PaperBook.HeldIn(Path.Combine(paths.StateDir, TradingCommands.PaperDirName)));
+        if (held is null)
+        {
+            return;
+        }
+
+        foreach (UniverseEntry e in universe.Exiting)
+        {
+            if (held.GetValueOrDefault(e.OrderbookId) is var left and > 0)
+            {
+                r.Add(Mark.Warn, "Exiting", string.Create(CultureInfo.InvariantCulture, $"{e.Ticker}: off the list, still held ({left}); the next session sells it (sells only)"));
+            }
+            else
+            {
+                r.Add(Mark.Ok, "Exiting", $"{e.Ticker}: sold; take it off with qa universe remove {e.Ticker.Replace(' ', '-')}");
+                r.Step(Priority.Advice, $"{e.Ticker} is sold: take it off the exiting list with qa universe remove {e.Ticker.Replace(' ', '-')}");
+            }
+        }
     }
 
     /// <summary>

@@ -52,9 +52,13 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
         Check("R1", "account allowlist", c.AllowedAccountIds.Contains(c.Account.Value), c.Account.Masked, $"{c.AllowedAccountIds.Count} allowed account(s)",
             "the account is not in the allowlist");
 
+    // Plan 21: a share taken off the list while held may be sold (R4 caps the sell at the position), never bought.
     private static RiskCheckResult R2(PreparedOrder o, RiskContext c) =>
-        Check("R2", "instrument allowlist", c.Universe.Contains(o.OrderbookId), $"{o.Intent.Ticker} ({o.OrderbookId})", $"{c.Universe.Entries.Count} instrument(s)",
-            "the instrument is not in config/universe.json");
+        c.Universe.IsExiting(o.OrderbookId)
+            ? Check("R2", "instrument allowlist", o.Side == OrderSide.Sell, $"{o.Intent.Ticker} ({o.OrderbookId}), exiting, {o.Side}", "exiting: sells only",
+                "the instrument is off the list and may only be sold")
+            : Check("R2", "instrument allowlist", c.Universe.Contains(o.OrderbookId), $"{o.Intent.Ticker} ({o.OrderbookId})", $"{c.Universe.Entries.Count} instrument(s)",
+                "the instrument is not in config/universe.json");
 
     private static RiskCheckResult R3(PreparedOrder o)
     {

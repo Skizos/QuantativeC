@@ -80,7 +80,14 @@ internal static partial class AvanzaCommands
 
             await ctx.Connection.Authenticator.LoginAsync(ctx.Ct).ConfigureAwait(false);
             var specs = new List<InstrumentSpec>();
-            foreach (UniverseEntry entry in setup.Universe.Entries)
+
+            // Plan 21: shares taken off the list while held are quoted and sold to zero; the strategy never sees them.
+            foreach (UniverseEntry gone in setup.Universe.Exiting)
+            {
+                output.WriteLine($"{gone.Ticker}: off the list, still held; this session sells it (sells only).");
+            }
+
+            foreach (UniverseEntry entry in setup.Universe.Entries.Concat(setup.Universe.Exiting))
             {
                 InstrumentTradingParams p = await ctx.Connection.Gateway.GetTradingParamsAsync(entry.OrderbookId, ctx.Ct).ConfigureAwait(false);
                 specs.Add(new InstrumentSpec(entry.OrderbookId, entry.Ticker, p.Name, p.Currency, Math.Max(1, p.TradingUnit), p.TickSizes, TickTableVerified: true, p.Isin, p.MarketPlace));
@@ -148,7 +155,9 @@ internal static partial class AvanzaCommands
             }
 
             var reconciler = new Reconciler(oms, halts, audit, time, book.Account);
-            IReadOnlyList<string> tickers = [.. specs.Select(s => s.Ticker)];
+            InstrumentSpec[] listed = [.. specs.Where(s => !setup.Universe.IsExiting(s.OrderbookId))];
+            InstrumentSpec[] exiting = [.. specs.Where(s => setup.Universe.IsExiting(s.OrderbookId))];
+            IReadOnlyList<string> tickers = [.. listed.Select(s => s.Ticker)];
             ISessionObserver? observer = GuardedObserver.Wrap(services.SessionObserver);
             if (observer is not null)
             {
@@ -161,20 +170,31 @@ internal static partial class AvanzaCommands
             {
                 DateTimeOffset now = time.GetUtcNow();
                 DateOnly yesterday = PreviousTradingDay(market.Calendar, market.Calendar.LocalDate(now));
-                using HistoryStore history = DataCommands.OpenExisting(storePath);
-                MarketPanel panel = BacktestCommands.LoadStorePanel(history, tickers, null, markets.Count == 1 ? yesterday : OrderGateway.StockholmDate(now).AddDays(-1));
-                int[] own = [.. specs.Select((s, i) => (s, i)).Where(x => market.Trades(x.s)).Select(x => x.i)];
-                DateOnly last = LastBarDate(panel, own);
-                if (last != yesterday)
+                int[] own = [.. listed.Select((s, i) => (s, i)).Where(x => market.Trades(x.s)).Select(x => x.i)];
+                InstrumentSpec[] leaving = [.. exiting.Where(market.Trades)];
+                double[] targets = [];
+                if (own.Length > 0)
                 {
-                    string names = string.Join(", ", own.Select(i => tickers[i]));
-                    throw new InvalidOperationException(
-                        $"the history ends {last:yyyy-MM-dd}, not on the last trading day {yesterday:yyyy-MM-dd}; run 'qa history import' for {names} first. No orders today.");
+                    using HistoryStore history = DataCommands.OpenExisting(storePath);
+                    MarketPanel panel = BacktestCommands.LoadStorePanel(history, tickers, null, markets.Count == 1 ? yesterday : OrderGateway.StockholmDate(now).AddDays(-1));
+                    DateOnly last = LastBarDate(panel, own);
+                    if (last != yesterday)
+                    {
+                        string names = string.Join(", ", own.Select(i => tickers[i]));
+                        throw new InvalidOperationException(
+                            $"the history ends {last:yyyy-MM-dd}, not on the last trading day {yesterday:yyyy-MM-dd}; run 'qa history import' for {names} first. No orders today.");
+                    }
+
+                    targets = StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
                 }
 
-                double[] targets = StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
-                return Task.FromResult(DailyPlanner.Plan(
-                    [.. own.Select(i => targets[i])], [.. own.Select(i => specs[i])], book.Snapshot(), gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now, fx));
+                PlanResult plan = DailyPlanner.Plan(
+                    [.. own.Select(i => targets[i]), .. leaving.Select(_ => 0.0)], [.. own.Select(i => listed[i]), .. leaving], book.Snapshot(), gateway.OpenOrders, quotes, risk,
+                    new ExecutionOptions(), definition.Spec.Describe(), now, fx);
+                return Task.FromResult(leaving.Length == 0 ? plan : plan with
+                {
+                    Notes = [.. leaving.Select(s => $"{s.Ticker}: off the list (exiting), target zero"), .. plan.Notes],
+                });
             }
 
             DateTimeOffset start = time.GetUtcNow();
@@ -708,7 +728,7 @@ internal static partial class AvanzaCommands
             RiskLimits limits = RiskLimits.Load(Path.Combine(configDir, RiskLimits.FileName));
             PaperConfig paper = PaperConfig.Load(Path.Combine(configDir, PaperConfig.FileName));
             Universe universe = Universe.Load(Path.Combine(configDir, Universe.FileName));
-            if (universe.Entries.Count == 0)
+            if (universe.Entries.Count == 0 && universe.Exiting.Count == 0)
             {
                 throw new ArgumentException("The instrument allowlist is empty, so every order would be rejected (R2). Add names first: qa universe add ERIC-B");
             }

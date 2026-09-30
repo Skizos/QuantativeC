@@ -216,12 +216,10 @@ internal static partial class AvanzaCommands
         using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(o.KillFile)!, stateDir, account, setup.Limits);
         kill.Alerted += message => output.WriteLine("ALERT: " + message);
         var reconciler = new Reconciler(oms, halts, audit, time, live.Account);
-        IReadOnlyList<string> tickers = [.. specs.Select(s => s.Ticker)];
-
         async Task<PlanResult> Plan(CancellationToken ct)
         {
             DateTimeOffset now = time.GetUtcNow();
-            double[] targets = TargetsAtLastBar(storePath, tickers, setup, definition, now);
+            double[] targets = TargetsWithExits(storePath, specs, setup, definition, now);
             AccountSnapshot snapshot = await account.GetAsync(ct).ConfigureAwait(false);
             return DailyPlanner.Plan(targets, specs, snapshot, gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
         }
@@ -329,7 +327,7 @@ internal static partial class AvanzaCommands
         DateTimeOffset now = time.GetUtcNow();
         var risk = new PreTradeRiskEngine(setup.Limits);
         PlanResult plan = DailyPlanner.Plan( // plan only: no session, so nothing of ours is working
-            TargetsAtLastBar(storePath, [.. specs.Select(s => s.Ticker)], setup, definition, now), specs, snapshot, [], quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
+            TargetsWithExits(storePath, specs, setup, definition, now), specs, snapshot, [], quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
 
         output.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"Rebalance plan for {tradingAccount.Id.Masked} ({definition.Spec.Describe()}): value {snapshot.AccountValue:N2} SEK, available {snapshot.AvailableCash:N2}."));
@@ -344,10 +342,11 @@ internal static partial class AvanzaCommands
         return 0;
     }
 
+    /// <summary>The list's shares, then the exiting ones (plan 21), which <see cref="TargetsWithExits"/> sells to zero.</summary>
     private static async Task<List<InstrumentSpec>> LiveSpecsAsync(Ctx ctx, PaperSetup setup)
     {
         var specs = new List<InstrumentSpec>();
-        foreach (UniverseEntry entry in setup.Universe.Entries)
+        foreach (UniverseEntry entry in setup.Universe.Entries.Concat(setup.Universe.Exiting))
         {
             InstrumentTradingParams p = await ctx.Connection.Gateway.GetTradingParamsAsync(entry.OrderbookId, ctx.Ct).ConfigureAwait(false);
             specs.Add(new InstrumentSpec(entry.OrderbookId, entry.Ticker, p.Name, p.Currency, Math.Max(1, p.TradingUnit), p.TickSizes, TickTableVerified: true, p.Isin, p.MarketPlace));
@@ -368,6 +367,18 @@ internal static partial class AvanzaCommands
             // Informational data (ADR 0002 Tier B): the decision refuses stale history itself.
             output.WriteLine($"WARNING: the history could not be brought up to date ({ex.Message}); the decision uses what is stored.");
         }
+    }
+
+    /// <summary>
+    /// Plan 21: the strategy's targets for the list's shares (its panel is the list only), and zero for the exiting ones,
+    /// aligned with <paramref name="specs"/>.
+    /// </summary>
+    private static double[] TargetsWithExits(string storePath, IReadOnlyList<InstrumentSpec> specs, PaperSetup setup, StrategyDefinition definition, DateTimeOffset now)
+    {
+        InstrumentSpec[] listed = [.. specs.Where(s => !setup.Universe.IsExiting(s.OrderbookId))];
+        double[] targets = listed.Length == 0 ? [] : TargetsAtLastBar(storePath, [.. listed.Select(s => s.Ticker)], setup, definition, now);
+        var byId = listed.Select((s, i) => (s.OrderbookId, targets[i])).ToDictionary(x => x.OrderbookId, x => x.Item2);
+        return [.. specs.Select(s => byId.TryGetValue(s.OrderbookId, out double t) ? t : 0.0)];
     }
 
     /// <summary>The strategy's target weights on the stored daily bars through the last trading day (never today's).</summary>

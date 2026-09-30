@@ -20,6 +20,9 @@ internal static partial class TradingCommands
 {
     public const string DefaultAuditDir = "audit";
     public const string DefaultStateDir = "state";
+
+    /// <summary>The Paper book's folder under the state folder.</summary>
+    public const string PaperDirName = "paper";
     public const string DefaultKillFile = "KILL";
 
     public static IEnumerable<Command> Create(AvanzaCliServices services)
@@ -67,7 +70,7 @@ internal static partial class TradingCommands
         {
             string path = Path.Combine(ResolveConfigDir(parse.GetValue(configDir)), Universe.FileName);
             Universe u = Universe.Load(path);
-            if (u.Entries.Count == 0)
+            if (u.Entries.Count == 0 && u.Exiting.Count == 0)
             {
                 w.WriteLine($"The allowlist is empty ({path}): every order is rejected (R2). Add names with: qa universe add ERIC-B");
                 return 0;
@@ -79,8 +82,13 @@ internal static partial class TradingCommands
                 table.Add(e.Ticker, e.OrderbookId.Value, e.Name);
             }
 
+            foreach (UniverseEntry e in u.Exiting)
+            {
+                table.Add(e.Ticker, e.OrderbookId.Value, $"{e.Name} (exiting: sells only, plan 21)");
+            }
+
             table.Write(w);
-            w.WriteLine($"{u.Entries.Count} instrument(s) in {path}.");
+            w.WriteLine($"{u.Entries.Count} instrument(s) in {path}{(u.Exiting.Count > 0 ? $", and {u.Exiting.Count} exiting" : string.Empty)}.");
             return 0;
         }));
 
@@ -109,21 +117,26 @@ internal static partial class TradingCommands
 
         var removeTickers = new Argument<string[]>("tickers") { Description = "Tickers to remove", Arity = ArgumentArity.OneOrMore };
         var removeConfig = ConfigDirOption();
-        var remove = new Command("remove", "Remove instruments from the allowlist.");
+        var removeState = new Option<string>("--state-dir") { Description = "State folder (the Paper book says which shares are still held)", DefaultValueFactory = _ => DefaultStateDir };
+        var remove = new Command(
+            "remove",
+            "Remove instruments from the allowlist. A share the Paper book still holds moves to the exiting list instead: the next session sells it (sells only), then remove it again (plan 21).");
         remove.Arguments.Add(removeTickers);
         remove.Options.Add(removeConfig);
+        remove.Options.Add(removeState);
         remove.SetAction(parse => Execute(parse, w =>
         {
             string path = Path.Combine(ResolveConfigDir(parse.GetValue(removeConfig)), Universe.FileName);
+            IReadOnlyDictionary<OrderbookId, long> held = PaperBook.HeldIn(Path.Combine(parse.GetValue(removeState)!, PaperDirName));
             Universe u = Universe.Load(path);
             foreach (string ticker in parse.GetValue(removeTickers)!)
             {
-                (u, UniverseEntry entry) = Allowlist.Remove(u, ticker);
-                w.WriteLine($"removed {entry.Ticker} ({entry.OrderbookId})");
+                (u, UniverseEntry entry, bool exiting) = Allowlist.Remove(u, ticker, held);
+                w.WriteLine(Allowlist.Removed(entry, exiting));
             }
 
             u.Save(path);
-            w.WriteLine($"{u.Entries.Count} instrument(s) in {path}.");
+            w.WriteLine($"{u.Entries.Count} instrument(s) in {path}{(u.Exiting.Count > 0 ? $"; exiting: {string.Join(", ", u.Exiting.Select(e => e.Ticker))}" : string.Empty)}.");
             return 0;
         }));
 

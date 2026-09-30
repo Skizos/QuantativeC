@@ -123,6 +123,19 @@ public sealed class RiskEngineTests
 
     private static readonly PreTradeRiskEngine CappedEngine = new(RiskLimits.AdrDefaults with { MaxAccountValueSek = 5_000m });
 
+    [Fact]
+    public void R2_LetsAnExitingShareBeSold_NeverBought()
+    {
+        // Plan 21: off the list while held; R4 still caps the sell at the position (100).
+        RiskContext exiting = Baseline() with { Universe = new Universe([], [new UniverseEntry(Eric, "ERIC B", "Ericsson B")]) };
+        Assert.True(Engine.Evaluate(Sell(100), exiting)["R2"].Passed);
+        Assert.False(Engine.Evaluate(Sell(101), exiting)["R4"].Passed);
+        RiskCheckResult buy = Engine.Evaluate(Buy(), exiting)["R2"];
+        Assert.False(buy.Passed);
+        Assert.Contains("may only be sold", buy.Message, StringComparison.Ordinal);
+        Assert.False(Engine.Evaluate(Sell(), Baseline() with { Universe = Universe.Empty })["R2"].Passed); // not listed at all
+    }
+
     private static RiskContext SmallBook(decimal ericValue = 400m, decimal otherValue = 0m) => Baseline() with
     {
         Positions = new Dictionary<OrderbookId, long> { [Eric] = (long)(ericValue / 100m) },

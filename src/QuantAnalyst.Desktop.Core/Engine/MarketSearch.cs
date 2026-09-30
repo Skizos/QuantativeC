@@ -28,8 +28,11 @@ public interface IMarketSearch
     /// <summary>Imports the share's daily prices and puts it on the allowlist.</summary>
     Task<ShareAdded> AddAsync(OrderbookId id);
 
-    /// <summary>Takes a name off the allowlist while the search is open (in turn with the adds; no login).</summary>
-    Task RemoveAsync(string ticker);
+    /// <summary>
+    /// Takes a name off the allowlist while the search is open (in turn with the adds; no login). A share Paper still
+    /// holds moves to the exiting list instead (plan 21). Returns what happened.
+    /// </summary>
+    Task<string> RemoveAsync(string ticker);
 
     /// <summary>Lets the login go (the <b>Done</b> button).</summary>
     void Close();
@@ -79,9 +82,9 @@ public sealed class EngineMarketSearch(QaEngine engine, Workspace workspace, Tim
         return new ShareAdded(added.Entry.Ticker, added.Entry.Name, added.Import.Report.Bars.New, added.Import.Report.LastDate, added.Import.CalendarNote);
     }
 
-    public Task RemoveAsync(string ticker) =>
+    public Task<string> RemoveAsync(string ticker) =>
         _session is { HasEnded: false } open
-            ? open.RemoveAsync(ticker, workspace.ConfigDir)
+            ? open.RemoveAsync(ticker, workspace.ConfigDir, workspace.PaperDir)
             : throw new InvalidOperationException("No search is open.");
 
     public void Close() => _session?.Close();

@@ -88,6 +88,49 @@ public sealed class CliTradingTests : IDisposable
         Assert.Contains("is not in the allowlist", Qa("universe", "remove", "ERIC-B", "--config-dir", Config).Error, StringComparison.Ordinal);
     }
 
+    /// <summary>A Paper book in the state folder holding <paramref name="ericB"/> ERIC B shares (the shape the book writes).</summary>
+    private void PaperBookHolding(long ericB)
+    {
+        string dir = Path.Combine(State, TradingCommands.PaperDirName);
+        Directory.CreateDirectory(dir);
+        string positions = ericB > 0
+            ? $$"""[ { "orderbook_id": "5240", "ticker": "ERIC B", "quantity": {{ericB}}, "cost_basis": 500, "last_fill_price": 70 } ]"""
+            : "[]";
+        File.WriteAllText(Path.Combine(dir, "book.json"), $$"""
+            { "format": "qa-paper-book/1", "account": "PAPER", "costs": "avanza-start", "starting_cash": 5000, "cash": 4500, "fees_paid": 0,
+              "realized_pnl": 0, "start_of_day_value": 0, "positions": {{positions}}, "saved_utc": "2026-09-30T15:00:00Z" }
+            """);
+    }
+
+    [Fact]
+    public void Universe_RemovingAHeldShare_KeepsItForSelling_UntilItIsSold()
+    {
+        // Plan 21: a share taken off the list while Paper holds it moves to the exiting list (sells only).
+        Assert.Equal(0, Qa("history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store, "--state-dir", State, "--login", "totp").Code);
+        Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
+        PaperBookHolding(7);
+
+        (int code, string output, string error) = Qa("universe", "remove", "ERIC-B", "--config-dir", Config, "--state-dir", State);
+        Assert.True(code == 0, error);
+        Assert.Contains("ERIC B is still held: it moves to the exiting list, and the next session sells it", output, StringComparison.Ordinal);
+        Assert.Contains("0 instrument(s) in", output, StringComparison.Ordinal);
+        Assert.Contains("exiting: ERIC B", output, StringComparison.Ordinal);
+        Assert.Contains("ERIC B", Qa("universe", "list", "--config-dir", Config).Output, StringComparison.Ordinal);
+        Assert.Contains("(exiting: sells only, plan 21)", Qa("universe", "list", "--config-dir", Config).Output, StringComparison.Ordinal);
+
+        (code, _, error) = Qa("universe", "remove", "ERIC-B", "--config-dir", Config, "--state-dir", State);
+        Assert.Equal(1, code);
+        Assert.Contains("ERIC B is still held (7 shares) and on the exiting list: the next session sells it", error, StringComparison.Ordinal);
+
+        PaperBookHolding(0); // the session sold it
+        (code, output, error) = Qa("universe", "remove", "ERIC-B", "--config-dir", Config, "--state-dir", State);
+        Assert.True(code == 0, error);
+        Assert.Contains("removed ERIC B (5240)", output, StringComparison.Ordinal);
+        Trading.Risk.Universe after = Trading.Risk.Universe.Load(Path.Combine(Config, Trading.Risk.Universe.FileName));
+        Assert.Empty(after.Entries);
+        Assert.Empty(after.Exiting);
+    }
+
     [Fact]
     public void Universe_RefusesAShareThatDoesNotTradeContinuously()
     {

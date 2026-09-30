@@ -560,13 +560,14 @@ public sealed class InstrumentsViewModel : PageViewModel
 
         if (_search.IsOpen)
         {
-            await _search.RemoveAsync(row.Ticker); // in turn with the search's adds, no second login
-            Say($"{row.Ticker} removed from the allowlist.");
+            string said = await _search.RemoveAsync(row.Ticker); // in turn with the search's adds, no second login
+            Say(said.StartsWith("removed ", StringComparison.Ordinal) ? $"{row.Ticker} removed from the allowlist." : said);
         }
         else
         {
             CommandResult result = await Engine.RunAsync($"Remove {row.Ticker}", CommandLines.UniverseRemove(_workspace, row.Ticker));
-            Say(result.Succeeded ? $"{row.Ticker} removed from the allowlist." : $"Could not remove {row.Ticker}: {Why(result)}", !result.Succeeded);
+            string? exiting = result.Lines.Select(l => l.Text).FirstOrDefault(t => t.Contains("exiting list", StringComparison.Ordinal));
+            Say(result.Succeeded ? exiting ?? $"{row.Ticker} removed from the allowlist." : $"Could not remove {row.Ticker}: {Why(result)}", !result.Succeeded);
         }
 
         await RefreshAsync();

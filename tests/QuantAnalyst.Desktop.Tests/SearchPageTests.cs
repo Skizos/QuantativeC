@@ -506,14 +506,14 @@ public sealed class SearchPageTests : IDisposable
             return Task.FromResult(new ShareAdded("ERIC B", "Ericsson B", 752, new DateOnly(2026, 9, 25), null));
         }
 
-        public Task RemoveAsync(string ticker)
+        public Task<string> RemoveAsync(string ticker)
         {
             Removes.Add(ticker);
             IsOpen = true;
             string path = Path.Combine(ws.Workspace.ConfigDir, Universe.FileName);
             Universe u = Universe.Load(path);
             u.Without(u.Entries.Single(e => e.Ticker == ticker).OrderbookId).Save(path);
-            return Task.CompletedTask;
+            return Task.FromResult($"removed {ticker}");
         }
 
         public void Close()

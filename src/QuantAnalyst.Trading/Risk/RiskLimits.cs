@@ -139,6 +139,9 @@ public sealed record UniverseEntry(OrderbookId OrderbookId, string Ticker, strin
 /// <summary>
 /// The instrument allowlist (R2), <c>config/universe.json</c>, keyed by orderbook id. An empty universe rejects every
 /// order, which is the safe default until the owner adds names.
+/// <para><see cref="Exiting"/> (plan 21): shares taken off the list while still held. R2 lets them be <b>sold</b> only
+/// (R4 caps a sell at the position, so they can only go to zero); the sessions sell them; they never count towards the
+/// list's size.</para>
 /// </summary>
 public sealed class Universe
 {
@@ -147,16 +150,26 @@ public sealed class Universe
     private static readonly JsonSerializerOptions Indented = new() { WriteIndented = true };
 
     private readonly Dictionary<OrderbookId, UniverseEntry> _byId;
+    private readonly Dictionary<OrderbookId, UniverseEntry> _exiting;
 
-    public Universe(IEnumerable<UniverseEntry> entries)
+    public Universe(IEnumerable<UniverseEntry> entries, IEnumerable<UniverseEntry>? exiting = null)
     {
         ArgumentNullException.ThrowIfNull(entries);
         _byId = [];
+        _exiting = [];
         foreach (UniverseEntry e in entries)
         {
             if (!_byId.TryAdd(e.OrderbookId, e))
             {
                 throw new TradingConfigException($"Orderbook {e.OrderbookId} ({e.Ticker}) is listed twice in the universe.");
+            }
+        }
+
+        foreach (UniverseEntry e in exiting ?? [])
+        {
+            if (_byId.ContainsKey(e.OrderbookId) || !_exiting.TryAdd(e.OrderbookId, e))
+            {
+                throw new TradingConfigException($"Orderbook {e.OrderbookId} ({e.Ticker}) is both on the list and exiting, or exiting twice.");
             }
         }
     }
@@ -165,9 +178,16 @@ public sealed class Universe
 
     public IReadOnlyList<UniverseEntry> Entries => [.. _byId.Values.OrderBy(e => e.Ticker, StringComparer.Ordinal)];
 
+    /// <summary>Gets the shares taken off the list while held: sells only, until sold (plan 21).</summary>
+    public IReadOnlyList<UniverseEntry> Exiting => [.. _exiting.Values.OrderBy(e => e.Ticker, StringComparer.Ordinal)];
+
+    /// <summary>True for a share on the list (buys and sells).</summary>
     public bool Contains(OrderbookId id) => _byId.ContainsKey(id);
 
-    public UniverseEntry? Find(OrderbookId id) => _byId.GetValueOrDefault(id);
+    /// <summary>True for a share being sold off the list (sells only).</summary>
+    public bool IsExiting(OrderbookId id) => _exiting.ContainsKey(id);
+
+    public UniverseEntry? Find(OrderbookId id) => _byId.GetValueOrDefault(id) ?? _exiting.GetValueOrDefault(id);
 
     /// <summary>Reads the file; a missing file is an empty universe.</summary>
     public static Universe Load(string path)
@@ -186,10 +206,12 @@ public sealed class Universe
                 throw new TradingConfigException($"{path}: format must be qa-universe/1.");
             }
 
-            return new Universe([.. root.GetProperty("instruments").EnumerateArray().Select(i => new UniverseEntry(
+            static UniverseEntry Entry(JsonElement i) => new(
                 new OrderbookId(i.GetProperty("orderbook_id").GetString()!),
                 i.GetProperty("ticker").GetString()!,
-                i.GetProperty("name").GetString()!))]);
+                i.GetProperty("name").GetString()!);
+            IEnumerable<UniverseEntry> exiting = root.TryGetProperty("exiting", out JsonElement e) ? e.EnumerateArray().Select(Entry) : [];
+            return new Universe([.. root.GetProperty("instruments").EnumerateArray().Select(Entry)], [.. exiting]);
         }
         catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or ArgumentException)
         {
@@ -197,18 +219,39 @@ public sealed class Universe
         }
     }
 
-    public Universe With(UniverseEntry entry) => new(_byId.Values.Where(e => e.OrderbookId != entry.OrderbookId).Append(entry));
+    /// <summary>The list with <paramref name="entry"/> on it (off the exiting list, if it was there).</summary>
+    public Universe With(UniverseEntry entry) =>
+        new(_byId.Values.Where(e => e.OrderbookId != entry.OrderbookId).Append(entry), _exiting.Values.Where(e => e.OrderbookId != entry.OrderbookId));
 
-    public Universe Without(OrderbookId id) => new(_byId.Values.Where(e => e.OrderbookId != id));
+    /// <summary>The universe without <paramref name="id"/>, on the list or exiting.</summary>
+    public Universe Without(OrderbookId id) => new(_byId.Values.Where(e => e.OrderbookId != id), _exiting.Values.Where(e => e.OrderbookId != id));
+
+    /// <summary>Plan 21: <paramref name="id"/> taken off the list but kept for selling (it must be on the list).</summary>
+    public Universe Exit(OrderbookId id) =>
+        _byId.TryGetValue(id, out UniverseEntry? entry)
+            ? new(_byId.Values.Where(e => e.OrderbookId != id), _exiting.Values.Append(entry))
+            : throw new ArgumentException($"Orderbook {id} is not on the list.", nameof(id));
 
     public void Save(string path)
     {
-        var doc = new
-        {
-            format = "qa-universe/1",
-            note = "Instrument allowlist (ADR 0003 R2), by Avanza orderbook id. Edit with 'qa universe add|remove'. An empty list rejects every order.",
-            instruments = Entries.Select(e => new { orderbook_id = e.OrderbookId.Value, ticker = e.Ticker, name = e.Name }),
-        };
+        object Row(UniverseEntry e) => new { orderbook_id = e.OrderbookId.Value, ticker = e.Ticker, name = e.Name };
+        object doc = _exiting.Count == 0
+            ? new
+            {
+                format = "qa-universe/1",
+                note = Note,
+                instruments = Entries.Select(Row),
+            }
+            : new
+            {
+                format = "qa-universe/1",
+                note = Note,
+                instruments = Entries.Select(Row),
+                exiting = Exiting.Select(Row),
+            };
         File.WriteAllText(path, JsonSerializer.Serialize(doc, Indented) + "\n");
     }
+
+    private const string Note =
+        "Instrument allowlist (ADR 0003 R2), by Avanza orderbook id. Edit with 'qa universe add|remove'. An empty list rejects every order. 'exiting': shares taken off the list while held; the sessions only sell them (plan 21).";
 }

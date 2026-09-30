@@ -1,3 +1,4 @@
+using System.Globalization;
 using QuantAnalyst.Avanza;
 using QuantAnalyst.Core;
 using QuantAnalyst.Core.Broker;
@@ -6,6 +7,7 @@ using QuantAnalyst.Core.Market;
 using QuantAnalyst.Data.Fx;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Store;
+using QuantAnalyst.Trading.Paper;
 using QuantAnalyst.Trading.Risk;
 
 namespace QuantAnalyst.Cli.Commands;
@@ -125,23 +127,45 @@ internal static class Allowlist
         return entry;
     }
 
-    /// <summary>The allowlist without <paramref name="ticker"/> ("ERIC-B", "eric b" and "ERIC B" are the same name).</summary>
-    public static (Universe Universe, UniverseEntry Entry) Remove(Universe universe, string ticker)
+    /// <summary>
+    /// The allowlist without <paramref name="ticker"/> ("ERIC-B", "eric b" and "ERIC B" are the same name). Plan 21: a share
+    /// still <paramref name="held"/> is not dropped but moved to the exiting list, which the sessions sell; an exiting
+    /// share is dropped once it is no longer held.
+    /// </summary>
+    /// <returns><c>Exiting</c> is true when the share was kept for selling.</returns>
+    public static (Universe Universe, UniverseEntry Entry, bool Exiting) Remove(Universe universe, string ticker, IReadOnlyDictionary<OrderbookId, long>? held = null)
     {
         ArgumentNullException.ThrowIfNull(universe);
-        UniverseEntry entry = universe.Entries.FirstOrDefault(e => SameTicker(e.Ticker, ticker))
+        long Held(OrderbookId id) => held?.GetValueOrDefault(id) ?? 0;
+        if (universe.Entries.FirstOrDefault(e => SameTicker(e.Ticker, ticker)) is { } listed)
+        {
+            return Held(listed.OrderbookId) > 0 ? (universe.Exit(listed.OrderbookId), listed, true) : (universe.Without(listed.OrderbookId), listed, false);
+        }
+
+        UniverseEntry exiting = universe.Exiting.FirstOrDefault(e => SameTicker(e.Ticker, ticker))
             ?? throw new ArgumentException($"{ticker} is not in the allowlist.");
-        return (universe.Without(entry.OrderbookId), entry);
+        return Held(exiting.OrderbookId) is var left and > 0
+            ? throw new ArgumentException(string.Create(CultureInfo.InvariantCulture,
+                $"{exiting.Ticker} is still held ({left} shares) and on the exiting list: the next session sells it; remove it again once it is sold."))
+            : (universe.Without(exiting.OrderbookId), exiting, false);
     }
 
-    /// <summary>Removes <paramref name="ticker"/> from the allowlist file in <paramref name="configDir"/> and saves it.</summary>
-    public static UniverseEntry RemoveAndSave(string configDir, string ticker)
+    /// <summary>
+    /// Removes <paramref name="ticker"/> from the allowlist file in <paramref name="configDir"/> and saves it; a share the
+    /// Paper book in <paramref name="paperDir"/> still holds moves to the exiting list (plan 21).
+    /// </summary>
+    public static (UniverseEntry Entry, bool Exiting) RemoveAndSave(string configDir, string ticker, string? paperDir = null)
     {
         string path = Path.Combine(configDir, Universe.FileName);
-        (Universe universe, UniverseEntry entry) = Remove(Universe.Load(path), ticker);
+        (Universe universe, UniverseEntry entry, bool exiting) = Remove(Universe.Load(path), ticker, paperDir is null ? null : PaperBook.HeldIn(paperDir));
         universe.Save(path);
-        return entry;
+        return (entry, exiting);
     }
+
+    /// <summary>What <c>qa universe remove</c> and the app say after a removal.</summary>
+    public static string Removed(UniverseEntry entry, bool exiting) => exiting
+        ? $"{entry.Ticker} is still held: it moves to the exiting list, and the next session sells it (sells only; it no longer counts towards the {MaxNames}). Run 'qa universe remove {entry.Ticker.Replace(' ', '-')}' again once it is sold."
+        : $"removed {entry.Ticker} ({entry.OrderbookId})";
 
     private static bool SameTicker(string a, string b) =>
         string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);

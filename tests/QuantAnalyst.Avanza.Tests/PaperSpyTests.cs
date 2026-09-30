@@ -223,6 +223,35 @@ public sealed class PaperSpyTests : IDisposable
     }
 
     [Fact]
+    public async Task AShareTakenOffTheListWhileHeld_IsSoldByTheNextSession()
+    {
+        // Plan 21: the book holds 7 ERIC B; the owner takes ERIC B off the list; the session sells it (R2: sells only).
+        PrepareHistoryAndUniverse();
+        string paper = Path.Combine(State, "paper");
+        Directory.CreateDirectory(paper);
+        File.WriteAllText(Path.Combine(paper, "book.json"), """
+            { "format": "qa-paper-book/1", "account": "PAPER", "costs": "avanza-start", "starting_cash": 45000, "cash": 44504, "fees_paid": 1,
+              "realized_pnl": 0, "start_of_day_value": 0, "saved_utc": "2026-09-25T15:30:00Z",
+              "positions": [ { "orderbook_id": "5240", "ticker": "ERIC B", "quantity": 7, "cost_basis": 496, "last_fill_price": 70.86 } ] }
+            """);
+        (int code, string removed, string error) = Qa(TimeProvider.System, "universe", "remove", "ERIC-B", "--config-dir", Config, "--state-dir", State);
+        Assert.True(code == 0, error);
+        Assert.Contains("moves to the exiting list", removed, StringComparison.Ordinal);
+
+        (code, string output, error) = await RunPaper(seconds: 60);
+
+        Assert.True(code == 0, output + error);
+        Assert.Contains("ERIC B: off the list, still held; this session sells it (sells only).", output, StringComparison.Ordinal);
+        Assert.Contains("ERIC B: off the list (exiting), target zero", output, StringComparison.Ordinal);
+        Assert.True(output.Contains("Sell 7 ERIC B: Accepted (Filled, filled 7/7 @ 70.84)", StringComparison.Ordinal), output); // at the bid
+        using JsonDocument book = JsonDocument.Parse(File.ReadAllText(Path.Combine(paper, "book.json")));
+        Assert.Equal(0, book.RootElement.GetProperty("positions").GetArrayLength());
+        Assert.Contains("sold; take it off with qa universe remove ERIC-B",
+            Qa(TimeProvider.System, "status", "--config-dir", Config, "--store", Store, "--state-dir", State, "--audit-dir", Audit, "--kill-file", KillFile,
+                "--promotion-dir", Path.Combine(_root, "promotion")).Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ASavedStrategy_AndAnAllowlist_AreEnough_TheSessionImportsTheHistoryItNeeds()
     {
         File.WriteAllText(Path.Combine(Config, "universe.json"), """{ "format": "qa-universe/1", "instruments": [ { "orderbook_id": "5240", "ticker": "ERIC B", "name": "Ericsson B" } ] }""");

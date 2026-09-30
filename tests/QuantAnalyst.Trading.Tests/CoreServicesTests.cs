@@ -211,4 +211,31 @@ public sealed class TradingConfigTests
 
         Assert.Throws<TradingConfigException>(() => new Universe([new UniverseEntry(new OrderbookId("1"), "A", "A"), new UniverseEntry(new OrderbookId("1"), "B", "B")]));
     }
+
+    [Fact]
+    public void AShareTakenOffWhileHeld_IsExiting_SellsOnly_AndTheFileKeepsIt()
+    {
+        // Plan 21: a held share leaves the list for the exiting list, which the sessions sell; old files read as before.
+        using var dir = new TempDir();
+        string path = dir.File("universe.json");
+        var eric = new OrderbookId("5240");
+        Universe u = Universe.Empty.With(new UniverseEntry(eric, "ERIC B", "Ericsson B")).With(new UniverseEntry(new OrderbookId("1001"), "TEST B", "Test B"));
+        u.Save(path);
+        Assert.DoesNotContain("\"exiting\":", File.ReadAllText(path), StringComparison.Ordinal); // an old reader sees the same file
+
+        Universe exiting = u.Exit(eric);
+        Assert.Equal((false, true), (exiting.Contains(eric), exiting.IsExiting(eric)));
+        Assert.Equal(["TEST B"], exiting.Entries.Select(e => e.Ticker));
+        Assert.Equal("ERIC B", exiting.Find(eric)!.Ticker);
+        exiting.Save(path);
+        Universe back = Universe.Load(path);
+        Assert.Equal(["ERIC B"], back.Exiting.Select(e => e.Ticker));
+        Assert.True(back.IsExiting(eric));
+
+        Assert.True(back.With(new UniverseEntry(eric, "ERIC B", "Ericsson B")).Contains(eric)); // added back: on the list again
+        Assert.False(back.With(new UniverseEntry(eric, "ERIC B", "Ericsson B")).IsExiting(eric));
+        Assert.False(back.Without(eric).IsExiting(eric)); // sold and dropped
+        Assert.Throws<ArgumentException>(() => back.Exit(eric)); // not on the list any more
+        Assert.Throws<TradingConfigException>(() => new Universe([new UniverseEntry(eric, "A", "A")], [new UniverseEntry(eric, "A", "A")]));
+    }
 }

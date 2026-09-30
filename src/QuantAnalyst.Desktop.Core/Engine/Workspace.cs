@@ -35,6 +35,9 @@ public sealed class Workspace
 
     internal StatusCommand.StatusPaths StatusPaths => new(ConfigDir, Store, StateDir, AuditDir, KillFile, PromotionDir, Ledger);
 
+    /// <summary>Gets the Paper book's folder (plan 21: which shares are still held).</summary>
+    public string PaperDir => Path.Combine(StateDir, TradingCommands.PaperDirName);
+
     /// <summary>Gets what the weekly summary reads (plan 20), for the Reports page.</summary>
     internal TradingCommands.WeekPaths WeekPaths => new(AuditDir, ConfigDir, Store, Ledger);
 

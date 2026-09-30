@@ -75,7 +75,7 @@ All limits are in `config/risk-limits.json`, validated at startup. **Auto refuse
 | # | Check | Default | Notes |
 |---|---|---|---|
 | R1 | Account allowlist | `AVANZA__ALLOWEDACCOUNTIDS` | Exactly one ISK expected; masked in logs (`***123`) |
-| R2 | Instrument allowlist | OMXS30 universe file | Resolved by orderbookId, not ticker |
+| R2 | Instrument allowlist | OMXS30 universe file | Resolved by orderbookId, not ticker. An `exiting` share (taken off the list while held) may be sold only (2026-09-30, see Changes) |
 | R3 | Order type | LIMIT only | `condition = NORMAL`; no FoK/FaK in v1; no market orders (none exist in the API anyway) |
 | R4 | Side vs account | no short selling | Sell qty ≤ settled + pending position |
 | R5 | Price collar | limit within **±2 %** of reference | Reference = last trade if fresh, else mid; evaluated **on the rounded price** |
@@ -177,4 +177,5 @@ the value in this ADR or its latest entry needs an entry first, written by the o
 
 | Date | Change | Why | Where |
 |---|---|---|---|
+| 2026-09-30 | **R2: a share taken off the list while held may be sold, never bought.** `qa universe remove` (and the app's Remove) moves a share the Paper book still holds to the `exiting` list of `config/universe.json`; R2 passes a **sell** of an exiting share and fails a buy; R4 still caps the sell at the position, so it can only go to zero. The sessions quote exiting shares and target zero for them; they never count towards the five names. Once it is sold, the same command drops it. | The owner's request (2026-09-30, "build 3, 1 and 2 first", item 3 of the improvement review): a removed share was stranded, since R2 refused its sell and the session stopped quoting it, so it sat in the book at its last fill price. | `docs/plans/21-exits-dividends-splits.md` §A |
 | 2026-09-27 | **Added the account cap** `max_account_value_sek`, committed at **5,000 SEK**. R6–R8, R19 and the plan are sized on min(account value, cap). R19's loss limit becomes 2 % of min(start-of-day value, cap) in SEK. The plan also clips buys to R8's room. | The owner asked for it after the handover checklist found that the limits grew with the whole ISK: a deposit would have raised the order, position and loss limits without anyone deciding it. | `docs/plans/07-phase7-confirm.md` "Addition: the account cap" |

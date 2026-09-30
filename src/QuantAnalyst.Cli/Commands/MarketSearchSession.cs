@@ -67,8 +67,13 @@ internal sealed class MarketSearchSession
     /// Takes <paramref name="ticker"/> off the allowlist, in turn with the adds (so a full list can make room without a
     /// second login). Local only: nothing is asked of Avanza.
     /// </summary>
-    public Task<UniverseEntry> RemoveAsync(string ticker, string configDir) =>
-        Enqueue((_, _) => Task.FromResult(Allowlist.RemoveAndSave(configDir, ticker)));
+    /// <returns>What happened, e.g. that a held share moves to the exiting list (plan 21).</returns>
+    public Task<string> RemoveAsync(string ticker, string configDir, string? paperDir = null) =>
+        Enqueue((_, _) =>
+        {
+            (UniverseEntry entry, bool exiting) = Allowlist.RemoveAndSave(configDir, ticker, paperDir);
+            return Task.FromResult(Allowlist.Removed(entry, exiting));
+        });
 
     /// <summary>
     /// Runs the session on the caller's thread: the one login, then the requests as they come. Returns 0 when closed or

@@ -13,7 +13,7 @@ public static class CommandLines
         ["universe", "add", ticker, "--config-dir", w.ConfigDir, "--store", w.Store];
 
     public static IReadOnlyList<string> UniverseRemove(Workspace w, string ticker) =>
-        ["universe", "remove", ticker, "--config-dir", w.ConfigDir];
+        ["universe", "remove", ticker, "--config-dir", w.ConfigDir, "--state-dir", w.StateDir];
 
     /// <summary>A backtest on the allowlist (no <c>--tickers</c>), logged to the trial ledger like every run.</summary>
     public static IReadOnlyList<string> Backtest(Workspace w, string strategy, IEnumerable<KeyValuePair<string, string>> parameters) =>
