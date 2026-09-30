@@ -11,7 +11,8 @@ namespace QuantAnalyst.Avanza.Tests;
 
 /// <summary>
 /// The Paper spy (plan 06 gate): a whole <c>qa paper run</c> against the fake Avanza server, on a fake clock through
-/// Monday 2026-09-28's decision time, with live depth pushed so orders really are placed and filled on paper. The
+/// Monday 2026-09-28's decision time, with polled live prices (Paper uses no depth stream since 2026-09-30) so orders
+/// really are placed and filled on paper. The
 /// server records every request: <b>none</b> may go to an order route, and only login steps may be POSTs.
 /// </summary>
 public sealed class PaperSpyTests : IDisposable
@@ -85,26 +86,18 @@ public sealed class PaperSpyTests : IDisposable
          "--config-dir", Config, "--store", Store, "--state-dir", State, "--audit-dir", Audit, "--kill-file", KillFile,
          "--promotion-dir", Path.Combine(_root, "promotion"), "--reports-dir", Path.Combine(_root, "reports"), "--login", "totp"];
 
-    /// <summary>Runs the CLI on a worker while this thread moves the fake clock and keeps the depth stream alive.</summary>
+    /// <summary>Runs the CLI on a worker while this thread moves the fake clock (the session polls ERIC B's prices: 70.84 / 70.86).</summary>
     private async Task<(int Code, string Output, string Error)> RunPaper(double seconds, Action<DateTimeOffset>? onTick = null, bool savedStrategy = false)
     {
-        var conn = new SseConnection();
-        _server.Serve(conn);
-        await conn.Event("info", "connected", "e0", 1000);
+        int before = _server.Requests.Count;
         Task<(int, string, string)> run = Task.Run(() => Qa(_time, PaperArgs(seconds, savedStrategy)), TestContext.Current.CancellationToken);
 
-        // Login and setup need no clock; hold the fake clock until the session streams (or stops), so it starts at
-        // 09:09:40 however slow the machine is.
-        await Task.WhenAny(conn.Connected.Task, run).WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
-        int step = 0;
+        // Login and setup need no clock; hold the fake clock until the session polls its first price (or stops), so it
+        // starts at 09:09:40 however slow the machine is.
+        await Task.WhenAny(FirstPoll(before), run).WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
         var deadline = DateTime.UtcNow.AddSeconds(90);
         while (!run.IsCompleted && DateTime.UtcNow < deadline)
         {
-            if (step++ % 8 == 0)
-            {
-                await conn.Depth("5240", 70.84m, 70.86m, $"e{step}");
-            }
-
             await Task.Delay(15, TestContext.Current.CancellationToken);
             _time.Advance(TimeSpan.FromMilliseconds(500));
             onTick?.Invoke(_time.GetUtcNow());
@@ -112,6 +105,14 @@ public sealed class PaperSpyTests : IDisposable
 
         Assert.True(run.IsCompleted, "qa paper run did not finish");
         return await run;
+    }
+
+    private async Task FirstPoll(int after)
+    {
+        while (!_server.Requests.Skip(after).Any(r => r.PathAndQuery.StartsWith(AvanzaRoutes.MarketData.Path("5240"), StringComparison.Ordinal)))
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
     }
 
     [Fact]
@@ -200,6 +201,8 @@ public sealed class PaperSpyTests : IDisposable
 
         Assert.True(code == 0, output + error);
         Assert.DoesNotContain("History:", output, StringComparison.Ordinal); // imported through Friday already
+        Assert.Contains("Live prices: polled every 5 s (Paper does not use Avanza's order-book stream, which Avanza refuses).", output, StringComparison.Ordinal);
+        Assert.Equal(0, _server.CountFor(AvanzaRoutes.OrderDepthStream)); // owner's decision 2026-09-30
         Assert.Contains("decision: 1 order(s)", output, StringComparison.Ordinal);
         Assert.Contains("sized on the 5,000 SEK account cap, not the account's 45,000 SEK", output, StringComparison.Ordinal);
         Assert.True(output.Contains("Buy 7 ERIC B: Accepted (Filled, filled 7/7 @ 70.86)", StringComparison.Ordinal), output); // R6: 500 SEK, 10 % of the cap

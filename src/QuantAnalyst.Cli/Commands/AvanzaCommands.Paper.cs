@@ -199,7 +199,10 @@ internal static partial class AvanzaCommands
                 Console.CancelKeyPress += onCancel;
             }
 
-            var composers = specs.Select(s => new QuoteComposer(ctx.Connection.Gateway, s.OrderbookId, new QuoteComposerOptions(), time, ctx.Logger)).ToList();
+            // Owner's decision 2026-09-30: Avanza refuses the order-depth stream (HTTP 429), so Paper runs on the market-data
+            // polls alone (a quote is fresh while its last poll is under 10 s old). Confirm and Auto still require the stream.
+            output.WriteLine("Live prices: polled every 5 s (Paper does not use Avanza's order-book stream, which Avanza refuses).");
+            var composers = specs.Select(s => new QuoteComposer(ctx.Connection.Gateway, s.OrderbookId, new QuoteComposerOptions { DepthStream = false }, time, ctx.Logger)).ToList();
             var subscriptions = composers.Select(c => c.Quotes.Subscribe(capacity: 256)).ToList();
             if (observer is not null)
             {

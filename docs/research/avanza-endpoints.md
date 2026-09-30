@@ -235,6 +235,11 @@ REST market-data polls worked. The stream has never been captured live; the only
   `Sec-Fetch-Dest/Mode/Site`, a browser `User-Agent`, and oddly `Content-Type: application/json`. We send our own
   `User-Agent` (`QuantAnalyst/0.3 …`) and none of those.
 
+The owner's `qa stream ERIC-B` (one stream, no browser tab open, 10:38) was refused the same way at once. So it is not our
+own connections adding up. **Decision (owner, 2026-09-30): Paper runs on the polls alone** (ADR 0002 §3 amendment);
+the imitation was declined. Confirm and Auto still need the stream, so this must be solved before Phase 7's first live
+day (asking Avanza, `avanza-terms.md` §3, is the clean way).
+
 Since then a refusal's log line names the answering `Server` and any `Retry-After`, and `qa stream` (recording on by
 default) keeps the first three refused answers: status, header names and the body. That tells a block page from a
 rate limit. Imitating a browser would be the owner's decision: Avanza's user terms bar automated tools without written

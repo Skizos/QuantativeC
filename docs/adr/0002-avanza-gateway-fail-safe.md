@@ -119,6 +119,10 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
   - merges the best bid/ask from `ORDER_DEPTH` with last/volume from polls into `Quote{bid, ask, last, asOfDepth, asOfLast}`
   - **stale** if `now − max(asOfDepth, asOfLast) > 10 s` **or** the depth stream is disconnected
   - stale quotes block new orders in that instrument (ADR 0003)
+  - **Amended 2026-09-30 (owner's decision), Paper only:** Avanza refused every order-depth stream connection with
+    HTTP 429, even a single one, while the market-data polls worked. Paper therefore opens no stream and composes
+    quotes from the 5-second polls alone; a quote is stale when no poll arrived within 10 s. Confirm and Auto still
+    require the connected stream. Imitating a browser to get past the refusal was offered and declined.
 - **Fan-out:** `Channel<T>` (bounded, `DropOldest` for depth, `Wait` for own-order events). Own-order events are **never dropped**; if the consumer lags, the stream halts.
 
 ### 4. Fail-safe halting

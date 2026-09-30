@@ -124,15 +124,14 @@ public sealed class ForeignPaperSpyTests : IDisposable
     }
 
     /// <summary>
-    /// Runs the CLI on a worker while this thread moves the fake clock and keeps the depth streams alive (a fresh stream
-    /// for every connect, so a reconnect after a clock jump finds one). Without <paramref name="seconds"/> the session
-    /// runs to its default stop (the last close + 2 minutes).
+    /// Runs the CLI on a worker while this thread moves the fake clock; the session polls the recorded market data
+    /// (94.96 / 94.98) for its shares. Without <paramref name="seconds"/> the session runs to its default stop (the last
+    /// close + 2 minutes).
     /// </summary>
-    /// <param name="usStream">False when the US share is expected to be skipped (no stream is opened for it).</param>
-    private async Task<(int Code, string Output, string Error)> RunPaper(double? seconds, Action<DateTimeOffset>? onTick = null, bool usStream = true)
+    /// <param name="usQuotes">False when the US share is expected to be skipped (no quotes are polled for it).</param>
+    private async Task<(int Code, string Output, string Error)> RunPaper(double? seconds, Action<DateTimeOffset>? onTick = null, bool usQuotes = true)
     {
-        var streams = new Streams();
-        _server.Always(AvanzaRoutes.OrderDepthStream, streams.Open);
+        int before = _server.Requests.Count;
         string[] duration = seconds is { } d ? ["--duration", d.ToString(System.Globalization.CultureInfo.InvariantCulture)] : [];
         string[] args =
         [
@@ -142,18 +141,12 @@ public sealed class ForeignPaperSpyTests : IDisposable
         ];
         Task<(int, string, string)> run = Task.Run(() => Qa(_time, args), TestContext.Current.CancellationToken);
 
-        // Login and setup need no clock; hold the fake clock until the session streams (or stops).
-        Task streaming = usStream ? Task.WhenAll(streams.Stockholm.Task, streams.Us.Task) : streams.Stockholm.Task;
-        await Task.WhenAny(streaming, run).WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
-        int step = 0;
+        // Login and setup need no clock; hold the fake clock until the session polls its first prices (or stops).
+        string[] polled = usQuotes ? ["5240", "4478"] : ["5240"];
+        await Task.WhenAny(FirstPolls(before, polled), run).WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
         var deadline = DateTime.UtcNow.AddSeconds(120);
         while (!run.IsCompleted && DateTime.UtcNow < deadline)
         {
-            if (step++ % 8 == 0)
-            {
-                await streams.Depth(step);
-            }
-
             await Task.Delay(15, TestContext.Current.CancellationToken);
             _time.Advance(TimeSpan.FromMilliseconds(500));
             onTick?.Invoke(_time.GetUtcNow());
@@ -163,43 +156,11 @@ public sealed class ForeignPaperSpyTests : IDisposable
         return await run;
     }
 
-    /// <summary>
-    /// The depth streams the session opened: the latest per orderbook, each given the recorded poll's 94.96 / 94.98, so
-    /// whichever quote is newer, the price is the same (R5 compares the limit with it).
-    /// </summary>
-    private sealed class Streams
+    private async Task FirstPolls(int after, string[] ids)
     {
-        private readonly Dictionary<string, SseConnection> _latest = new(StringComparer.Ordinal);
-
-        public TaskCompletionSource Stockholm { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public TaskCompletionSource Us { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public HttpResponseMessage Open(HttpRequestMessage request)
+        while (!ids.All(id => _server.Requests.Skip(after).Any(r => r.PathAndQuery.StartsWith(AvanzaRoutes.MarketData.Path(id), StringComparison.Ordinal))))
         {
-            string id = request.RequestUri!.AbsolutePath.Split('/')[^1];
-            var connection = new SseConnection();
-            lock (_latest)
-            {
-                _latest[id] = connection;
-            }
-
-            (id == "4478" ? Us : Stockholm).TrySetResult();
-            return connection.Response;
-        }
-
-        public async Task Depth(int step)
-        {
-            KeyValuePair<string, SseConnection>[] open;
-            lock (_latest)
-            {
-                open = [.. _latest];
-            }
-
-            foreach ((string id, SseConnection connection) in open)
-            {
-                await connection.Depth(id, 94.96m, 94.98m, $"{id}-{step}");
-            }
+            await Task.Delay(10, TestContext.Current.CancellationToken);
         }
     }
 
@@ -251,7 +212,7 @@ public sealed class ForeignPaperSpyTests : IDisposable
         _fx.Until = new DateOnly(2026, 9, 22);
         PrepareHistoryAndUniverse();
 
-        (int code, string output, string error) = await RunPaper(seconds: 30, usStream: false);
+        (int code, string output, string error) = await RunPaper(seconds: 30, usQuotes: false);
 
         Assert.True(code == 0, output + error);
         Assert.Contains("WARNING: no USD/SEK fixing from the last 4 days is stored, so AAPL is skipped today (ADR 0005).", output, StringComparison.Ordinal);
