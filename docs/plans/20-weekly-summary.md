@@ -35,6 +35,24 @@
 - `qa report week` in the CLI gathers the inputs: every day's `EodReport` (rebuilt from the audit), the gate, the
   ledger, the store, the XSTO calendar, the research shares and the intraday holdout's days.
 
+## In the app (2026-09-30, the owner: "add it to the app's reports page")
+
+- The Reports page gains a **week card** between the gate card and the days: it shows the week of the **selected day**
+  (so selecting a day of an earlier week shows that week), with the week's return, two verdict chips (this week, since
+  the start: within / BELOW / above the backtest's range, or no backtest / not invested), the clean-day count, and the
+  same lines `qa report week` prints.
+- One builder for both: the CLI's `TradingCommands.BuildWeek` (paths, day, now) is what `qa report week` and the page
+  call. The page never writes: it does not save the week's file.
+- The price store is read only while no command runs (as the other pages do); otherwise, or when it is busy, the
+  intraday line says so and the rest of the week still shows. Weeks are cached until the next refresh.
+- Tests: the view model (the week follows the selection, the chips, the busy store) and the XAML checks (resource keys
+  and binding paths) on the changed view.
+- **Done 2026-09-30:** `WeekCard` and `ReportsViewModel.Week`/`WeekNote`/`ShowWeekAsync`, the card in
+  `ReportsView.xaml`, `Workspace.WeekPaths`, `TradingCommands.BuildWeek` (shared with the command, which now calls it),
+  `WeeklyReport.IntradayUnavailable`. `ViewModelTests.Reports_ShowTheWeekOfTheSelectedDay…` and
+  `…WithoutABacktest_OrWhileTheStoreIsInUse…`; the XAML checks pass on the new card. The WPF window itself can't be
+  opened in the Linux CI: look at the card on Windows.
+
 ## Limits
 
 - The expectation is the backtest's average over its whole sample, in-sample for a strategy chosen on it: optimistic

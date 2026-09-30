@@ -44,6 +44,42 @@
             </c:AdaptiveRow>
         </Border>
 
+        <!-- The week of the selected day (plan 20): the same summary as qa report week. The headline beside the whole
+             summary; in a narrow pane the summary goes under it. -->
+        <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
+            <StackPanel>
+                <TextBlock Text="{Binding WeekNote}" Style="{StaticResource Hint}" TextWrapping="Wrap"
+                           Visibility="{Binding WeekNote, Converter={StaticResource NonEmptyToVisibility}}" />
+                <c:AdaptiveRow DataContext="{Binding Week}" Spacing="32" FillMinWidth="320"
+                               Visibility="{Binding Converter={StaticResource NonEmptyToVisibility}}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding Title}" Style="{StaticResource Overline}" />
+                        <TextBlock Text="{Binding Return}" Style="{StaticResource KpiValue}" Foreground="{Binding ReturnMark, Converter={StaticResource MarkToBrush}}" />
+                        <TextBlock Text="{Binding Days}" Style="{StaticResource Hint}" Margin="0,2,0,10" />
+                        <TextBlock Text="THIS WEEK" Style="{StaticResource Overline}" />
+                        <Border Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="0,2,0,8"
+                                Background="{Binding ThisWeekMark, Converter={StaticResource MarkToSoftBrush}}">
+                            <TextBlock Text="{Binding ThisWeek}" Style="{StaticResource ChipText}" Foreground="{Binding ThisWeekMark, Converter={StaticResource MarkToBrush}}" />
+                        </Border>
+                        <TextBlock Text="SINCE THE FIRST PAPER DAY" Style="{StaticResource Overline}" />
+                        <Border Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="0,2,0,0"
+                                Background="{Binding SinceStartMark, Converter={StaticResource MarkToSoftBrush}}">
+                            <TextBlock Text="{Binding SinceStart}" Style="{StaticResource ChipText}" Foreground="{Binding SinceStartMark, Converter={StaticResource MarkToBrush}}" />
+                        </Border>
+                    </StackPanel>
+                    <ScrollViewer c:AdaptiveRow.Fill="True" MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding Lines}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" Style="{StaticResource MonoText}" TextWrapping="Wrap" Margin="0,1" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </c:AdaptiveRow>
+            </StackPanel>
+        </Border>
+
         <!-- The days beside the selected one; in a narrow pane the days go on top (they scroll). -->
         <c:AdaptiveSplit FirstWidth="280" Breakpoint="720" StackedFirstMaxHeight="200" StackedSecondMinHeight="240">
             <!-- The days, newest first. -->

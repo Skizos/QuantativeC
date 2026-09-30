@@ -1,9 +1,15 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Text.Json;
+using QuantAnalyst.Analytics.Backtesting;
+using QuantAnalyst.Cli.Commands;
+using QuantAnalyst.Data.Calendar;
 using QuantAnalyst.Desktop.Core.Engine;
+using QuantAnalyst.Desktop.Core.Presentation;
 using QuantAnalyst.Trading.Audit;
 using QuantAnalyst.Trading.Modes;
 using QuantAnalyst.Trading.Reports;
+using QuantAnalyst.Trading.Risk;
 
 namespace QuantAnalyst.Desktop.Core.ViewModels;
 
@@ -16,19 +22,65 @@ public sealed record ReportRow(DateOnly Date, string State, string Summary, IRea
 }
 
 /// <summary>
+/// The week of the selected day (plan 20): the same summary as <c>qa report week</c>, with its headline numbers apart for
+/// the card. The marks are words the app's colours know (<see cref="Tone"/>).
+/// </summary>
+/// <param name="ReturnMark">"up", "down" or "flat".</param>
+/// <param name="ThisWeekMark">"ok" within the backtest's range, "FAIL" below it, "info" above it, "none" nothing to compare.</param>
+public sealed record WeekCard(
+    string Title, string Return, string ReturnMark, string ThisWeek, string ThisWeekMark, string SinceStart, string SinceStartMark, string Days,
+    IReadOnlyList<string> Lines)
+{
+    public static WeekCard From(WeeklyReport week)
+    {
+        ArgumentNullException.ThrowIfNull(week);
+        CultureInfo c = CultureInfo.InvariantCulture;
+        (string thisWeek, string thisMark) = Verdict(week.ThisWeek, week.Backtest is not null);
+        (string since, string sinceMark) = Verdict(week.SinceStart, week.Backtest is not null);
+        string missing = week.NoSessionDays > 0 ? string.Create(c, $", {week.NoSessionDays} without a session") : string.Empty;
+        return new WeekCard(
+            string.Create(c, $"WEEK {week.Week} · {week.Monday:ddd d MMM} – {week.Monday.AddDays(6):ddd d MMM}").ToUpperInvariant(),
+            week.Return is { } r ? r.ToString("+0.00%;-0.00%;0.00%", c) : "no Paper day",
+            Tone.Direction(week.Return ?? 0m),
+            thisWeek,
+            thisMark,
+            since,
+            sinceMark,
+            string.Create(c, $"{week.CleanDays} of {week.TradingDays} trading day(s) clean{missing}"),
+            [.. week.Lines().Skip(1)]);
+    }
+
+    /// <summary>The chip's words and colour mark for a comparison with the backtest.</summary>
+    internal static (string Word, string Mark) Verdict(PaperVsBacktest? v, bool hasBacktest) => v switch
+    {
+        null => (hasBacktest ? "no Paper day yet" : "no backtest to compare", "none"),
+        { Verdict: var t } when t.StartsWith("BELOW", StringComparison.Ordinal) => ("below the backtest's range", "FAIL"),
+        { Verdict: var t } when t.StartsWith("above", StringComparison.Ordinal) => ("above the backtest's range", "info"),
+        { Verdict: var t } when t.StartsWith("within", StringComparison.Ordinal) => ("within the backtest's range", "ok"),
+        _ => ("not invested", "none"),
+    };
+}
+
+/// <summary>
 /// Every day's report and the progress towards the Confirm gate (ADR 0003 §3), rebuilt read-only from the audit log:
-/// nothing is written here (the session saves its own report; <c>qa report eod</c> rebuilds files).
+/// nothing is written here (the session saves its own report; <c>qa report eod</c> rebuilds files). The week card shows
+/// the week of the selected day (plan 20).
 /// </summary>
 public sealed class ReportsViewModel : PageViewModel
 {
     private readonly Workspace _workspace;
     private readonly TimeProvider _time;
+    private readonly Dictionary<string, WeekCard> _weeks = new(StringComparer.Ordinal);
     private ReportRow? _selected;
     private int _cleanDays;
     private bool _gateMet;
+    private WeekCard? _week;
+    private string _weekNote = string.Empty;
+    private int _weekLoads;
+    private bool _refreshing;
 
     public ReportsViewModel(Workspace workspace, QaEngine engine, TimeProvider time)
-        : base(PageKind.Reports, "Reports", "Each day's report, and how far Paper is from the Confirm gate.", engine)
+        : base(PageKind.Reports, "Reports", "Each day's report, its week against the backtest, and how far Paper is from the Confirm gate.", engine)
     {
         _workspace = workspace;
         _time = time;
@@ -45,7 +97,27 @@ public sealed class ReportsViewModel : PageViewModel
     public ReportRow? Selected
     {
         get => _selected;
-        set => Set(ref _selected, value);
+        set
+        {
+            if (Set(ref _selected, value) && !_refreshing)
+            {
+                _ = ShowWeekAsync();
+            }
+        }
+    }
+
+    /// <summary>Gets the week of the selected day; null before a day is selected or when it could not be built.</summary>
+    public WeekCard? Week
+    {
+        get => _week;
+        private set => Set(ref _week, value);
+    }
+
+    /// <summary>Gets why the week could not be built, or while it loads; empty otherwise.</summary>
+    public string WeekNote
+    {
+        get => _weekNote;
+        private set => Set(ref _weekNote, value);
     }
 
     /// <summary>Gets the clean Paper days in a row that count towards the gate.</summary>
@@ -83,7 +155,18 @@ public sealed class ReportsViewModel : PageViewModel
                 Days.Add(row);
             }
 
-            Selected = Days.FirstOrDefault();
+            _weeks.Clear();
+            _refreshing = true;
+            try
+            {
+                Selected = Days.FirstOrDefault();
+            }
+            finally
+            {
+                _refreshing = false;
+            }
+
+            await ShowWeekAsync();
             GateLines.Clear();
             foreach (string line in gate?.Lines ?? [])
             {
@@ -105,6 +188,56 @@ public sealed class ReportsViewModel : PageViewModel
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
         {
             Say($"The reports could not be read: {ex.Message}", isError: true);
+        }
+    }
+
+    /// <summary>
+    /// Shows the week of the selected day, built as <c>qa report week</c> builds it (never saved from here). The price
+    /// store is read only while no command runs; a week built without it is not kept, so the next look reads it.
+    /// </summary>
+    internal async Task ShowWeekAsync()
+    {
+        ReportRow? row = _selected;
+        if (row is null)
+        {
+            Week = null;
+            WeekNote = string.Empty;
+            return;
+        }
+
+        string name = WeeklyReport.WeekName(row.Date);
+        if (_weeks.TryGetValue(name, out WeekCard? known))
+        {
+            Week = known;
+            WeekNote = string.Empty;
+            return;
+        }
+
+        int load = ++_weekLoads;
+        bool storeFree = !IsBusy;
+        try
+        {
+            WeeklyReport week = await Task.Run(() => TradingCommands.BuildWeek(_workspace.WeekPaths, row.Date, _time.GetUtcNow(), storeFree));
+            var card = WeekCard.From(week);
+            if (storeFree && week.IntradayUnavailable is null)
+            {
+                _weeks[name] = card;
+            }
+
+            if (load == _weekLoads)
+            {
+                Week = card;
+                WeekNote = string.Empty;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or JsonException
+                                       or CalendarConfigException or TradingConfigException or BacktestConfigException)
+        {
+            if (load == _weekLoads)
+            {
+                Week = null;
+                WeekNote = $"The week could not be built: {ex.Message}";
+            }
         }
     }
 

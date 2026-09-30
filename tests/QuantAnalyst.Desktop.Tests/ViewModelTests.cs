@@ -373,6 +373,81 @@ public sealed class ViewModelTests : IDisposable
         Assert.False(Directory.Exists(_ws.Workspace.ReportsDir)); // read-only: nothing saved
     }
 
+    /// <summary>Plan 20: a Paper day's end-of-day values in the workspace's audit log.</summary>
+    private void PaperDay(int september, decimal start, decimal end, decimal cash)
+    {
+        var audit = new AuditLog(_ws.Workspace.AuditDir, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 9, september, 16, 0, 0, TimeSpan.Zero)));
+        audit.Append("session-start", new { mode = "Paper" });
+        audit.Append("end-of-day", new { day = new { startOfDayValue = start, accountValue = end, cash, feesPaid = 0m } });
+    }
+
+    [Fact]
+    public async Task Reports_ShowTheWeekOfTheSelectedDay_AgainstTheRecordedBacktest()
+    {
+        _ws.Time.SetUtcNow(new DateTimeOffset(2026, 10, 3, 10, 0, 0, TimeSpan.Zero)); // the Saturday after week 40
+        SaveMaCross();
+        new Analytics.Backtesting.TrialLedger(_ws.Workspace.Ledger).Append(new Analytics.Backtesting.TrialRecord
+        {
+            Id = "-",
+            RecordedAtUtc = _ws.Time.GetUtcNow(),
+            Runner = "owner",
+            Study = "s",
+            Strategy = "ma-cross",
+            Parameters = new Dictionary<string, string> { ["fast"] = "20", ["slow"] = "100" },
+            Universe = ["ERIC B"],
+            DataSource = AvanzaChartImporter.AvanzaPriceChart.Name,
+            PointInTime = false,
+            SurvivorshipFree = false,
+            From = new DateOnly(2016, 1, 4),
+            To = new DateOnly(2026, 9, 25),
+            Seed = 1,
+            CostModel = "avanza-start",
+            CostsVerified = true,
+            HoldoutTouched = false,
+            Status = Analytics.Backtesting.TrialStatus.Ok,
+            Metrics = new Analytics.Backtesting.TrialMetrics(500, 0.05, 0.79, 0, 3, 0.1, 0.05, 0.16, 0.2, 1, 100, 0.9, null, 1, null),
+        });
+        PaperDay(25, 5000m, 5005m, 5005m); // Friday of week 39
+        PaperDay(28, 5005m, 5015m, 2500m);
+        PaperDay(29, 5015m, 4995m, 2490m);
+
+        ShellViewModel shell = Shell();
+        await shell.Reports.RefreshAsync();
+        WeekCard week = shell.Reports.Week!;
+        Assert.Equal("WEEK 2026-W40 · MON 28 SEP – SUN 4 OCT", week.Title); // the newest day's week
+        Assert.Equal(("-0.20%", "down"), (week.Return, week.ReturnMark));
+        Assert.Equal(("within the backtest's range", "ok"), (week.ThisWeek, week.ThisWeekMark));
+        Assert.Equal(("within the backtest's range", "ok"), (week.SinceStart, week.SinceStartMark));
+        Assert.Equal("2 of 5 trading day(s) clean, 3 without a session", week.Days);
+        Assert.Contains(week.Lines, l => l.StartsWith("Against the backtest T000001, ma-cross(fast=20, slow=100) on ERIC B", StringComparison.Ordinal));
+        Assert.Empty(shell.Reports.WeekNote);
+
+        // Selecting a day of the week before shows that week.
+        shell.Reports.Selected = shell.Reports.Days.Single(d => d.Date == new DateOnly(2026, 9, 25));
+        await shell.Reports.ShowWeekAsync();
+        Assert.StartsWith("WEEK 2026-W39", shell.Reports.Week!.Title, StringComparison.Ordinal);
+        Assert.Equal("1 of 5 trading day(s) clean, 4 without a session", shell.Reports.Week.Days);
+        Assert.False(Directory.Exists(Path.Combine(_ws.Root, "reports", "week"))); // the page never writes
+    }
+
+    [Fact]
+    public async Task Reports_WithoutABacktest_OrWhileTheStoreIsInUse_SayWhatIsMissing()
+    {
+        PaperDay(25, 5000m, 5005m, 2500m);
+        ShellViewModel shell = Shell();
+        await shell.Reports.RefreshAsync();
+        Assert.Equal(("no backtest to compare", "none"), (shell.Reports.Week!.ThisWeek, shell.Reports.Week.ThisWeekMark));
+
+        // While a command runs the page does not open the price store; the rest of the week still shows.
+        IReadOnlyList<string> lines = Cli.Commands.TradingCommands.BuildWeek(_ws.Workspace.WeekPaths, new DateOnly(2026, 9, 25), _ws.Time.GetUtcNow(), readStore: false).Lines();
+        Assert.Equal("Intraday bars: shown when nothing else runs (the price store is in use).", lines[^1]);
+
+        Assert.Equal(("below the backtest's range", "FAIL"), WeekCard.Verdict(new Trading.Reports.PaperVsBacktest(5, -0.1m, 0.5m, 0, -0.02, 0.02, "BELOW the range: …"), true));
+        Assert.Equal(("above the backtest's range", "info"), WeekCard.Verdict(new Trading.Reports.PaperVsBacktest(5, 0.1m, 0.5m, 0, -0.02, 0.02, "above the range"), true));
+        Assert.Equal(("not invested", "none"), WeekCard.Verdict(new Trading.Reports.PaperVsBacktest(5, 0m, 0m, 0, 0, 0, "not invested: nothing to compare"), true));
+        Assert.Equal(("no Paper day yet", "none"), WeekCard.Verdict(null, true));
+    }
+
     // ---- Shell ------------------------------------------------------------------------------------------------
 
     [Fact]

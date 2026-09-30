@@ -131,29 +131,14 @@ internal static partial class TradingCommands
 
         command.SetAction(parse => Execute(parse, w =>
         {
-            string audit = parse.GetValue(auditDir)!;
-            string config = ResolveConfigDir(parse.GetValue(configDir));
-            string storePath = parse.GetValue(store)!;
-            IReadOnlyList<DateOnly> days = AuditDays(audit);
             if (parse.GetValue(week) is not null && parse.GetValue(date) is not null)
             {
                 throw new ArgumentException("Give --week or --date, not both.");
             }
 
-            DateTimeOffset now = time.GetUtcNow();
-            DateOnly today = OrderGateway.StockholmDate(now);
-            DateOnly day = parse.GetValue(week) is { } iso ? WeeklyReport.ParseWeek(iso)
-                : DataCommands.ParseDate(parse.GetValue(date), "--date") ?? (days.Count > 0 ? days[^1] : today);
-            MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(config);
-            DateOnly monday = WeeklyReport.MondayOf(day);
-
-            // Up to today: a later day has had no session yet, and today's intraday bars come in the evening.
-            DateOnly[] trading = [.. Enumerable.Range(0, 5).Select(monday.AddDays).Where(d => d <= today && calendar.Years.Contains(d.Year) && calendar.Classify(d).IsTradingDay)];
-
-            List<EodReport> reports = [.. days.Select(d => EodReport.Build(audit, d, TimeProvider.System))];
-            GateResult gate = PromotionGate.Confirm(reports, AuditLog.Verify(audit));
-            WeeklyReport report = WeeklyReport.Build(day, trading, reports, gate, Expectation(config, parse.GetValue(ledger)),
-                IntradayWeek(storePath, config, [.. trading.Where(d => d < today)], out int? needed), needed, now);
+            DateOnly? day = parse.GetValue(week) is { } iso ? WeeklyReport.ParseWeek(iso) : DataCommands.ParseDate(parse.GetValue(date), "--date");
+            var paths = new WeekPaths(parse.GetValue(auditDir)!, ResolveConfigDir(parse.GetValue(configDir)), parse.GetValue(store)!, parse.GetValue(ledger));
+            WeeklyReport report = BuildWeek(paths, day, time.GetUtcNow());
             string path = report.Save(parse.GetValue(weeksDir)!);
             if (parse.GetValue(json))
             {
@@ -170,6 +155,55 @@ internal static partial class TradingCommands
             return 0;
         }));
         return command;
+    }
+
+    /// <summary>What the weekly summary reads (plan 20); <see cref="ConfigDir"/> is resolved already.</summary>
+    /// <param name="Ledger">The trial ledger; null: the repository's.</param>
+    internal sealed record WeekPaths(string AuditDir, string ConfigDir, string Store, string? Ledger);
+
+    /// <summary>
+    /// The weekly summary of <paramref name="day"/>'s week (null: the week of the last session), as <c>qa report week</c>
+    /// prints it and the app's Reports page shows it. Read-only. Throws <see cref="ArgumentException"/> without an audit
+    /// folder.
+    /// </summary>
+    /// <param name="readStore">False while the price store must not be opened (the app, while a command runs).</param>
+    internal static WeeklyReport BuildWeek(WeekPaths paths, DateOnly? day, DateTimeOffset now, bool readStore = true)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        IReadOnlyList<DateOnly> days = AuditDays(paths.AuditDir);
+        DateOnly today = OrderGateway.StockholmDate(now);
+        DateOnly chosen = day ?? (days.Count > 0 ? days[^1] : today);
+        MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(paths.ConfigDir);
+        DateOnly monday = WeeklyReport.MondayOf(chosen);
+
+        // Up to today: a later day has had no session yet, and today's intraday bars come in the evening.
+        DateOnly[] trading = [.. Enumerable.Range(0, 5).Select(monday.AddDays).Where(d => d <= today && calendar.Years.Contains(d.Year) && calendar.Classify(d).IsTradingDay)];
+        List<EodReport> reports = [.. days.Select(d => EodReport.Build(paths.AuditDir, d, TimeProvider.System))];
+        GateResult gate = PromotionGate.Confirm(reports, AuditLog.Verify(paths.AuditDir));
+
+        IntradayCoverage? intraday = null;
+        int? needed = null;
+        string? unavailable = null;
+        if (!readStore)
+        {
+            unavailable = "shown when nothing else runs (the price store is in use)";
+        }
+        else
+        {
+            try
+            {
+                intraday = IntradayWeek(paths.Store, paths.ConfigDir, [.. trading.Where(d => d < today)], out needed);
+            }
+            catch (Exception ex) when (ex is HistoryStoreException or IOException || DataCommands.IsStoreFailure(ex))
+            {
+                unavailable = "the price store is busy; they show again next time";
+            }
+        }
+
+        return WeeklyReport.Build(chosen, trading, reports, gate, Expectation(paths.ConfigDir, paths.Ledger), intraday, needed, now) with
+        {
+            IntradayUnavailable = unavailable,
+        };
     }
 
     /// <summary>The saved strategy's recorded backtest, on today's allowlist if there is one (plan 20); null without either.</summary>

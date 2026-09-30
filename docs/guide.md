@@ -96,7 +96,10 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
   - pick a strategy and fill in its named fields (e.g. fast 20, slow 100)
   - **Backtest on my instruments** shows how it did
   - **Use for Paper** saves it
-- **Reports:** the gate dots, each day marked CLEAN / NOT CLEAN / INCOMPLETE, and the selected day's details.
+- **Reports:** the gate dots, each day marked CLEAN / NOT CLEAN / INCOMPLETE, and the selected day's details. The week
+  card shows the **week of the selected day** (the same summary as `.\qa report week`): its return, whether Paper is
+  within, below or above the backtest's range this week and since the first Paper day, the clean days, and the whole
+  summary beside it. Select a day of an earlier week to see that week.
 - **Bottom bar:** what is running now, and (click it) the activity log with every command's full output.
 
 Numbers on screen are Swedish style (`5 012,40 kr`, `+0,20 %`); commands and files keep their usual format.
@@ -204,7 +207,7 @@ Reconciliation: clean. Audit: audit (check with 'qa audit verify').
 | read the day's report | `.\qa report eod` (it is also printed at the end of the session) |
 | see how often the limit orders fill, and what the unfilled ones cost | the `Limits:` part of `.\qa report eod`, its `limit` lines, and its last line `All N days …` |
 | see the progress towards Confirm | `.\qa report gate` |
-| the week at a glance (Friday evening or the weekend) | `.\qa report week` |
+| the week at a glance (Friday evening or the weekend) | `.\qa report week`, or the week card on the app's Reports page |
 
 **Reading the fill rate** (plan 19). The backtest fills an order whole whenever the day trades through its limit. Paper
 fills a resting order only from trades after it was placed, and at most 10 % of their volume. "Missed vs the backtest"

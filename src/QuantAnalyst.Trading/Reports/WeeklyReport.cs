@@ -160,6 +160,9 @@ public sealed record WeeklyReport
     /// <summary>Gets how many collected days the intraday go/no-go needs (plan 17: 120 before the holdout's days).</summary>
     public int? IntradayNeeded { get; init; }
 
+    /// <summary>Gets why the intraday collection could not be read this time (e.g. the store is in use); null when it was.</summary>
+    public string? IntradayUnavailable { get; init; }
+
     public required DateTimeOffset GeneratedUtc { get; init; }
 
     private static readonly JsonSerializerOptions Json = new()
@@ -280,6 +283,10 @@ public sealed record WeeklyReport
                     $"{s.Ticker} {s.Fine + s.Coarse}{(s.Coarse > 0 ? $" ({s.Coarse} at 10 minutes)" : string.Empty)}{(s.Missing.Count > 0 ? $" (missing {string.Join(", ", s.Missing.Select(m => m.ToString("MM-dd", c)))})" : string.Empty)}")));
             string need = IntradayNeeded is { } n ? string.Create(c, $" of the {n} the go/no-go needs") : string.Empty;
             lines.Add(string.Create(c, $"Intraday bars, {i.TradingDays.Count} trading day(s): {shares}; {i.CollectedDays} day(s) collected so far{need}."));
+        }
+        else if (IntradayUnavailable is { } why)
+        {
+            lines.Add($"Intraday bars: {why}.");
         }
 
         return lines;

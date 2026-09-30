@@ -35,6 +35,9 @@ public sealed class Workspace
 
     internal StatusCommand.StatusPaths StatusPaths => new(ConfigDir, Store, StateDir, AuditDir, KillFile, PromotionDir, Ledger);
 
+    /// <summary>Gets what the weekly summary reads (plan 20), for the Reports page.</summary>
+    internal TradingCommands.WeekPaths WeekPaths => new(AuditDir, ConfigDir, Store, Ledger);
+
     /// <summary>The repository above <paramref name="start"/> (the folder with QuantAnalyst.sln), or null.</summary>
     public static Workspace? Find(string start)
     {
