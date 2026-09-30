@@ -27,6 +27,18 @@ public sealed record PlanResult(IReadOnlyList<OrderIntent> Intents, IReadOnlyLis
 /// </summary>
 public static class DailyPlanner
 {
+    /// <summary>
+    /// True when every share has a price <see cref="Plan"/> can use (a fresh last trade, or a bid and an ask): what a
+    /// session's <see cref="Scheduling.PriceGate"/> waits for before deciding.
+    /// </summary>
+    public static bool HasPrices(IEnumerable<InstrumentSpec> instruments, IQuoteSource quotes, PreTradeRiskEngine risk, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(instruments);
+        ArgumentNullException.ThrowIfNull(quotes);
+        ArgumentNullException.ThrowIfNull(risk);
+        return instruments.All(s => risk.ReferencePrice(quotes.Latest(s.OrderbookId), nowUtc) is not null);
+    }
+
     /// <param name="openOrders">The orders still open (working, partly filled or Unknown), as the risk checks see them.</param>
     public static PlanResult Plan(
         IReadOnlyList<double> targets,

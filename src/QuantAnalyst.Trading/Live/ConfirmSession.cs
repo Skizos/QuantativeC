@@ -56,7 +56,8 @@ public sealed class ConfirmSession(
     TextWriter output,
     bool decideAtStart = false,
     Func<DateOnly, string>? endOfDayReport = null,
-    decimal? costAssumptionBps = null)
+    decimal? costAssumptionBps = null,
+    Func<DateTimeOffset, bool>? pricesReady = null)
 {
     public static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan ReconcileEvery = TimeSpan.FromSeconds(30);
@@ -65,6 +66,7 @@ public sealed class ConfirmSession(
     public static readonly TimeSpan PaceBetweenOrders = TimeSpan.FromSeconds(13);
 
     private readonly HashSet<OrderbookId> _handled = [];
+    private readonly PriceGate _gate = new(pricesReady); // the first plan of the day waits for live prices, at most a minute
     private DateOnly? _tradingOn;
     private DateOnly? _doneOn;
     private DateOnly? _endedOn;
@@ -152,7 +154,8 @@ public sealed class ConfirmSession(
             _plansToday = 0;
         }
 
-        if (_tradingOn == today && _doneOn != today && now < day.WindowCloseUtc && (_lastSubmit is not { } s || now - s >= PaceBetweenOrders))
+        if (_tradingOn == today && _doneOn != today && now < day.WindowCloseUtc && (_lastSubmit is not { } s || now - s >= PaceBetweenOrders)
+            && (_plansToday > 0 || _gate.Open(today, now, say => output.WriteLine($"{Local(now)} {say}"))))
         {
             await NextCardAsync(today, ct).ConfigureAwait(false);
         }

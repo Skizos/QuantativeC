@@ -125,6 +125,26 @@ public sealed class ConfirmSessionTests : IDisposable
     private const double ConfirmSessionPace = 13;
 
     [Fact]
+    public async Task TheFirstPlanOfTheDay_WaitsForLivePrices()
+    {
+        bool priced = false;
+        var session = new ConfirmSession(_gateway, _account, _kill, new Reconciler(new OrderManager(_audit, _halts, _time), _halts, _audit, _time, Isk), _broker, _halts,
+            new TradingSchedule(OrderGatewayTests.Calendar(new DateOnly(2026, 9, 1)), RiskLimits.AdrDefaults, new TimeOnly(9, 10)), _audit, _time, Plan, _output,
+            pricesReady: _ => priced);
+
+        await session.StepAsync(Ct);
+        _time.Advance(TimeSpan.FromSeconds(1));
+        await session.StepAsync(Ct);
+        Assert.Equal(0, _plans);
+        Assert.Contains("waiting for live prices before deciding (at most 60 s).", _output.ToString(), StringComparison.Ordinal);
+
+        priced = true;
+        _time.Advance(TimeSpan.FromSeconds(1));
+        await session.StepAsync(Ct);
+        Assert.Equal(1, _plans);
+    }
+
+    [Fact]
     public async Task ItRePlansBeforeEveryCard_AndShowsEachInstrumentOnce()
     {
         _confirm.Answer = (card, _) => Task.FromResult(card.Ticker == "ERIC B"

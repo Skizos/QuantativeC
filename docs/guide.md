@@ -169,8 +169,8 @@ This one command runs the whole day:
 - **Fills during the day:** orders fill on the live quotes and expire at the close.
 - **Stops two minutes after the close** (17:32; earlier on half days). It prints the day's summary and writes the end-of-day report.
 
-**Keep the window open all day** (the computer must not sleep). Started after 09:10 it decides at once; after 17:20 no
-more orders go out that day.
+**Keep the window open all day** (the computer must not sleep). Started after 09:10 it decides as soon as every share
+has a live price (usually within seconds, at most a minute); after 17:20 no more orders go out that day.
 
 What you will see (shortened; the numbers are only an example):
 
@@ -311,6 +311,7 @@ says whether an intraday strategy is worth trying on paper. What you do:
 |---|---|---|
 | `ALERT: KILL SWITCH …`, exit code 3 | Trading stopped: your `qa kill`, the loss stop, three rejects in a row, an order in an unknown state, or a reconciliation mismatch | Read `.\qa report eod` and `.\qa kill --status`. When you understand why: `.\qa kill --reset` |
 | `The kill switch is active` at start | A kill from earlier is still on | As above |
+| `skipped, no fresh live price` in the decision | No quote for that share when it decided: no trade in it, the market data failed, or (before 2026-09-30) a session started after 09:10 that decided before its first quote | Look in the session log for stream or market-data errors. There is one decision a day, so the share waits for the next day |
 | `login locked`, exit code 4 | A login failed and the program will not retry on its own | Check that BankID login works on avanza.se, then `.\qa login --clear-lock` |
 | `schema drift` or `endpoint gone`, exit code 3 | Avanza changed its site; trading halts | Nothing is lost. Tell Claude and include the error text |
 | `ABI 1.1 … requires 1.2` | The native engine is older than the code | Use the `.\qa` launcher, which rebuilds it (or `.\build.ps1`) |

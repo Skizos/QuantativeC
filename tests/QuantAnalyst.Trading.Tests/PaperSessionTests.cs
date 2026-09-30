@@ -45,6 +45,16 @@ public sealed class DailyPlannerTests
     }
 
     [Fact]
+    public void HasPrices_IsTrueOnlyWhenEveryShareHasAPriceThePlanCanUse()
+    {
+        Assert.False(DailyPlanner.HasPrices(Specs, _quotes, Risk, _time.GetUtcNow())); // no quote at all
+        Price(Eric, 99.9m, 100.1m);
+        Assert.False(DailyPlanner.HasPrices(Specs, _quotes, Risk, _time.GetUtcNow())); // TEST B still has none
+        Price(Test, 49.9m, 50.1m);
+        Assert.True(DailyPlanner.HasPrices(Specs, _quotes, Risk, _time.GetUtcNow()));
+    }
+
+    [Fact]
     public void BigTargets_AreClippedToWhatR6AndR7Allow()
     {
         Price(Eric, 99.9m, 100.1m);
@@ -326,6 +336,52 @@ public sealed class PaperSessionTests : IDisposable
         await StepFor(TimeSpan.FromSeconds(1));
         Assert.All(_oms.All, o => Assert.Equal(OmsState.Cancelled, o.State));
         Assert.Contains("close: 2 order(s) expired", _output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StartedAfterTheDecisionTime_ItWaitsForLivePrices_ThenDecides()
+    {
+        // The first step of a session started at 09:54 used to decide at once, before the quote feeds' first answer,
+        // and every share was skipped for the day ("no fresh live price").
+        bool priced = false;
+        var schedule = new TradingSchedule(OrderGatewayTests.Calendar(), RiskLimits.AdrDefaults, new TimeOnly(9, 10));
+        var late = new PaperSession(_gateway, _channel, _book, _kill, new Reconciler(_oms, _halts, _audit, _time, _book.Account), _halts,
+            [new SessionMarket(schedule, Decide, _ => true) { PricesReady = _ => priced }], _audit, _time, _output);
+        _time.SetUtcNow(new DateTimeOffset(2026, 9, 28, 7, 54, 30, TimeSpan.Zero)); // 09:54:30
+
+        for (int i = 0; i < 3; i++)
+        {
+            await late.StepAsync(CancellationToken.None);
+            _time.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        Assert.Equal(0, _decisions);
+        string waiting = "09:54:30 waiting for live prices before deciding (at most 60 s).";
+        Assert.Single(_output.ToString().Split('\n'), l => l.StartsWith(waiting, StringComparison.Ordinal)); // said once
+
+        priced = true;
+        await late.StepAsync(CancellationToken.None);
+        Assert.Equal(1, _decisions);
+    }
+
+    [Fact]
+    public async Task WithoutAnyLivePrice_ItDecidesAnywayAfterAMinute_AndSaysSo()
+    {
+        var schedule = new TradingSchedule(OrderGatewayTests.Calendar(), RiskLimits.AdrDefaults, new TimeOnly(9, 10));
+        var late = new PaperSession(_gateway, _channel, _book, _kill, new Reconciler(_oms, _halts, _audit, _time, _book.Account), _halts,
+            [new SessionMarket(schedule, Decide, _ => true) { PricesReady = _ => false }], _audit, _time, _output);
+        _time.SetUtcNow(new DateTimeOffset(2026, 9, 28, 7, 54, 30, TimeSpan.Zero));
+
+        for (int i = 0; i < 60; i++)
+        {
+            await late.StepAsync(CancellationToken.None);
+            _time.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        Assert.Equal(0, _decisions);
+        await late.StepAsync(CancellationToken.None); // 09:55:30
+        Assert.Equal(1, _decisions);
+        Assert.Contains("09:55:30 no live price for every share after 60 s; deciding anyway (a share without one is skipped).", _output.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]

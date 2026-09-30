@@ -33,6 +33,12 @@ public sealed record PaperSessionSummary(
 public sealed record SessionMarket(TradingSchedule Schedule, Func<CancellationToken, Task<PlanResult>> Decide, Func<InstrumentSpec, bool> Trades)
 {
     public string Mic => Schedule.Mic;
+
+    /// <summary>
+    /// Gets whether every share of this market has a usable live price now (<see cref="PriceGate"/>): the decision waits
+    /// for it, at most a minute. Null: no wait.
+    /// </summary>
+    public Func<DateTimeOffset, bool>? PricesReady { get; init; }
 }
 
 /// <summary>
@@ -164,7 +170,8 @@ public sealed class PaperSession(
 
         foreach (MarketDay m in _markets)
         {
-            if (m.Today(now) is { } plan && m.DecidedOn != plan.Date && now >= plan.DecisionUtc && now < plan.WindowCloseUtc)
+            if (m.Today(now) is { } plan && m.DecidedOn != plan.Date && now >= plan.DecisionUtc && now < plan.WindowCloseUtc
+                && m.Gate.Open(plan.Date, now, say => output.WriteLine($"{Local(now)} {Where(m)}{say}")))
             {
                 m.DecidedOn = plan.Date;
                 await DecideAsync(m, ct).ConfigureAwait(false);
@@ -347,6 +354,9 @@ public sealed class PaperSession(
         public SessionMarket Market { get; } = market;
 
         public string Mic => Market.Mic;
+
+        /// <summary>Gets the wait for live prices before the day's decision.</summary>
+        public PriceGate Gate { get; } = new(market.PricesReady);
 
         public DateOnly? DecidedOn { get; set; }
 

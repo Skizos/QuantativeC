@@ -218,7 +218,10 @@ internal static partial class AvanzaCommands
             }
 
             var session = new PaperSession(gateway, channel, book, kill, reconciler, halts,
-                [.. markets.Select(m => new SessionMarket(m.Schedule, ct => Decide(m, ct), m.Trades))], audit, time, output, EndOfDayReport, observer);
+                [.. markets.Select(m => new SessionMarket(m.Schedule, ct => Decide(m, ct), m.Trades)
+                {
+                    PricesReady = now => DailyPlanner.HasPrices(specs.Where(m.Trades), quotes, risk, now),
+                })], audit, time, output, EndOfDayReport, observer);
             PaperSessionSummary summary;
             try
             {
