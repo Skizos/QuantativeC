@@ -123,6 +123,10 @@ public interface IBrokerOrderChannel   // place / modify / cancel ONLY
     HTTP 429, even a single one, while the market-data polls worked. Paper therefore opens no stream and composes
     quotes from the 5-second polls alone; a quote is stale when no poll arrived within 10 s. Confirm and Auto still
     require the connected stream. Imitating a browser to get past the refusal was offered and declined.
+  - **Amended 2026-09-30 (plan 22, the owner's request for more names), Paper only:** the list may hold 10 shares.
+    Every share is polled on one interval, 0.7 s per share polled, at least 5 s and at most 7 s: 10 shares make 1.43
+    requests/s (about 70 % of the budget) and a quote stays under 10 s between polls. A session refuses more than 14
+    shares to poll (list + exiting). Confirm still requires one stream per share and refuses more than 5.
 - **Fan-out:** `Channel<T>` (bounded, `DropOldest` for depth, `Wait` for own-order events). Own-order events are **never dropped**; if the consumer lags, the stream halts.
 
 ### 4. Fail-safe halting

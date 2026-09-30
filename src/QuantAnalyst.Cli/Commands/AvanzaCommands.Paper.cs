@@ -224,7 +224,7 @@ internal static partial class AvanzaCommands
                 Calendar = setup.Calendar,
                 Universe = setup.Universe,
                 AllowedAccountIds = new HashSet<string>(StringComparer.Ordinal) { PaperConfig.AccountId },
-                Fees = (order, spec) => channel.EstimateFees(order.Value, spec.Currency),
+                Fees = (order, spec) => channel.EstimateFees(order.Value, spec.Currency, spec.MarketPlace),
                 CourtageVerified = setup.Costs.Verified,
                 Fx = fx,
                 Schedules = markets.ToDictionary(m => m.Info.Currency, m => m.Schedule, StringComparer.Ordinal),
@@ -256,20 +256,37 @@ internal static partial class AvanzaCommands
                 DateOnly yesterday = PreviousTradingDay(market.Calendar, market.Calendar.LocalDate(now));
                 int[] own = [.. listed.Select((s, i) => (s, i)).Where(x => market.Trades(x.s)).Select(x => x.i)];
                 InstrumentSpec[] leaving = [.. exiting.Where(market.Trades)];
-                double[] targets = [];
+                double[] targets = [.. listed.Select(_ => double.NaN)];
+                string[] auctionNotes = [];
                 if (own.Length > 0)
                 {
                     using HistoryStore history = DataCommands.OpenExisting(storePath);
-                    MarketPanel panel = BacktestCommands.LoadStorePanel(history, tickers, null, markets.Count == 1 ? yesterday : OrderGateway.StockholmDate(now).AddDays(-1));
-                    DateOnly last = LastBarDate(panel, own);
-                    if (last != yesterday)
-                    {
-                        string names = string.Join(", ", own.Select(i => tickers[i]));
-                        throw new InvalidOperationException(
-                            $"the history ends {last:yyyy-MM-dd}, not on the last trading day {yesterday:yyyy-MM-dd}; run 'qa history import' for {names} first. No orders today.");
-                    }
 
-                    targets = StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
+                    // Plan 22: a listed share measured as not trading continuously is left out of the panel (the fill model
+                    // assumes continuous trading) and not traded; the others decide as before.
+                    bool[] continuous = [.. tickers.Select(t => DataCommands.FindInstrument(history, t, null, null).Instrument.TradingModel == TradingModel.Continuous)];
+                    int[] inPanel = [.. Enumerable.Range(0, listed.Length).Where(i => continuous[i])];
+                    auctionNotes = [.. own.Where(i => !continuous[i]).Select(i =>
+                        $"{tickers[i]}: not traded, it does not trade continuously (plan 22); take it off the list with 'qa universe remove {tickers[i].Replace(' ', '-')}'")];
+                    int[] ownInPanel = [.. own.Where(i => continuous[i]).Select(i => Array.IndexOf(inPanel, i))];
+                    if (ownInPanel.Length > 0)
+                    {
+                        MarketPanel panel = BacktestCommands.LoadStorePanel(
+                            history, [.. inPanel.Select(i => tickers[i])], null, markets.Count == 1 ? yesterday : OrderGateway.StockholmDate(now).AddDays(-1));
+                        DateOnly last = LastBarDate(panel, ownInPanel);
+                        if (last != yesterday)
+                        {
+                            string names = string.Join(", ", ownInPanel.Select(k => tickers[inPanel[k]]));
+                            throw new InvalidOperationException(
+                                $"the history ends {last:yyyy-MM-dd}, not on the last trading day {yesterday:yyyy-MM-dd}; run 'qa history import' for {names} first. No orders today.");
+                        }
+
+                        double[] decided = StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
+                        for (int k = 0; k < inPanel.Length; k++)
+                        {
+                            targets[inPanel[k]] = decided[k];
+                        }
+                    }
                 }
 
                 // Plan 21: valuing the book first tells which positions the split guard holds back; they get no target today.
@@ -278,9 +295,9 @@ internal static partial class AvanzaCommands
                 double[] weights = [.. own.Select(i => targets[i]), .. leaving.Select(_ => 0.0)];
                 string[] heldBack = [.. HeldBackNotes(book, quotes, chosen, weights)];
                 PlanResult plan = DailyPlanner.Plan(weights, chosen, snapshot, gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now, fx);
-                return Task.FromResult(leaving.Length == 0 && heldBack.Length == 0 ? plan : plan with
+                return Task.FromResult(leaving.Length == 0 && heldBack.Length == 0 && auctionNotes.Length == 0 ? plan : plan with
                 {
-                    Notes = [.. heldBack, .. leaving.Select(s => $"{s.Ticker}: off the list (exiting), target zero"), .. plan.Notes],
+                    Notes = [.. auctionNotes, .. heldBack, .. leaving.Select(s => $"{s.Ticker}: off the list (exiting), target zero"), .. plan.Notes],
                 });
             }
 
@@ -309,7 +326,10 @@ internal static partial class AvanzaCommands
             // Owner's decision 2026-09-30: Avanza refuses the order-depth stream (HTTP 429), so Paper runs on the market-data
             // polls alone (a quote is fresh while its last poll is under 10 s old). Confirm and Auto still require the stream.
             output.WriteLine("Live prices: polled every 5 s (Paper does not use Avanza's order-book stream, which Avanza refuses).");
-            var composers = specs.Select(s => new QuoteComposer(ctx.Connection.Gateway, s.OrderbookId, new QuoteComposerOptions { DepthStream = false }, time, ctx.Logger)).ToList();
+            // Plan 22: one interval for every share, longer as the list grows, within the request budget and R15.
+            TimeSpan pollEvery = PaperPolling.Interval(specs.Count);
+            var composers = specs.Select(s => new QuoteComposer(
+                ctx.Connection.Gateway, s.OrderbookId, new QuoteComposerOptions { DepthStream = false, PollInterval = pollEvery }, time, ctx.Logger)).ToList();
             var subscriptions = composers.Select(c => c.Quotes.Subscribe(capacity: 256)).ToList();
             if (observer is not null)
             {
@@ -549,7 +569,8 @@ internal static partial class AvanzaCommands
                 // A week of overlap catches restated bars; with no history, a year gives the strategies their look-back.
                 DateOnly from = last is { } l ? l.AddDays(-7) : through.AddYears(-1);
                 InstrumentTradingParams p = await ctx.Connection.Gateway.GetTradingParamsAsync(spec.OrderbookId, ctx.Ct).ConfigureAwait(false);
-                history.UpsertInstrument(InstrumentRecord.FromTradingParams(p), "avanza-orderbook", AvanzaConnection.OrderbookSourceVersion, p.KnownAtUtc);
+                (InstrumentRecord record, _) = await InstrumentImport.RecordAsync(ctx.Connection.Gateway, p, history, ctx.Ct).ConfigureAwait(false); // plan 22
+                history.UpsertInstrument(record, "avanza-orderbook", AvanzaConnection.OrderbookSourceVersion, p.KnownAtUtc);
                 var provider = new AvanzaChartImporter(ctx.Connection.Gateway, time, AvanzaConnection.PriceChartSourceVersion);
                 ImportReport report = await new HistoryImporter(history, time, market.Calendar)
                     .ImportAsync(provider, spec.OrderbookId, from, through, ctx.Ct).ConfigureAwait(false);
@@ -682,6 +703,20 @@ internal static partial class AvanzaCommands
             return 0;
         }));
         return command;
+    }
+
+    /// <summary>Plan 22: whether the class gives a courtage for the share's marketplace (the main market always has one).</summary>
+    private static bool HasCourtage(CostModel costs, InstrumentSpec spec)
+    {
+        try
+        {
+            _ = costs.MarketplaceFor(spec.MarketPlace);
+            return true;
+        }
+        catch (BacktestConfigException)
+        {
+            return false;
+        }
     }
 
     internal static DateOnly PreviousTradingDay(MarketCalendar calendar, DateOnly today)
@@ -834,7 +869,18 @@ internal static partial class AvanzaCommands
 
                 if (!Core.Market.Markets.IsForeign(info.Currency))
                 {
-                    markets.Add(new PaperMarket(info, Calendar, Schedule, own));
+                    // Plan 22: a share on a marketplace the class has no courtage for is skipped, never charged the main market's.
+                    InstrumentSpec[] costed = [.. own.Where(s => HasCourtage(Costs, s))];
+                    foreach (InstrumentSpec s in own.Except(costed))
+                    {
+                        output.WriteLine($"WARNING: the courtage class {Costs.Name} has no courtage for shares on {s.MarketPlace}, so {s.Ticker} is skipped (add marketplace_courtage.{s.MarketPlace} to costs.{Costs.Name}.json).");
+                    }
+
+                    if (costed.Length > 0)
+                    {
+                        markets.Add(new PaperMarket(info, Calendar, Schedule, costed));
+                    }
+
                     continue;
                 }
 
@@ -879,9 +925,15 @@ internal static partial class AvanzaCommands
                 throw new ArgumentException("The instrument allowlist is empty, so every order would be rejected (R2). Add names first: qa universe add ERIC-B");
             }
 
-            if (universe.Entries.Count > MaxStreamInstruments)
+            if (universe.Entries.Count > Allowlist.MaxNames)
             {
-                throw new ArgumentException($"Paper streams every allowlisted instrument; at most {MaxStreamInstruments} (ADR 0002 §3 load budget). The allowlist has {universe.Entries.Count}.");
+                throw new ArgumentException($"Paper polls every listed share; at most {Allowlist.MaxNames} (plan 22, ADR 0002 §3 load budget). The allowlist has {universe.Entries.Count}.");
+            }
+
+            if (universe.Entries.Count + universe.Exiting.Count > PaperPolling.MaxPolled)
+            {
+                throw new ArgumentException(
+                    $"The list and the exiting shares make {universe.Entries.Count + universe.Exiting.Count} to poll, more than {PaperPolling.MaxPolled} (plan 22): take a listed share off with 'qa universe remove' until the exiting ones are sold.");
             }
 
             string costsPath = Path.Combine(configDir, $"costs.{paper.Costs}.json");

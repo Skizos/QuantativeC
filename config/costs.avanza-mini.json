@@ -12,6 +12,12 @@
     "verified_on": null,
     "basis": "UNVERIFIED (2026-09-28, ADR 0005): a search-engine extract of Avanza's price list for foreign trading (avanza.se is not reachable from the development container): 0.25 %, minimum 1 USD for US shares, and the same in CAD for Canadian shares (the CAD minimum is assumed equal). The FX fee is this file's fx_fee_rate. Check against Avanza's 'Prislista för utlandshandel' and set verified_on."
   },
+  "marketplace_courtage": {
+    "FNSE": { "min": 1.0, "rate": 0.0025 },
+    "source_url": "https://www.avanza.se/konton-lan-prislista/prislista/handel-sverige.html",
+    "verified_on": null,
+    "basis": "UNVERIFIED (plan 22, 2026-09-30): a search-engine extract of Avanza's price list for trading in Sweden gives First North at 0.25 %, minimum 1 SEK, for both Start and Mini (avanza.se is not reachable from the development container); the owner's screenshot of 2026-09-26 said 'First North from 1 kr'. Check the price list and set verified_on. Start's free trades are taken to be for the main market only: First North trades pay this courtage and do not count towards the 500."
+  },
   "slippage_bps": 5.0,
   "half_spread_bps": 5.0,
   "participation_cap": 0.10,

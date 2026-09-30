@@ -14,8 +14,10 @@ namespace QuantAnalyst.Cli.Commands;
 
 /// <summary>What one import stored: the instrument (and whether it was new), the daily bars, and a foreign share's FX fixings.</summary>
 /// <param name="CorporateNote">Plan 21: the dividends and share count stored, or why they could not be read.</param>
+/// <param name="TradingModel">Plan 22: how a share outside XSTO was measured to trade; null for XSTO, US and Canadian shares.</param>
 internal sealed record InstrumentImportResult(
-    InstrumentTradingParams Params, WriteCounts Instrument, ImportReport Report, string? CalendarNote, FxImportReport? Fx = null, string? CorporateNote = null);
+    InstrumentTradingParams Params, WriteCounts Instrument, ImportReport Report, string? CalendarNote, FxImportReport? Fx = null, string? CorporateNote = null,
+    TradingModelEvidence? TradingModel = null);
 
 /// <summary>
 /// Imports one instrument's daily bars from Avanza's price chart (read-only) and updates the instrument master. The one
@@ -34,8 +36,10 @@ internal static class InstrumentImport
     /// Where a USD or CAD share's FX fixings come from (ADR 0005). They are imported first, so a share whose rates can't
     /// be read stores nothing.
     /// </param>
+    /// <param name="evidence">How the share was measured to trade, when the caller did it already (the app's Add checks first).</param>
     public static async Task<InstrumentImportResult> ImportAsync(
-        IBrokerGateway gateway, IFxRateSource fx, InstrumentTradingParams instrument, string storePath, string? configDir, DateOnly from, DateOnly to, CancellationToken ct)
+        IBrokerGateway gateway, IFxRateSource fx, InstrumentTradingParams instrument, string storePath, string? configDir, DateOnly from, DateOnly to, CancellationToken ct,
+        TradingModelEvidence? evidence = null)
     {
         ArgumentNullException.ThrowIfNull(gateway);
         ArgumentNullException.ThrowIfNull(fx);
@@ -50,12 +54,35 @@ internal static class InstrumentImport
         FxImportReport? fxReport = Markets.ForCurrency(instrument.Currency) is not null && Markets.IsForeign(instrument.Currency)
             ? await FxImporter.ImportAsync(history, fx, instrument.Currency, from.AddDays(-FxLeadDays), to, TimeProvider.System, ct).ConfigureAwait(false)
             : null;
-        WriteCounts written = history.UpsertInstrument(
-            InstrumentRecord.FromTradingParams(instrument), "avanza-orderbook", AvanzaConnection.OrderbookSourceVersion, instrument.KnownAtUtc);
+        (InstrumentRecord record, evidence) = await RecordAsync(gateway, instrument, history, ct, evidence).ConfigureAwait(false);
+        WriteCounts written = history.UpsertInstrument(record, "avanza-orderbook", AvanzaConnection.OrderbookSourceVersion, instrument.KnownAtUtc);
         var provider = new AvanzaChartImporter(gateway, TimeProvider.System, AvanzaConnection.PriceChartSourceVersion);
         ImportReport report = await new HistoryImporter(history, TimeProvider.System, calendar)
             .ImportAsync(provider, instrument.OrderbookId, from, to, ct).ConfigureAwait(false);
-        return new InstrumentImportResult(instrument, written, report, calendarNote, fxReport, await CorporateAsync(history, gateway, instrument.OrderbookId, ct).ConfigureAwait(false));
+        return new InstrumentImportResult(
+            instrument, written, report, calendarNote, fxReport, await CorporateAsync(history, gateway, instrument.OrderbookId, ct).ConfigureAwait(false), evidence);
+    }
+
+    /// <summary>
+    /// Plan 22: the instrument master row, with its trading model measured when the share is outside XSTO (one public chart
+    /// call, unless <paramref name="evidence"/> is given). An Unknown measurement keeps the model <paramref name="history"/>
+    /// has stored. The one place a row is built for storing: the import, the app's Add and the Paper history refresh.
+    /// </summary>
+    public static async Task<(InstrumentRecord Record, TradingModelEvidence? Evidence)> RecordAsync(
+        IBrokerGateway gateway, InstrumentTradingParams instrument, HistoryStore? history, CancellationToken ct, TradingModelEvidence? evidence = null)
+    {
+        ArgumentNullException.ThrowIfNull(gateway);
+        ArgumentNullException.ThrowIfNull(instrument);
+        InstrumentRecord record = InstrumentRecord.FromTradingParams(instrument);
+        bool refusedAnyway = Markets.ForCurrency(record.Currency) is null
+            || (!Markets.IsForeign(record.Currency) && !Allowlist.SwedishMarketplaces.Contains(record.MarketPlace, StringComparer.Ordinal));
+        if (TradingModelCheck.KnownContinuous(record.MarketPlace, record.Currency) || refusedAnyway)
+        {
+            return (record, null); // nothing to measure: continuous, or refused for its currency or marketplace first
+        }
+
+        evidence ??= await TradingModelCheck.MeasureAsync(gateway, instrument.OrderbookId, ct).ConfigureAwait(false);
+        return (TradingModelCheck.Apply(record, evidence, history?.GetInstrument(instrument.OrderbookId)?.Instrument.TradingModel), evidence);
     }
 
     /// <summary>
@@ -82,14 +109,25 @@ internal static class InstrumentImport
 
 /// <summary>
 /// Changing the allowlist (R2, <c>config/universe.json</c>). A name joins only from the instrument master, only in SEK,
-/// USD or CAD (ADR 0005: foreign shares trade on paper only), only when it trades continuously (plan 18: the backtest
-/// and every Paper decision refuse anything else), and only while there are fewer than <see cref="MaxNames"/>, because
-/// the Paper session streams every allowlisted name and refuses to start with more. Shared by
+/// USD or CAD (ADR 0005: foreign shares trade on paper only), only on a marketplace whose courtage is known, only when it
+/// trades continuously (plans 18 and 22: the fill model assumes it), and only while there are fewer than
+/// <see cref="MaxNames"/>, because the Paper session polls every listed name and refuses to start with more. Shared by
 /// <c>qa universe add|remove</c> and the app's share search.
 /// </summary>
 internal static class Allowlist
 {
-    public const int MaxNames = AvanzaCommands.MaxStreamInstruments;
+    /// <summary>
+    /// Plan 22: the most names on the list. Paper polls each share's market data (no stream since 2026-09-30); at 10 the
+    /// polls use about 70 % of the request budget and keep every quote under R15's 10 s (<see cref="PaperPolling"/>).
+    /// Confirm still streams each share and takes <see cref="AvanzaCommands.MaxStreamInstruments"/>.
+    /// </summary>
+    public const int MaxNames = 10;
+
+    /// <summary>
+    /// Plan 22: the Swedish marketplaces whose courtage the cost files give: Nasdaq Stockholm's main market and First
+    /// North (<c>marketplace_courtage.FNSE</c>). Spotlight, NGM and the rest cost more and are not modelled.
+    /// </summary>
+    public static IReadOnlyList<string> SwedishMarketplaces { get; } = ["XSTO", "FNSE"];
 
     /// <summary>The allowlist with <paramref name="ticker"/> added (unchanged when it is on it already).</summary>
     public static (Universe Universe, UniverseEntry Entry) Add(Universe universe, HistoryStore history, string ticker)
@@ -102,7 +140,8 @@ internal static class Allowlist
     }
 
     /// <summary>Throws with the reason when the instrument may not join <paramref name="universe"/> (a name already on it may).</summary>
-    public static void Check(Universe universe, InstrumentRecord instrument)
+    /// <param name="evidence">How the share was measured to trade (plan 22), for the reason given when it is refused.</param>
+    public static void Check(Universe universe, InstrumentRecord instrument, TradingModelEvidence? evidence = null)
     {
         ArgumentNullException.ThrowIfNull(universe);
         ArgumentNullException.ThrowIfNull(instrument);
@@ -111,7 +150,13 @@ internal static class Allowlist
             throw new ArgumentException($"{instrument.Ticker} trades in {instrument.Currency}; the program trades shares in {Markets.CurrencyList} (ADR 0005).");
         }
 
-        if (NotContinuous(instrument) is { } why)
+        if (!Markets.IsForeign(instrument.Currency) && !SwedishMarketplaces.Contains(instrument.MarketPlace, StringComparer.Ordinal))
+        {
+            throw new ArgumentException(
+                $"{instrument.Ticker} is listed on {Marketplace(instrument)}: the program knows the courtage for Nasdaq Stockholm (XSTO) and First North (FNSE) only, so it can't cost its trades.");
+        }
+
+        if (NotContinuous(instrument, evidence) is { } why)
         {
             throw new ArgumentException(why);
         }
@@ -119,23 +164,30 @@ internal static class Allowlist
         if (!universe.Contains(instrument.OrderbookId) && universe.Entries.Count >= MaxNames)
         {
             throw new ArgumentException(
-                $"The allowlist already has {universe.Entries.Count} names, the most a Paper session can stream ({MaxNames}). Remove one first.");
+                $"The allowlist already has {universe.Entries.Count} names, the most a Paper session polls ({MaxNames}). Remove one first.");
         }
     }
 
     /// <summary>
-    /// Plan 18 (P5): why a share that does not trade continuously can't be on the list, or null when it does. Only
-    /// Nasdaq Stockholm's main market (XSTO) and the US and Canadian exchanges are known as continuous; a First North
-    /// share may trade only in auctions. The backtest refuses such a share, and the Paper decision loads the whole list
-    /// the same way, so one of them would stop every decision, for every share.
+    /// Plan 18 (P5), plan 22: why a share that does not trade continuously can't be on the list, or null when it does.
+    /// Nasdaq Stockholm's main market (XSTO) and the US and Canadian exchanges trade continuously; a share elsewhere (First
+    /// North) is measured on its last week of trades (<see cref="TradingModelCheck"/>). The fill model assumes continuous
+    /// trading, so the backtest and the Paper decision leave out a share that trades only in auctions.
     /// </summary>
-    public static string? NotContinuous(InstrumentRecord instrument)
+    public static string? NotContinuous(InstrumentRecord instrument, TradingModelEvidence? evidence = null)
     {
         ArgumentNullException.ThrowIfNull(instrument);
-        return instrument.TradingModel == TradingModel.Continuous
-            ? null
-            : $"{instrument.Ticker} is listed on {Marketplace(instrument)}, not Nasdaq Stockholm's main market (XSTO), and its trading model is {instrument.TradingModel}: "
-                + "the backtest and every Paper decision refuse a share that does not trade continuously, so on the allowlist it would stop the decisions for every share (docs/plans/18-trading-lessons.md).";
+        return instrument.TradingModel switch
+        {
+            TradingModel.Continuous => null,
+            TradingModel.PeriodicAuction =>
+                $"{instrument.Ticker} is listed on {Marketplace(instrument)} and trades only in auctions ({evidence?.Reason ?? "Nasdaq's First North auction model"}): "
+                + "the backtest and the Paper fills assume continuous trading, so it can't be traded (docs/plans/22-first-north-and-ten-names.md).",
+            _ =>
+                $"{instrument.Ticker} is listed on {Marketplace(instrument)}, not Nasdaq Stockholm's main market (XSTO), and it can't be told yet whether it trades continuously"
+                + $" ({evidence?.Reason ?? "not measured: import it again with 'qa history import'"}). The backtest and the Paper fills assume continuous trading; try again when it has traded more"
+                + " (docs/plans/22-first-north-and-ten-names.md).",
+        };
     }
 
     private static string Marketplace(InstrumentRecord r) => string.IsNullOrWhiteSpace(r.MarketPlace) ? "an unknown marketplace" : $"'{r.MarketPlace}'";
@@ -194,4 +246,18 @@ internal static class Allowlist
         string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
 
     private static string Normalize(string t) => t.Trim().Replace('-', ' ').Replace('_', ' ');
+}
+
+/// <summary>
+/// Plan 22: how often Paper polls each share's market data. Every share is polled on the same interval, 0.7 s per share
+/// polled, at least 5 s (the old rate) and at most 7 s, so 10 shares make 1.43 requests/s (about 70 % of the 2/s budget,
+/// ADR 0002 §3) and a quote stays under R15's 10 s between polls.
+/// </summary>
+internal static class PaperPolling
+{
+    /// <summary>More shares than this (the list plus the exiting ones) would take the polls past the budget or R15.</summary>
+    public const int MaxPolled = 14;
+
+    public static TimeSpan Interval(int shares) =>
+        TimeSpan.FromMilliseconds(Math.Clamp(700 * Math.Max(shares, 1), 5_000, 7_000));
 }

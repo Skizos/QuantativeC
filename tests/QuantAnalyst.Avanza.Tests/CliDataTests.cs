@@ -201,6 +201,36 @@ public sealed class CliDataTests : IDisposable
         Assert.Contains("No dividends stored. 'qa history import ERIC-B' stores them", Qa(false, "history", "dividends", "ERIC-B", "--store", Store).Output, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true, "Trading model (plan 22): Continuous — it traded outside the auction times on 3 of 3 days last week.", null)]
+    [InlineData(false, "Trading model (plan 22): PeriodicAuction — it traded only at the auction times", "trades only in auctions")]
+    public void HistoryImport_OfAFirstNorthShare_MeasuresHowItTrades_AndTheListFollows(bool continuous, string measured, string? refused)
+    {
+        // Plan 22: the same share as if listed on First North; last week's 10-minute bars tell how it trades.
+        _server.Always(AvanzaRoutes.Orderbook, _ => FakeAvanza.Json(Fixtures.Mutate("orderbook-5240.json", n => n["marketPlace"] = "FNSE")));
+        _server.Always(AvanzaRoutes.PriceChart, r => r.RequestUri!.Query.Contains("ten_minutes", StringComparison.Ordinal)
+            ? ChartAnswers.TenMinuteWeek(continuous)
+            : FakeAvanza.Json(Fixtures.Bytes("price-chart-5240.json")));
+
+        (int code, string output, string error) = Qa(true, "history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store);
+        Assert.True(code == 0, output + error);
+        Assert.Contains(measured, output, StringComparison.Ordinal);
+        Assert.Contains(_server.Requests, r => r.PathAndQuery.EndsWith("?timePeriod=one_week&resolution=ten_minutes", StringComparison.Ordinal));
+
+        string config = Path.Combine(_root, "config");
+        Directory.CreateDirectory(config);
+        (code, output, error) = Qa(false, "universe", "add", "ERIC-B", "--config-dir", config, "--store", Store);
+        if (refused is null)
+        {
+            Assert.True(code == 0, error);
+        }
+        else
+        {
+            Assert.Equal(1, code);
+            Assert.Contains(refused, error, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public void StoreThatCannotBeOpened_IsAReadableError_NotACrash()
     {

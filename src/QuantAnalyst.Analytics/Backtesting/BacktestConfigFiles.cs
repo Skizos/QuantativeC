@@ -117,6 +117,12 @@ public sealed record IntradayHoldout(bool Locked, int Days, string Path)
 public sealed record ForeignCourtage(decimal Min, decimal Rate);
 
 /// <summary>
+/// A courtage class's courtage for Swedish shares on a marketplace other than Nasdaq Stockholm's main market (plan 22:
+/// First North), in SEK: max(min, rate × value).
+/// </summary>
+public sealed record MarketplaceCourtage(decimal Min, decimal Rate);
+
+/// <summary>
 /// A class that is free for its first trades (plan 17 A4; Avanza Start: 500 trades per 12 months, then Mini,
 /// UNVERIFIED): trades on Swedish shares past <see cref="Trades"/> within <see cref="Months"/> pay <see cref="Then"/>'s
 /// courtage.
@@ -155,6 +161,18 @@ public sealed record CostModel(
     /// <summary>Gets the courtage for shares in each foreign currency (USD, CAD), in that currency; empty when the file has none.</summary>
     public IReadOnlyDictionary<string, ForeignCourtage> Foreign { get; init; } = new Dictionary<string, ForeignCourtage>(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Gets the courtage for SEK shares on other Swedish marketplaces (plan 22), by Avanza's marketplace code (e.g.
+    /// "FNSE"); <see cref="CourtageMin"/>/<see cref="CourtageRate"/> are Nasdaq Stockholm's main market (XSTO).
+    /// </summary>
+    public IReadOnlyDictionary<string, MarketplaceCourtage> Marketplaces { get; init; } = new Dictionary<string, MarketplaceCourtage>(StringComparer.Ordinal);
+
+    /// <summary>Gets when the owner checked the marketplace courtage against Avanza's price list; null until then.</summary>
+    public DateOnly? MarketplaceVerifiedOn { get; init; }
+
+    /// <summary>The main market, whose courtage is the class's own.</summary>
+    public const string MainMarket = "XSTO";
+
     /// <summary>Gets the free-trade allowance (Start's 500 trades a year), or null when every trade pays the courtage.</summary>
     public FreeTradeAllowance? FreeTrades { get; init; }
 
@@ -171,12 +189,34 @@ public sealed record CostModel(
     /// Courtage for one order of <paramref name="notional"/> in <paramref name="currency"/>, in that currency: the Swedish
     /// courtage for SEK, the class's foreign courtage for USD and CAD (ADR 0005). Throws when the file has none for it.
     /// </summary>
-    public decimal CourtageIn(string currency, decimal notional) =>
+    /// <param name="marketPlace">Plan 22: a SEK share's marketplace; one other than XSTO pays its own courtage (<see cref="MarketplaceFor"/>).</param>
+    public decimal CourtageIn(string currency, decimal notional, string? marketPlace = null) =>
         string.Equals(currency, Currency, StringComparison.Ordinal)
-            ? Courtage(notional)
+            ? MarketplaceFor(marketPlace) is { } m ? Math.Max(m.Min, m.Rate * notional) : Courtage(notional)
             : ForeignFor(currency) is { } f
                 ? Math.Max(f.Min, f.Rate * notional)
                 : throw new BacktestConfigException($"The courtage class {Name} has no courtage for {currency} shares; add foreign_courtage.{currency} to costs.{Name}.json (ADR 0005).");
+
+    /// <summary>
+    /// Plan 22: the courtage of a Swedish marketplace other than the main market, or null for the main market (or none
+    /// given). Throws for a marketplace the class has no courtage for: its trades are never charged the main market's.
+    /// </summary>
+    public MarketplaceCourtage? MarketplaceFor(string? marketPlace) =>
+        string.IsNullOrEmpty(marketPlace) || string.Equals(marketPlace, MainMarket, StringComparison.Ordinal)
+            ? null
+            : Marketplaces.TryGetValue(marketPlace, out MarketplaceCourtage? c)
+                ? c
+                : throw new BacktestConfigException($"The courtage class {Name} has no courtage for shares on {marketPlace}; add marketplace_courtage.{marketPlace} to costs.{Name}.json (plan 22).");
+
+    /// <summary>
+    /// Plan 22: the own courtage of a Swedish panel share on another marketplace (First North), or null when it pays the
+    /// class's main-market courtage (or is foreign: <see cref="ForeignFor"/>).
+    /// </summary>
+    public MarketplaceCourtage? MarketplaceFor(PanelInstrument instrument)
+    {
+        ArgumentNullException.ThrowIfNull(instrument);
+        return instrument.ForeignCurrency ? null : MarketplaceFor(instrument.MarketPlace);
+    }
 
     /// <summary>The foreign courtage for <paramref name="currency"/>, or null.</summary>
     public ForeignCourtage? ForeignFor(string currency) => Foreign.GetValueOrDefault(currency);
@@ -272,6 +312,17 @@ public sealed record CostModel(
                 };
             }
 
+            if (root.TryGetProperty("marketplace_courtage", out JsonElement marketplaces))
+            {
+                model = model with
+                {
+                    Marketplaces = ReadMarketplaces(marketplaces, path),
+                    MarketplaceVerifiedOn = marketplaces.TryGetProperty("verified_on", out JsonElement mv) && mv.ValueKind == JsonValueKind.String
+                        ? DateOnly.ParseExact(mv.GetString()!, "yyyy-MM-dd", CultureInfo.InvariantCulture)
+                        : null,
+                };
+            }
+
             if (root.TryGetProperty("free_trades", out JsonElement free))
             {
                 model = allowFreeTrades
@@ -302,6 +353,43 @@ public sealed record CostModel(
         {
             throw new BacktestConfigException($"{path} is not a valid cost model: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// <c>marketplace_courtage</c> (plan 22): <c>{"FNSE": {"min", "rate"}, "source_url", "verified_on", "basis"}</c>, by
+    /// Avanza's marketplace code; not the main market (its courtage is the class's own). Every value ≥ 0, the rate below 10 %.
+    /// </summary>
+    private static Dictionary<string, MarketplaceCourtage> ReadMarketplaces(JsonElement marketplaces, string path)
+    {
+        var result = new Dictionary<string, MarketplaceCourtage>(StringComparer.Ordinal);
+        foreach (JsonProperty p in marketplaces.EnumerateObject())
+        {
+            if (p.Name is "source_url" or "verified_on" or "basis")
+            {
+                continue;
+            }
+
+            if (p.Name == MainMarket)
+            {
+                throw new BacktestConfigException($"{path}: marketplace_courtage.{MainMarket} is the main market, whose courtage is the file's own 'courtage'.");
+            }
+
+            var c = new MarketplaceCourtage(p.Value.GetProperty("min").GetDecimal(), p.Value.GetProperty("rate").GetDecimal());
+            if (c.Min < 0 || c.Rate < 0 || c.Rate >= 0.1m)
+            {
+                throw new BacktestConfigException($"{path}: marketplace_courtage.{p.Name} needs min >= 0 and rate in [0, 0.1).");
+            }
+
+            result[p.Name] = c;
+        }
+
+        if (marketplaces.TryGetProperty("verified_on", out JsonElement v) && v.ValueKind == JsonValueKind.String
+            && !DateOnly.TryParseExact(v.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+        {
+            throw new BacktestConfigException($"{path}: marketplace_courtage.verified_on must be null or a yyyy-MM-dd date.");
+        }
+
+        return result;
     }
 
     /// <summary>

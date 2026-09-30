@@ -23,6 +23,13 @@ Primary sources to check:
 - The uncross is random within a short window.
 
 **First North:** Nasdaq has announced a First North Growth Market **auction model** with **three scheduled intraday auctions** for some instruments (<https://view.news.eu.nasdaq.com/view?id=b6011b00da7e9e3cc866517ad4adb111d&lang=en>, extract only). **Consequence:** some First North names do not trade continuously. The instrument master needs a `trading_model` field (continuous vs periodic auction), and the backtest fill model must respect it.
+- *Re-checked 2026-09-30 (plan 22):* the model is for shares whose spread was above 7 % over two quarters, offered
+  instead of a liquidity provider; the auctions are at the 09:00 open, 11:00, 13:00, 15:00 and the 17:30 close; 15
+  Swedish and Finnish shares used it in January 2024; extended to Copenhagen in July 2025
+  ([Biostock](https://biostock.se/en/2024/01/nasdaq-introduces-auction-trading-on-first-north/),
+  [Nasdaq](https://view.news.eu.nasdaq.com/view?id=b7a88413341a94c95dea2b6f3a527d1ae&lang=en); search extracts). Every
+  other First North share trades continuously. No current list was found, so the program measures each share on its
+  last week of 10-minute bars (`TradingModelCheck`).
 
 Volatility guards and trading halts are not modelled in v1. When a halt occurs, the stale-data rule blocks orders.
 

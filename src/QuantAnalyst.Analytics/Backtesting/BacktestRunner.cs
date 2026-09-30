@@ -216,6 +216,10 @@ public static class BacktestRunner
                     ?? throw new BacktestConfigException($"The courtage class {request.Costs.Name} has no courtage for {p.Currency} shares ({p.Symbol}); add foreign_courtage.{p.Currency} to costs.{request.Costs.Name}.json (ADR 0005).");
                 engine.SetCourtage(i, (double)(c.Min * fx), (double)c.Rate);
             }
+            else if (request.Costs.MarketplaceFor(p) is { } own)
+            {
+                engine.SetCourtage(i, (double)own.Min, (double)own.Rate); // plan 22: First North pays its own courtage
+            }
         }
 
         IStrategy strategy = request.Strategy.Factory(data);
@@ -312,9 +316,10 @@ public static class BacktestRunner
         DateOnly? ranOut = null;
         foreach (TimedFill f in fills)
         {
-            if (data.Instruments[f.Fill.Instrument].ForeignCurrency)
+            PanelInstrument instrument = data.Instruments[f.Fill.Instrument];
+            if (instrument.ForeignCurrency || request.Costs.MarketplaceFor(instrument) is not null)
             {
-                continue; // foreign trades pay their own courtage and don't use the allowance
+                continue; // foreign and First North trades pay their own courtage and don't use the allowance (plan 22)
             }
 
             DateOnly day = data.Dates[f.Bar];
@@ -382,9 +387,11 @@ public static class BacktestRunner
         foreach (TimedFill f in result.Fills)
         {
             double paid = f.Fill.Courtage;
-            if (!request.Data.Instruments[f.Fill.Instrument].ForeignCurrency)
+            PanelInstrument instrument = request.Data.Instruments[f.Fill.Instrument];
+            if (!instrument.ForeignCurrency)
             {
-                paid = (double)other.Courtage((decimal)(f.Fill.Quantity * f.Fill.Price));
+                decimal notional = (decimal)(f.Fill.Quantity * f.Fill.Price);
+                paid = (double)(other.MarketplaceFor(instrument) is { } own ? Math.Max(own.Min, own.Rate * notional) : other.Courtage(notional)); // plan 22
                 extraAt[f.Bar] += paid - f.Fill.Courtage;
             }
 

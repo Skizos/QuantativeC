@@ -131,43 +131,79 @@ public sealed class CliTradingTests : IDisposable
         Assert.Empty(after.Exiting);
     }
 
-    [Fact]
-    public void Universe_RefusesAShareThatDoesNotTradeContinuously()
+    [Theory]
+    [InlineData("FNSE", "Unknown", "SMALL is listed on 'FNSE', not Nasdaq Stockholm's main market (XSTO), and it can't be told yet whether it trades continuously")]
+    [InlineData("FNSE", "PeriodicAuction", "SMALL is listed on 'FNSE' and trades only in auctions")]
+    [InlineData("SSME", "Continuous", "SMALL is listed on 'SSME': the program knows the courtage for Nasdaq Stockholm (XSTO) and First North (FNSE) only")]
+    public void Universe_RefusesAShareThatDoesNotTradeContinuously_OrWhoseCourtageIsNotKnown(string marketPlace, string model, string expected)
     {
-        // Plan 18, P5: the Paper decision loads the whole list the way the backtest does, which refuses such a share, so
-        // one of them on the list would stop every decision.
+        // Plan 18, P5 and plan 22: the fill model assumes continuous trading, and every trade is costed.
         using (var store = Data.Store.HistoryStore.Open(Store))
         {
             string ticks = Data.Store.InstrumentRecord.CanonicalTickTable(new Core.Instruments.TickSizeTable([new Core.Instruments.TickSizeBand(0m, 99_999m, 0.01m)]));
-            store.UpsertInstrument(new Data.Store.InstrumentRecord(new Core.OrderbookId("9999"), null, "SMALL", "Small AB", "SEK", "TEST-MARKET", "STOCK",
-                Data.Store.TradingModel.Unknown, 1m, ticks, new DateOnly(2026, 9, 1)), "test", "test", DateTimeOffset.UtcNow);
+            store.UpsertInstrument(new Data.Store.InstrumentRecord(new Core.OrderbookId("9999"), null, "SMALL", "Small AB", "SEK", marketPlace, "STOCK",
+                Enum.Parse<Data.Store.TradingModel>(model), 1m, ticks, new DateOnly(2026, 9, 1)), "test", "test", DateTimeOffset.UtcNow);
         }
 
         (int code, _, string error) = Qa("universe", "add", "SMALL", "--config-dir", Config, "--store", Store);
         Assert.Equal(1, code);
-        Assert.Contains("SMALL is listed on 'TEST-MARKET', not Nasdaq Stockholm's main market (XSTO), and its trading model is Unknown", error, StringComparison.Ordinal);
-        Assert.Contains("on the allowlist it would stop the decisions for every share", error, StringComparison.Ordinal);
+        Assert.Contains(expected, error, StringComparison.Ordinal);
         Assert.Empty(Trading.Risk.Universe.Load(Path.Combine(Config, Trading.Risk.Universe.FileName)).Entries);
     }
 
     [Fact]
-    public void Universe_RefusesASixthName_ThePaperSessionCouldNotStreamIt()
+    public void Universe_AddsAFirstNorthShareMeasuredAsContinuous()
     {
+        using (var store = Data.Store.HistoryStore.Open(Store))
+        {
+            string ticks = Data.Store.InstrumentRecord.CanonicalTickTable(new Core.Instruments.TickSizeTable([new Core.Instruments.TickSizeBand(0m, 99_999m, 0.01m)]));
+            store.UpsertInstrument(new Data.Store.InstrumentRecord(new Core.OrderbookId("9999"), null, "AIRA", "Aira", "SEK", "FNSE", "STOCK",
+                Data.Store.TradingModel.Continuous, 1m, ticks, new DateOnly(2026, 9, 1)), "test", "test", DateTimeOffset.UtcNow);
+        }
+
+        (int code, string output, string error) = Qa("universe", "add", "AIRA", "--config-dir", Config, "--store", Store);
+        Assert.True(code == 0, error);
+        Assert.Contains("AIRA", output, StringComparison.Ordinal);
+        Assert.Single(Trading.Risk.Universe.Load(Path.Combine(Config, Trading.Risk.Universe.FileName)).Entries);
+    }
+
+    [Theory]
+    [InlineData(1, 5000)]
+    [InlineData(5, 5000)] // as before plan 22
+    [InlineData(8, 5600)]
+    [InlineData(10, 7000)] // 1.43 requests/s
+    [InlineData(14, 7000)]
+    public void PaperPolls_LessOftenAsTheListGrows_WithinTheBudgetAndR15(int shares, int milliseconds)
+    {
+        TimeSpan every = PaperPolling.Interval(shares);
+        Assert.Equal(TimeSpan.FromMilliseconds(milliseconds), every);
+        Assert.True(every < TimeSpan.FromSeconds(10), "a quote stays under R15's 10 s between polls");
+        Assert.True(Math.Min(shares, Allowlist.MaxNames) / every.TotalSeconds <= 1.5, "the list's polls stay under 75 % of the 2 requests/s budget");
+    }
+
+    [Fact]
+    public void Universe_TakesASixthName_ButRefusesAnEleventh_ThePaperSessionPollsTen()
+    {
+        // Plan 22: 5 was the stream limit; Paper polls now, 10 names at most.
         string file = Path.Combine(Config, Trading.Risk.Universe.FileName);
         new Trading.Risk.Universe(Enumerable.Range(1, 5).Select(i => new Trading.Risk.UniverseEntry(new Core.OrderbookId($"{i}"), $"T{i}", $"Name {i}"))).Save(file);
         Assert.Equal(0, Qa("history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store,
             "--state-dir", State, "--login", "totp").Code);
+        Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
+        Assert.Equal(6, Trading.Risk.Universe.Load(file).Entries.Count);
+        Assert.Equal(0, Qa("universe", "remove", "ERIC-B", "--config-dir", Config).Code);
 
+        new Trading.Risk.Universe(Enumerable.Range(1, 10).Select(i => new Trading.Risk.UniverseEntry(new Core.OrderbookId($"{i}"), $"T{i}", $"Name {i}"))).Save(file);
         (int code, _, string error) = Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store);
         Assert.Equal(1, code);
-        Assert.Contains("already has 5 names, the most a Paper session can stream (5). Remove one first.", error, StringComparison.Ordinal);
-        Assert.Equal(5, Trading.Risk.Universe.Load(file).Entries.Count);
+        Assert.Contains("already has 10 names, the most a Paper session polls (10). Remove one first.", error, StringComparison.Ordinal);
+        Assert.Equal(10, Trading.Risk.Universe.Load(file).Entries.Count);
 
         // A name already on the list may be added again (nothing changes).
         Assert.Equal(0, Qa("universe", "remove", "T1", "--config-dir", Config).Code);
         Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
         Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
-        Assert.Equal(5, Trading.Risk.Universe.Load(file).Entries.Count);
+        Assert.Equal(10, Trading.Risk.Universe.Load(file).Entries.Count);
     }
 
     [Fact]

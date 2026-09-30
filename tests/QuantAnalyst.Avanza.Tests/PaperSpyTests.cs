@@ -88,14 +88,25 @@ public sealed class PaperSpyTests : IDisposable
          "--promotion-dir", Path.Combine(_root, "promotion"), "--reports-dir", Path.Combine(_root, "reports"), "--login", "totp"];
 
     /// <summary>Runs the CLI on a worker while this thread moves the fake clock (the session polls ERIC B's prices: 70.84 / 70.86).</summary>
-    private async Task<(int Code, string Output, string Error)> RunPaper(double seconds, Action<DateTimeOffset>? onTick = null, bool savedStrategy = false)
+    /// <param name="setupCalls">
+    /// Setup makes more calls than the test's rate-limit burst (plan 22: ten names): the clock then creeps forward by 50 ms
+    /// steps until the first poll, so the token bucket refills; the session starts a few seconds after 09:09:40.
+    /// </param>
+    private async Task<(int Code, string Output, string Error)> RunPaper(double seconds, Action<DateTimeOffset>? onTick = null, bool savedStrategy = false, bool setupCalls = false)
     {
         int before = _server.Requests.Count;
         Task<(int, string, string)> run = Task.Run(() => Qa(_time, PaperArgs(seconds, savedStrategy)), TestContext.Current.CancellationToken);
 
         // Login and setup need no clock; hold the fake clock until the session polls its first price (or stops), so it
         // starts at 09:09:40 however slow the machine is.
-        await Task.WhenAny(FirstPoll(before), run).WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
+        Task first = Task.WhenAny(FirstPoll(before), run);
+        while (setupCalls && !first.IsCompleted)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+            _time.Advance(TimeSpan.FromMilliseconds(50));
+        }
+
+        await first.WaitAsync(TimeSpan.FromSeconds(60), TestContext.Current.CancellationToken);
         var deadline = DateTime.UtcNow.AddSeconds(90);
         while (!run.IsCompleted && DateTime.UtcNow < deadline)
         {
@@ -332,6 +343,92 @@ public sealed class PaperSpyTests : IDisposable
               "realized_pnl": 0, "start_of_day_value": 0, "saved_utc": "2026-09-25T15:30:00Z"{{through}},
               "positions": [ {{position}} ] }
             """);
+    }
+
+    [Fact]
+    public async Task AListedShareThatTradesOnlyInAuctions_IsLeftOut_TheOthersStillTrade()
+    {
+        // Plan 22: SMALL (First North) was measured as trading in auctions after it joined the list. Before, one such
+        // share stopped the decision for every share (plan 18).
+        PrepareHistoryAndUniverse();
+        string ticks = Data.Store.InstrumentRecord.CanonicalTickTable(new Core.Instruments.TickSizeTable([new Core.Instruments.TickSizeBand(0m, 99_999m, 0.01m)]));
+        using (var store = Data.Store.HistoryStore.Open(Store))
+        {
+            var known = new DateTimeOffset(2026, 9, 25, 18, 0, 0, TimeSpan.Zero);
+            store.UpsertInstrument(new Data.Store.InstrumentRecord(new Core.OrderbookId("9999"), null, "SMALL", "Small AB", "SEK", "FNSE", "STOCK",
+                Data.Store.TradingModel.PeriodicAuction, 1m, ticks, new DateOnly(2026, 9, 1)), "test", "test", known);
+            store.UpsertDailyBars(new Core.OrderbookId("9999"),
+                [new Core.Market.DailyBar(new DateOnly(2026, 9, 24), 10m, 10m, 10m, 10m, 100), new Core.Market.DailyBar(new DateOnly(2026, 9, 25), 10m, 10m, 10m, 10m, 100)],
+                Data.History.AvanzaChartImporter.AvanzaPriceChart, "test", known);
+        }
+
+        File.WriteAllText(Path.Combine(Config, "universe.json"), """
+            { "format": "qa-universe/1", "instruments": [ { "orderbook_id": "5240", "ticker": "ERIC B", "name": "Ericsson B" }, { "orderbook_id": "9999", "ticker": "SMALL", "name": "Small AB" } ] }
+            """);
+        _server.Always(AvanzaRoutes.Orderbook, r => FakeAvanza.Json(r.RequestUri!.AbsolutePath.EndsWith("/9999", StringComparison.Ordinal)
+            ? Fixtures.Mutate("orderbook-5240.json", n =>
+            {
+                n["id"] = "9999";
+                n["marketPlace"] = "FNSE";
+                n["tickerSymbol"] = "SMALL";
+                n["name"] = "Small AB";
+            })
+            : Fixtures.Bytes("orderbook-5240.json")));
+        _server.Always(AvanzaRoutes.MarketData, _ => FakeAvanza.Json(Fixtures.Bytes("marketdata-5240.json")));
+
+        (int code, string output, string error) = await RunPaper(seconds: 60);
+
+        Assert.True(code == 0, output + error);
+        Assert.True(output.Contains("SMALL: not traded, it does not trade continuously (plan 22); take it off the list with 'qa universe remove SMALL'", StringComparison.Ordinal), output);
+        Assert.Contains("SMALL: hold (no target today)", output, StringComparison.Ordinal);
+        Assert.Contains("decision: 1 order(s)", output, StringComparison.Ordinal);
+        Assert.Contains("ERIC B: Accepted", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TenNames_AreTraded_EachPolledAboutEverySevenSeconds()
+    {
+        // Plan 22: ERIC B and nine more Stockholm shares (the same prices under other ids).
+        PrepareHistoryAndUniverse();
+        string ticks = Data.Store.InstrumentRecord.CanonicalTickTable(new Core.Instruments.TickSizeTable([new Core.Instruments.TickSizeBand(0m, 99_999m, 0.01m)]));
+        string[] ids = [.. Enumerable.Range(9001, 9).Select(i => i.ToString(System.Globalization.CultureInfo.InvariantCulture))];
+        using (var store = Data.Store.HistoryStore.Open(Store))
+        {
+            var known = new DateTimeOffset(2026, 9, 25, 18, 0, 0, TimeSpan.Zero);
+            foreach (string id in ids)
+            {
+                store.UpsertInstrument(new Data.Store.InstrumentRecord(new Core.OrderbookId(id), null, $"S{id}", $"Share {id}", "SEK", "XSTO", "STOCK",
+                    Data.Store.TradingModel.Continuous, 1m, ticks, new DateOnly(2026, 9, 1)), "test", "test", known);
+                store.UpsertDailyBars(new Core.OrderbookId(id),
+                    [new Core.Market.DailyBar(new DateOnly(2026, 9, 24), 70m, 71m, 69m, 70.4m, 1000), new Core.Market.DailyBar(new DateOnly(2026, 9, 25), 70.4m, 71m, 70m, 70.9m, 1000)],
+                    Data.History.AvanzaChartImporter.AvanzaPriceChart, "test", known);
+            }
+        }
+
+        Trading.Risk.Universe list = Trading.Risk.Universe.Load(Path.Combine(Config, "universe.json"));
+        foreach (string id in ids)
+        {
+            list = list.With(new Trading.Risk.UniverseEntry(new Core.OrderbookId(id), $"S{id}", $"Share {id}"));
+        }
+
+        list.Save(Path.Combine(Config, "universe.json"));
+        _server.Always(AvanzaRoutes.Orderbook, r => FakeAvanza.Json(r.RequestUri!.AbsolutePath.Split('/')[^1] is var id && id != "5240"
+            ? Fixtures.Mutate("orderbook-5240.json", n =>
+            {
+                n["id"] = id;
+                n["tickerSymbol"] = $"S{id}";
+                n["name"] = $"Share {id}";
+            })
+            : Fixtures.Bytes("orderbook-5240.json")));
+        _server.Always(AvanzaRoutes.MarketData, _ => FakeAvanza.Json(Fixtures.Bytes("marketdata-5240.json")));
+        int before = _server.Requests.Count;
+
+        (int code, string output, string error) = await RunPaper(seconds: 60, setupCalls: true);
+
+        Assert.True(code == 0, output + error);
+        Assert.True(output.Contains("decision: 10 order(s).", StringComparison.Ordinal), output);
+        int[] polls = [.. ids.Append("5240").Select(id => _server.Requests.Skip(before).Count(r => r.PathAndQuery == AvanzaRoutes.MarketData.Path(id)))];
+        Assert.All(polls, n => Assert.InRange(n, 7, 11)); // about 60 s / 7 s, not 60 s / 5 s = 13
     }
 
     [Fact]

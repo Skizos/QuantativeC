@@ -256,6 +256,43 @@ public sealed class MarketSearchTests : IDisposable
     }
 
     [Fact]
+    public async Task AFirstNorthShareTradingOnlyInAuctions_IsRefused_BeforeItsImport()
+    {
+        // Plan 22: the share is measured (one public chart call) before anything is imported.
+        _server.Always(AvanzaRoutes.Orderbook, _ => FakeAvanza.Json(Fixtures.Mutate("orderbook-5240.json", n => n["marketPlace"] = "FNSE")));
+        _server.Always(AvanzaRoutes.PriceChart, _ => ChartAnswers.TenMinuteWeek(continuous: false));
+        var session = new MarketSearchSession();
+        Task<int> run = Start(session);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => session.AddAsync(new OrderbookId("5240"), Store, Config, Today));
+        session.Close();
+        Assert.Equal(0, await run);
+
+        Assert.Contains("ERIC B is listed on 'FNSE' and trades only in auctions (it traded only at the auction times", ex.Message, StringComparison.Ordinal);
+        Assert.Equal(1, _server.CountFor(AvanzaRoutes.PriceChart)); // last week's 10-minute bars, no daily import
+        Assert.Empty(Universe.Load(UniverseFile).Entries);
+    }
+
+    [Fact]
+    public async Task AFirstNorthShareTradingContinuously_IsAdded_AndTheImportDoesNotMeasureItTwice()
+    {
+        _server.Always(AvanzaRoutes.Orderbook, _ => FakeAvanza.Json(Fixtures.Mutate("orderbook-5240.json", n => n["marketPlace"] = "FNSE")));
+        _server.Always(AvanzaRoutes.PriceChart, r => r.RequestUri!.Query.Contains("ten_minutes", StringComparison.Ordinal)
+            ? ChartAnswers.TenMinuteWeek(continuous: true)
+            : FakeAvanza.Json(Fixtures.Bytes("price-chart-5240.json")));
+        var session = new MarketSearchSession();
+        Task<int> run = Start(session);
+
+        AddedShare added = await session.AddAsync(new OrderbookId("5240"), Store, Config, Today);
+        session.Close();
+        Assert.Equal(0, await run);
+
+        Assert.Equal(Data.Store.TradingModel.Continuous, added.Import.TradingModel!.Model);
+        Assert.Single(_server.Requests, r => r.PathAndQuery.Contains("ten_minutes", StringComparison.Ordinal));
+        Assert.Contains(added.Entry, Universe.Load(UniverseFile).Entries);
+    }
+
+    [Fact]
     public async Task AFullList_IsRefusedBeforeAnyImport()
     {
         new Universe(Enumerable.Range(1, Allowlist.MaxNames).Select(i => new UniverseEntry(new OrderbookId($"{i}"), $"T{i}", $"Name {i}"))).Save(UniverseFile);
@@ -263,7 +300,7 @@ public sealed class MarketSearchTests : IDisposable
         Task<int> run = Start(session);
 
         var ex = await Assert.ThrowsAsync<ArgumentException>(() => session.AddAsync(new OrderbookId("5240"), Store, Config, Today));
-        Assert.Contains("already has 5 names", ex.Message, StringComparison.Ordinal);
+        Assert.Contains($"already has {Allowlist.MaxNames} names", ex.Message, StringComparison.Ordinal);
         Assert.Equal(0, _server.CountFor(AvanzaRoutes.PriceChart));
         Assert.Equal(Allowlist.MaxNames, Universe.Load(UniverseFile).Entries.Count);
 

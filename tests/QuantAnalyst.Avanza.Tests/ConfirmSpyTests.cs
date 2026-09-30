@@ -177,6 +177,20 @@ public sealed class ConfirmSpyTests : IDisposable
         return (code, output.ToString(), error.ToString());
     }
 
+    [Fact]
+    public void AListOfMoreThanFive_IsRefusedByConfirm_BeforeAnyLogin_PaperTakesTen()
+    {
+        // Plan 22: Paper polls up to 10 shares; Confirm still streams each share's order book (ADR 0002 §3), at most 5.
+        new Trading.Risk.Universe(Enumerable.Range(1, 6).Select(i => new Trading.Risk.UniverseEntry(new Core.OrderbookId($"{i}"), $"T{i}", $"Name {i}")))
+            .Save(Path.Combine(Config, "universe.json"));
+
+        (int code, _, string error) = Qa(TimeProvider.System, Args(TradeRun));
+
+        Assert.NotEqual(0, code);
+        Assert.Contains("Confirm streams each share's order book, at most 5 (ADR 0002 §3); the list has 6", error, StringComparison.Ordinal);
+        Assert.Empty(_server.Requests);
+    }
+
     private void PrepareHistoryAndUniverse()
     {
         Assert.Equal(0, Qa(TimeProvider.System, "history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store,

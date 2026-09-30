@@ -151,7 +151,7 @@ public sealed class CliUsabilityTests : IDisposable
         (int code, string output, string error) = Status();
         Assert.True(code == 0, error);
         Assert.Contains("FAIL  Allowlist", output, StringComparison.Ordinal);
-        Assert.Contains("SMALL is listed on 'TEST-MARKET', not Nasdaq Stockholm's main market (XSTO), and its trading model is Unknown", output, StringComparison.Ordinal);
+        Assert.Contains("SMALL is listed on 'TEST-MARKET', not Nasdaq Stockholm's main market (XSTO), and it can't be told yet whether it trades continuously", output, StringComparison.Ordinal);
         Assert.Contains(
             "warn  Intraday bars  collected to 2026-09-24; missing 2026-09-23, 2026-09-25 (the catch-up still reaches them as 10-minute bars); lost 2026-09-15, 2026-09-16, 2026-09-17, 2026-09-18 (older than a week)",
             output, StringComparison.Ordinal);

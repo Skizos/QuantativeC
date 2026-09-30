@@ -68,7 +68,7 @@ public sealed class InstrumentsViewModel : PageViewModel
     private string _chartNote = string.Empty;
 
     public InstrumentsViewModel(Workspace workspace, QaEngine engine, Func<string> login, IMarketSearch search, TimeProvider time)
-        : base(PageKind.Instruments, "Instruments", "The Swedish shares the strategy may trade (1–5 names).", engine)
+        : base(PageKind.Instruments, "Instruments", "The shares the strategy may trade (1–10 names).", engine)
     {
         _workspace = workspace;
         _login = login;
@@ -338,7 +338,7 @@ public sealed class InstrumentsViewModel : PageViewModel
 
     /// <summary>
     /// Whether <paramref name="hit"/> may join <paramref name="universe"/>, or why not: the rules the allowlist and the
-    /// Paper session enforce (R2, SEK only, 5 names, R6's limit per order), shown before you press Add.
+    /// Paper session enforce (R2, SEK/USD/CAD only, 10 names, R6's limit per order), shown before you press Add.
     /// </summary>
     /// <param name="sekPerUnit">The latest FX fixing for a USD or CAD share (ADR 0005), or null when none is stored yet (then Add decides).</param>
     internal static (bool CanAdd, bool OnList, string Why) Verdict(InstrumentSearchHit hit, Universe universe, decimal? orderLimit, decimal? sekPerUnit = null)

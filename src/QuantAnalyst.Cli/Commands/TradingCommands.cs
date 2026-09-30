@@ -95,7 +95,7 @@ internal static partial class TradingCommands
         var addTickers = new Argument<string[]>("tickers") { Description = "Tickers from the instrument master, e.g. ERIC-B VOLV-B", Arity = ArgumentArity.OneOrMore };
         var addConfig = ConfigDirOption();
         var store = DataCommands.StoreOption();
-        var add = new Command("add", "Add instruments by ticker, looked up offline in the instrument master (run 'qa history import <TICKER>' first). Shares in SEK, USD or CAD (USD and CAD trade on paper only, ADR 0005); at most 5 names (a Paper session streams them all).");
+        var add = new Command("add", "Add instruments by ticker, looked up offline in the instrument master (run 'qa history import <TICKER>' first). Shares in SEK, USD or CAD (USD and CAD trade on paper only, ADR 0005); at most 10 names (a Paper session polls them all; Confirm streams at most 5).");
         add.Arguments.Add(addTickers);
         add.Options.Add(addConfig);
         add.Options.Add(store);

@@ -73,10 +73,10 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
 
     /// <summary>
     /// Courtage plus FX fee, in SEK, the model charges for an order of <paramref name="value"/> in <paramref name="currency"/>
-    /// (the risk engine's R9 input).
+    /// (the risk engine's R9 input). <paramref name="marketPlace"/>: a First North share pays its own courtage (plan 22).
     /// </summary>
-    public decimal EstimateFees(decimal value, string currency) =>
-        CourtageSek(value, currency) + FxFee(value, currency);
+    public decimal EstimateFees(decimal value, string currency, string? marketPlace = null) =>
+        CourtageSek(value, currency, marketPlace) + FxFee(value, currency);
 
     public Task<OrderSubmitResult> PlaceAsync(ApprovedOrder order, CancellationToken ct)
     {
@@ -98,7 +98,7 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
             string currency = spec.Currency;
             if (order.Side == OrderSide.Buy)
             {
-                decimal needed = (order.Volume * order.LimitPrice * Rate(currency)) + EstimateFees(order.Volume * order.LimitPrice, currency);
+                decimal needed = (order.Volume * order.LimitPrice * Rate(currency)) + EstimateFees(order.Volume * order.LimitPrice, currency, spec.MarketPlace);
                 decimal available = _book.Cash - _book.Reserved;
                 if (needed > available)
                 {
@@ -243,7 +243,7 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
     private void Fill(Resting r, long quantity, decimal price, string why)
     {
         decimal cumulative = r.FilledValue + (quantity * price);
-        decimal courtage = Math.Max(0m, CourtageSek(cumulative, r.Spec.Currency) - r.CourtagePaid);
+        decimal courtage = Math.Max(0m, CourtageSek(cumulative, r.Spec.Currency, r.Spec.MarketPlace) - r.CourtagePaid);
         decimal fx = FxFee(quantity * price, r.Spec.Currency);
         DateTimeOffset now = _time.GetUtcNow();
 
@@ -275,7 +275,7 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
 
         // The rest at the limit (in SEK) plus the courtage still to pay on the whole order and the FX fee.
         decimal rest = r.Remaining * r.Order.LimitPrice;
-        decimal courtageLeft = Math.Max(0m, CourtageSek(r.FilledValue + rest, r.Spec.Currency) - r.CourtagePaid);
+        decimal courtageLeft = Math.Max(0m, CourtageSek(r.FilledValue + rest, r.Spec.Currency, r.Spec.MarketPlace) - r.CourtagePaid);
         _book.Reserve(r.Order.ClientOrderId, (rest * Rate(r.Spec.Currency)) + courtageLeft + FxFee(rest, r.Spec.Currency));
     }
 
@@ -283,8 +283,8 @@ public sealed class PaperOrderChannel : ISimulatedOrderChannel, IBrokerStateSour
     private decimal Rate(string currency) =>
         _fx.SekPerUnit(currency) ?? throw new InvalidOperationException($"No {currency}/SEK rate is known to the paper channel.");
 
-    /// <summary>The class's courtage on <paramref name="value"/> in the share's currency, in SEK (ADR 0005).</summary>
-    private decimal CourtageSek(decimal value, string currency) => Round(_costs.CourtageIn(currency, value) * Rate(currency));
+    /// <summary>The class's courtage on <paramref name="value"/> in the share's currency, in SEK (ADR 0005); First North's own (plan 22).</summary>
+    private decimal CourtageSek(decimal value, string currency, string? marketPlace) => Round(_costs.CourtageIn(currency, value, marketPlace) * Rate(currency));
 
     /// <summary>The FX fee on a foreign share's <paramref name="value"/>, in SEK; none for SEK.</summary>
     private decimal FxFee(decimal value, string currency) =>

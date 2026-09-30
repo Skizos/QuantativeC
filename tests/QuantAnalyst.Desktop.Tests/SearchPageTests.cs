@@ -194,7 +194,7 @@ public sealed class SearchPageTests : IDisposable
     public void AFullList_TakesNoMoreNames_ButANameOnItStillShowsAsOnIt()
     {
         var full = new Universe(Enumerable.Range(1, Allowlist.MaxNames).Select(i => new UniverseEntry(new OrderbookId($"{i}"), $"T{i}", $"Name {i}")));
-        Assert.Equal((false, false, "Your list is full (5 names): remove one first"), InstrumentsViewModel.Verdict(EricB, full, 500m));
+        Assert.Equal((false, false, "Your list is full (10 names): remove one first"), InstrumentsViewModel.Verdict(EricB, full, 500m));
         var onIt = new InstrumentSearchHit(new OrderbookId("3"), "Name 3", "STOCK", "Stockholmsbörsen", true, 10m, "SEK") { Ticker = "T3" };
         Assert.Equal((false, true, "On your list"), InstrumentsViewModel.Verdict(onIt, full, 500m));
         Assert.Equal((true, false, string.Empty), InstrumentsViewModel.Verdict(Evolution, Universe.Empty, null)); // no limit known: Add decides

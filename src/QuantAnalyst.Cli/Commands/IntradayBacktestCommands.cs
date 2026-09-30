@@ -372,7 +372,7 @@ internal static partial class IntradayBacktestCommands
             }
 
             TickSizeTable ticks = record is null ? MarketOrdersOnly : BacktestCommands.ParseTickTable(record.TickTableJson);
-            series.Add((new PanelInstrument(name.Ticker, 1, false, ticks) { HalfSpreadBps = halfSpread }, kept));
+            series.Add((new PanelInstrument(name.Ticker, 1, false, ticks) { HalfSpreadBps = halfSpread, MarketPlace = record?.MarketPlace }, kept));
         }
 
         if (series.Count == 0)

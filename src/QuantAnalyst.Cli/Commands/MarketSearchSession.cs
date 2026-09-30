@@ -4,6 +4,7 @@ using QuantAnalyst.Core;
 using QuantAnalyst.Core.Broker;
 using QuantAnalyst.Core.Instruments;
 using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Store;
 using QuantAnalyst.Trading.Risk;
 
@@ -55,10 +56,18 @@ internal sealed class MarketSearchSession
             IBrokerGateway gateway = connection.Gateway;
             InstrumentTradingParams p = await gateway.GetTradingParamsAsync(id, ct).ConfigureAwait(false);
             string ticker = p.TickerSymbol ?? throw new ArgumentException($"{p.Name} has no ticker at Avanza, so it can't be added.");
-            Allowlist.Check(Universe.Load(Path.Combine(configDir, Universe.FileName)), InstrumentRecord.FromTradingParams(p));
+            // Plan 22: a share outside XSTO is measured first (one public chart call), so a refused one costs no import.
+            InstrumentRecord record;
+            TradingModelEvidence? evidence;
+            using (HistoryStore? stored = File.Exists(storePath) ? HistoryStore.Open(storePath) : null) // a quiet week keeps what the store knows
+            {
+                (record, evidence) = await InstrumentImport.RecordAsync(gateway, p, stored, ct).ConfigureAwait(false);
+            }
+
+            Allowlist.Check(Universe.Load(Path.Combine(configDir, Universe.FileName)), record, evidence);
             InstrumentImportResult imported = await InstrumentImport.ImportAsync(
                 gateway, _fx ?? throw new InvalidOperationException("The search session has not started."), p, storePath, configDir,
-                today.AddYears(-InstrumentImport.AppYears), today, ct).ConfigureAwait(false);
+                today.AddYears(-InstrumentImport.AppYears), today, ct, evidence).ConfigureAwait(false);
             UniverseEntry entry = Allowlist.AddAndSave(configDir, storePath, ticker);
             return new AddedShare(entry, imported);
         });

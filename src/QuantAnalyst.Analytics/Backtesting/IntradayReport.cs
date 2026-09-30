@@ -149,7 +149,8 @@ public static class IntradayReport
             foreach (TimedFill f in g)
             {
                 double value = f.Fill.Quantity * f.Fill.Price;
-                double fee = (data.Instruments[f.Fill.Instrument].ForeignCurrency ? f.Fill.Courtage : (double)courtageAt.Courtage((decimal)value)) + f.Fill.FxFee;
+                PanelInstrument instrument = data.Instruments[f.Fill.Instrument];
+                double fee = (instrument.ForeignCurrency ? f.Fill.Courtage : (double)courtageAt.CourtageIn(instrument.Currency, (decimal)value, instrument.MarketPlace)) + f.Fill.FxFee;
                 if (f.Fill.Side == BacktestSide.Buy)
                 {
                     bought += value + fee;

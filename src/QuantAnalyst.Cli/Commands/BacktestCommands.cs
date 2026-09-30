@@ -498,7 +498,7 @@ internal static class BacktestCommands
             }
             else
             {
-                instrument = new PanelInstrument(r.Ticker, 1, false, ParseTickTable(r.TickTableJson));
+                instrument = new PanelInstrument(r.Ticker, 1, false, ParseTickTable(r.TickTableJson)) { MarketPlace = r.MarketPlace }; // plan 22: First North's courtage
             }
 
             series.Add((instrument, daily));

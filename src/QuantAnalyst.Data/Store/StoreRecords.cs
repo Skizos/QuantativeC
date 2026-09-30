@@ -31,7 +31,8 @@ public sealed record InstrumentRecord(
     /// <summary>
     /// Builds the master row from the broker's orderbook parameters. Nasdaq Stockholm main market (XSTO) trades
     /// continuously, and so do the US and Canadian shares Avanza offers (ADR 0005: USD and CAD, listed on exchanges with
-    /// continuous trading); anything else stays <see cref="TradingModel.Unknown"/> until classified.
+    /// continuous trading); anything else stays <see cref="TradingModel.Unknown"/> until measured
+    /// (<see cref="History.TradingModelCheck"/>, plan 22).
     /// </summary>
     public static InstrumentRecord FromTradingParams(InstrumentTradingParams p) => new(
         p.OrderbookId,
@@ -41,7 +42,7 @@ public sealed record InstrumentRecord(
         p.Currency,
         p.MarketPlace,
         p.InstrumentType,
-        string.Equals(p.MarketPlace, "XSTO", StringComparison.Ordinal) || p.Currency is "USD" or "CAD" ? TradingModel.Continuous : TradingModel.Unknown,
+        History.TradingModelCheck.KnownContinuous(p.MarketPlace, p.Currency) ? TradingModel.Continuous : TradingModel.Unknown,
         p.VolumeFactor,
         CanonicalTickTable(p.TickSizes),
         DateOnly.FromDateTime(MarketTime.ToStockholm(p.KnownAtUtc).DateTime));

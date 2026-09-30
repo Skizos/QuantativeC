@@ -79,7 +79,7 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
     - **On your list** (a green tick)
     - **Trades in EUR** (or another currency): the program trades shares in SEK, USD and CAD (US and Canadian shares on
       paper only, ADR 0005). A US or Canadian hit also shows its price in kronor ("≈ 2 350 kr") once a fixing is stored.
-    - **Your list is full (5 names)**: a Paper session streams at most 5; remove one first (you can, while searching)
+    - **Your list is full (10 names)**: a Paper session polls at most 10; remove one first (you can, while searching)
     - **One share costs more than an order may (500,00 kr)**: R6 with the 5 000 kr account cap
     - **Not tradable at Avanza**
   - **Add** imports 3 years of daily prices and allows the share (the same code as `qa history import` and
@@ -129,16 +129,17 @@ or Auto, or promote the mode: those are your commands.
 
 1. **Build and check:** `.\qa status`. The first run builds everything (a few minutes). The "Native engine" line must be `ok`. Prerequisites are in `docs/setup.md`.
 2. **Log in once:** `.\qa login`. Scan the QR code with the BankID app and approve. This checks the connection; nothing is changed on your account.
-3. **Choose what may be traded** (the allowlist, 1–5 Swedish shares). In the app: **Instruments → Find a share**, type a
+3. **Choose what may be traded** (the allowlist, 1–10 shares). In the app: **Instruments → Find a share**, type a
    name and press **Add** (§0). In the terminal:
    ```powershell
    .\qa history import ERIC-B       # adds it to the instrument master and imports a year of daily bars
    .\qa universe add ERIC-B         # allows it to be traded
    ```
-   Repeat for each name, at most 5 (`qa universe add` refuses a 6th). `ERIC-B` and `"ERIC B"` are the same ticker.
+   Repeat for each name, at most 10 (`qa universe add` refuses an 11th; Confirm, later, takes at most 5). `ERIC-B` and `"ERIC B"` are the same ticker.
    - **With 5,000 SEK the limits are small:** at most 500 SEK per order and 1,000 SEK (20 %) per name (`.\qa risk-limits`).
      - A share priced above 500 SEK can't be bought at all.
-     - With one name, at most 20 % of the account is ever invested. With five names, up to all of it.
+     - With one name, at most 20 % of the account is ever invested. With five names, up to all of it. More names share
+       the same capital: ten names at equal weight are about 500 SEK each.
      - **They never grow past that:** the limits are sized on the account's value, but never on more than the
        **account cap**, 5,000 SEK (`max_account_value_sek` in `config/risk-limits.json`). Money added to the account
        doesn't raise them. You may lower the cap; raising it needs a note in ADR 0003's Changes.
@@ -344,7 +345,8 @@ says whether an intraday strategy is worth trying on paper. What you do:
 | `ERIC B: split 2:1 (Avanza's share count went from … to …)` at the start of a session | A share you hold split: the book now holds twice as many at half the price, same cost | Nothing. If it looks wrong (not a real split), tell Claude with the line |
 | `ERIC B: HELD BACK, its price … against its last close … looks like a 2:1 split` in the decision | The price is about half (or a third, double, …) of yesterday's close and no split is known yet. The share is not traded today and is valued at yesterday's close | Check the news on avanza.se. A split: `.\qa paper split ERIC-B 2:1` (after the session). A real fall or rise: `.\qa paper accept-price ERIC-B`. Until then it is held back each day |
 | `WARNING: dividends and the split check are off for … today` | Avanza's stock details could not be read for that share | Nothing: the session trades on and catches up the dividends next time. If it repeats with `schema drift`, tell Claude |
-| `FAIL  Allowlist … not Nasdaq Stockholm's main market (XSTO)` in `qa status` | A share that does not trade continuously is on the list; the Paper decision would refuse the whole list | Do the step it names: `.\qa universe remove <TICKER>` |
+| `FAIL  Allowlist … trades only in auctions` (or `… can't be told yet whether it trades continuously`) in `qa status` | A First North share on the list was measured as trading only in Nasdaq's daily auctions (plan 22). Paper leaves it out (`not traded, it does not trade continuously`) and trades the others | Do the step it names: `.\qa universe remove <TICKER>` |
+| `Could not add AIRA: … can't be told yet whether it trades continuously (too few trades last week …)` | A First North share traded too little last week to tell whether it trades continuously or only in auctions | Try again after a busier week, or pick a main-market share |
 | `warn  Intraday bars … missing 2026-09-23 …` in `qa status` | An evening's intraday collection did not run | Run `.\qa intraday import` now: it catches up the last week at 10 minutes. Days older than a week are lost |
 | `login locked`, exit code 4 | A login failed and the program will not retry on its own | Check that BankID login works on avanza.se, then `.\qa login --clear-lock` |
 | `schema drift` or `endpoint gone`, exit code 3 | Avanza changed its site; trading halts | Nothing is lost. Tell Claude and include the error text |

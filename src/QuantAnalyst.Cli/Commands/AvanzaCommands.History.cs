@@ -74,6 +74,11 @@ internal static partial class AvanzaCommands
 
             output.WriteLine($"{p.TickerSymbol} {p.Name} (orderbook {p.OrderbookId}, {p.Isin}, {p.MarketPlace}, {p.Currency})");
             output.WriteLine($"Instrument master: {(instrument.New > 0 ? "added" : instrument.Restated > 0 ? "new version stored (attributes changed)" : "unchanged")}.");
+            if (result.TradingModel is { } model)
+            {
+                output.WriteLine($"Trading model (plan 22): {model.Model} — {model.Reason}.");
+            }
+
             output.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"Daily bars {report.FirstDate:yyyy-MM-dd}..{report.LastDate:yyyy-MM-dd}: {report.Bars.New} new, {report.Bars.Restated} restated, {report.Bars.Unchanged} unchanged."));
             output.WriteLine($"Stored in {storePath}, known at {Local(report.KnownAtUtc)} (Europe/Stockholm).");

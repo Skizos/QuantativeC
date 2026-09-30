@@ -7,10 +7,11 @@ namespace QuantAnalyst.Trading.Pipeline;
 /// <summary>The model's fees for an order of <c>value</c>: the courtage class (rounded to öre) plus the FX fee outside the class's currency.</summary>
 public static class ModelFees
 {
-    public static decimal For(CostModel costs, decimal value, string currency)
+    /// <param name="marketPlace">A First North share pays its own courtage (plan 22).</param>
+    public static decimal For(CostModel costs, decimal value, string currency, string? marketPlace = null)
     {
         ArgumentNullException.ThrowIfNull(costs);
-        decimal courtage = decimal.Round(costs.Courtage(value), 2, MidpointRounding.AwayFromZero);
+        decimal courtage = decimal.Round(costs.MarketplaceFor(marketPlace) is { } own ? Math.Max(own.Min, own.Rate * value) : costs.Courtage(value), 2, MidpointRounding.AwayFromZero);
         decimal fx = string.Equals(currency, costs.Currency, StringComparison.Ordinal) ? 0m : decimal.Round(costs.FxFeeRate * value, 2, MidpointRounding.AwayFromZero);
         return courtage + fx;
     }

@@ -145,6 +145,14 @@ internal static partial class AvanzaCommands
         string auditDir = parse.GetValue(o.AuditDir)!;
         string promotionDir = parse.GetValue(o.PromotionDir)!;
         PaperSetup setup = PaperSetup.Load(TradingCommands.ResolveConfigDir(parse.GetValue(o.ConfigDir)), promotionDir);
+        int streamed = setup.Universe.Entries.Count + setup.Universe.Exiting.Count;
+        if (streamed > MaxStreamInstruments)
+        {
+            // Plan 22: Paper polls up to 10 shares; Confirm still requires one order-book stream per share (ADR 0002 §3).
+            throw new ArgumentException(
+                $"Confirm streams each share's order book, at most {MaxStreamInstruments} (ADR 0002 §3); the list has {streamed} with the exiting shares. Paper takes up to {Allowlist.MaxNames}: for Confirm, keep {MaxStreamInstruments}.");
+        }
+
         StrategyDefinition definition = ChooseStrategy(parse.GetValue(o.Strategy), parse.GetValue(o.Param), setup.Paper);
         string storePath = parse.GetValue(o.Store)!;
         output.WriteLine($"Confirm session: {definition.Spec.Describe()} on {string.Join(", ", setup.Universe.Entries.Select(e => e.Ticker))}; model courtage class {setup.Costs.DisplayName ?? setup.Costs.Name}.");
@@ -206,7 +214,7 @@ internal static partial class AvanzaCommands
             Calendar = setup.Calendar,
             Universe = setup.Universe,
             AllowedAccountIds = new HashSet<string>(StringComparer.Ordinal) { live.Account.Value },
-            Fees = (order, spec) => ModelFees.For(setup.Costs, order.Value, spec.Currency),
+            Fees = (order, spec) => ModelFees.For(setup.Costs, order.Value, spec.Currency, spec.MarketPlace),
             CourtageVerified = setup.Costs.Verified,
             Preflight = ctx.Connection.CreatePreflight(),
             Confirmation = new ConsoleOrderConfirmation(output, prompt, time),

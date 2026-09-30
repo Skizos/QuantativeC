@@ -25,6 +25,12 @@ public sealed record PanelInstrument(string Symbol, long LotSize, bool ForeignCu
     /// (plan 17, ABI 1.4); null uses the cost model's.
     /// </summary>
     public double? HalfSpreadBps { get; init; }
+
+    /// <summary>
+    /// Gets a Swedish share's marketplace (Avanza's code, e.g. "XSTO", "FNSE"): one other than the main market pays its own
+    /// courtage (plan 22). Null is the main market.
+    /// </summary>
+    public string? MarketPlace { get; init; }
 }
 
 /// <summary>
