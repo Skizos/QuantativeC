@@ -186,6 +186,11 @@ public sealed record EodFillRate(
     }
 }
 
+/// <summary>A dividend, split or accepted price move the Paper book applied that day (plan 21), from its audit record.</summary>
+/// <param name="Kind"><c>dividend</c>, <c>split</c> or <c>price-accepted</c>.</param>
+/// <param name="CashSek">The cash it brought: the dividend, or a reverse split's fraction.</param>
+public sealed record EodCorporateAction(string Kind, string Ticker, string Text, decimal CashSek);
+
 /// <summary>
 /// The end-of-day report (ADR 0003 §3 and §8). It is rebuilt from the day's audit file alone, the tamper-evident
 /// record, never from session memory, so it can be regenerated and checked at any time (<c>qa report eod</c>) and the
@@ -250,6 +255,13 @@ public sealed record EodReport
 
     /// <summary>Gets how many orders were still Unknown when the day's audit ended (each is also a violation).</summary>
     public int UnknownAtEnd { get; init; }
+
+    /// <summary>Gets the dividends and splits the Paper book applied at the day's start (plan 21); the day's return includes them.</summary>
+    public IReadOnlyList<EodCorporateAction> CorporateActions { get; init; } = [];
+
+    /// <summary>Gets the dividends credited that day, in SEK (plan 21).</summary>
+    [JsonIgnore]
+    public decimal DividendsSek => CorporateActions.Where(a => a.Kind == "dividend").Sum(a => a.CashSek);
 
     public required bool AuditChainValid { get; init; }
 
@@ -323,8 +335,11 @@ public sealed record EodReport
             ? string.Create(c, $" Live: {l.Sent} confirmed order(s), {l.Filled} filled{(l.MeanSlippageVsArrivalBps is { } m ? $", slippage {m:+0.0;-0.0} bps vs the arrival mid" : string.Empty)}{(l.CostAssumptionBps is { } assumed ? $" (the backtest assumes {assumed:0.#})" : string.Empty)}.")
             : string.Empty;
         string fillRate = FillRate is { } f ? $" Limits: {f.Describe()}." : string.Empty;
+        int dividends = CorporateActions.Count(x => x.Kind == "dividend"), splits = CorporateActions.Count(x => x.Kind == "split");
+        string corporate = dividends + splits == 0 ? string.Empty
+            : string.Create(c, $" Corporate actions: {(dividends > 0 ? $"{dividends} dividend(s), {DividendsSek:N2} SEK" : string.Empty)}{(dividends > 0 && splits > 0 ? ", " : string.Empty)}{(splits > 0 ? $"{splits} split(s)" : string.Empty)}.");
         return string.Create(c,
-            $"{Date:yyyy-MM-dd} {state}: {Submitted} sent, {Accepted} accepted, {RiskRejected} risk-rejected, {Fills.Count} fill(s) ({FillSanityOutliers} outside ±{SanityLimitBps:0} bps), reconciliation {ReconciliationRuns - ReconciliationMismatchRuns}/{ReconciliationRuns} clean, {Violations.Count} violation(s); {account}.{fillRate}{live}");
+            $"{Date:yyyy-MM-dd} {state}: {Submitted} sent, {Accepted} accepted, {RiskRejected} risk-rejected, {Fills.Count} fill(s) ({FillSanityOutliers} outside ±{SanityLimitBps:0} bps), reconciliation {ReconciliationRuns - ReconciliationMismatchRuns}/{ReconciliationRuns} clean, {Violations.Count} violation(s); {account}.{corporate}{fillRate}{live}");
     }
 
     private sealed class Builder
@@ -346,6 +361,7 @@ public sealed record EodReport
         private decimal? _pendingDecisionPrice;
         private readonly Dictionary<string, SentOrder> _orders = [];
         private readonly Dictionary<string, CloseMark> _marks = [];
+        private readonly List<EodCorporateAction> _corporate = [];
 
         public List<string> Violations { get; } = [];
 
@@ -501,6 +517,11 @@ public sealed record EodReport
                 case "fill-refused":
                     Violations.Add("fill refused by the OMS: " + Str(d, "reason"));
                     break;
+                case "dividend":
+                case "split":
+                case "price-accepted":
+                    _corporate.Add(Corporate(kind, d));
+                    break;
                 case "halt":
                     string reason = Str(d, "reason") ?? "?";
                     string detail = Str(d, "detail") ?? string.Empty;
@@ -594,6 +615,7 @@ public sealed record EodReport
                 Live = _live.Count == 0 ? null : Execution(),
                 FillRate = EodFillRate.From(LimitOrders()),
                 UnknownAtEnd = unknownAtEnd,
+                CorporateActions = _corporate,
                 AuditChainValid = chainValid,
                 Violations = Violations,
                 Events = Events,
@@ -647,6 +669,27 @@ public sealed record EodReport
             }
 
             return result;
+        }
+
+        /// <summary>Plan 21: a <c>dividend</c>, <c>split</c> or <c>price-accepted</c> record, as one line.</summary>
+        private static EodCorporateAction Corporate(string kind, JsonElement d)
+        {
+            CultureInfo c = CultureInfo.InvariantCulture;
+            string ticker = Str(d, "ticker") ?? "?";
+            switch (kind)
+            {
+                case "dividend":
+                    decimal cash = Num(d, "cashSek") ?? 0m;
+                    return new EodCorporateAction(kind, ticker, string.Create(c,
+                        $"{ticker}: dividend {Num(d, "amountPerShare")} {Str(d, "currency")} × {Long(d, "quantity")} (ex-date {Str(d, "exDate")}) = {cash:N2} SEK, gross"), cash);
+                case "split":
+                    decimal fraction = Num(d, "cashForFraction") ?? 0m;
+                    string ratio = Num(d, "ratio") is { } r && r > 0 ? Paper.CorporateActions.Describe(r) : "?";
+                    return new EodCorporateAction(kind, ticker, string.Create(c,
+                        $"{ticker}: split {ratio} ({(Str(d, "source") == "owner" ? "by hand" : "from Avanza's share count")}), {Long(d, "before")} → {Long(d, "after")} shares{(fraction > 0 ? $", {fraction:N2} SEK for the fraction" : string.Empty)}"), fraction);
+                default:
+                    return new EodCorporateAction(kind, ticker, $"{ticker}: its big move taken as real by hand (not a split)", 0m);
+            }
         }
 
         private void AddFill(JsonElement d)

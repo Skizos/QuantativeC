@@ -13,7 +13,9 @@ using QuantAnalyst.Trading.Risk;
 namespace QuantAnalyst.Cli.Commands;
 
 /// <summary>What one import stored: the instrument (and whether it was new), the daily bars, and a foreign share's FX fixings.</summary>
-internal sealed record InstrumentImportResult(InstrumentTradingParams Params, WriteCounts Instrument, ImportReport Report, string? CalendarNote, FxImportReport? Fx = null);
+/// <param name="CorporateNote">Plan 21: the dividends and share count stored, or why they could not be read.</param>
+internal sealed record InstrumentImportResult(
+    InstrumentTradingParams Params, WriteCounts Instrument, ImportReport Report, string? CalendarNote, FxImportReport? Fx = null, string? CorporateNote = null);
 
 /// <summary>
 /// Imports one instrument's daily bars from Avanza's price chart (read-only) and updates the instrument master. The one
@@ -53,7 +55,28 @@ internal static class InstrumentImport
         var provider = new AvanzaChartImporter(gateway, TimeProvider.System, AvanzaConnection.PriceChartSourceVersion);
         ImportReport report = await new HistoryImporter(history, TimeProvider.System, calendar)
             .ImportAsync(provider, instrument.OrderbookId, from, to, ct).ConfigureAwait(false);
-        return new InstrumentImportResult(instrument, written, report, calendarNote, fxReport);
+        return new InstrumentImportResult(instrument, written, report, calendarNote, fxReport, await CorporateAsync(history, gateway, instrument.OrderbookId, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// Plan 21: the share's dividends and share count (public, read-only; informational, ADR 0002 Tier B), stored so
+    /// 'qa history dividends' can check the history. A failure is a note: the bars are imported either way.
+    /// </summary>
+    private static async Task<string> CorporateAsync(HistoryStore history, IBrokerGateway gateway, OrderbookId id, CancellationToken ct)
+    {
+        try
+        {
+            CorporateSnapshot s = await CorporateDataImporter.ImportAsync(history, gateway, id, AvanzaConnection.StockDetailsSourceVersion, TimeProvider.System, ct).ConfigureAwait(false);
+            DateOnly today = DateOnly.FromDateTime(MarketTime.ToStockholm(s.Data.RetrievedAtUtc).DateTime);
+            int announced = s.Data.Dividends.Count(d => d.ExDate > today);
+            string shares = s.Data.SharesOutstanding is { } n ? string.Create(CultureInfo.InvariantCulture, $"; share count {n:N0}") : "; no share count";
+            return string.Create(CultureInfo.InvariantCulture,
+                $"Dividends: {s.Data.Dividends.Count - announced} past and {announced} announced stored{shares} (check the history against them with 'qa history dividends').");
+        }
+        catch (Exception ex) when (ex is BrokerException or HistoryStoreException)
+        {
+            return $"warning: dividends and the share count were not stored ({ex.Message}); the bars are.";
+        }
     }
 }
 

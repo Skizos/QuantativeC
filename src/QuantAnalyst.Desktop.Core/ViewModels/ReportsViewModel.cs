@@ -269,6 +269,7 @@ public sealed class ReportsViewModel : PageViewModel
         }
 
         details.AddRange((r.FillRate?.Orders ?? []).Select(o => "limit " + o.Describe())); // plan 19
+        details.AddRange(r.CorporateActions.Select(a => $"{a.Kind} {a.Text}")); // plan 21
         details.AddRange(r.Violations.Select(v => "VIOLATION: " + v));
         details.AddRange(r.Events.Select(e => "event: " + e));
         string state = r.Clean ? "CLEAN" : !r.Complete ? "INCOMPLETE" : "NOT CLEAN";

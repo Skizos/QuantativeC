@@ -46,6 +46,9 @@ public interface IBrokerGateway
     Task<PriceHistory> GetPriceHistoryAsync(
         OrderbookId id, ChartPeriod period, ChartResolution? resolution, CancellationToken ct);
 
+    /// <summary>A share's dividends and share count (plan 21; public data, informational).</summary>
+    Task<CorporateData> GetCorporateDataAsync(OrderbookId id, CancellationToken ct);
+
     /// <summary>
     /// Pushed order-depth snapshots for one orderbook, with connection state changes and heartbeats (ADR 0002 §3).
     /// Reconnects on its own; throws <see cref="SessionExpiredException"/>, <see cref="SchemaDriftException"/> or

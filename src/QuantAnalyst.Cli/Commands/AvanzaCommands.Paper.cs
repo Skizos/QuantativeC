@@ -36,7 +36,83 @@ internal static partial class AvanzaCommands
         command.Subcommands.Add(PaperRun(services));
         command.Subcommands.Add(PaperStrategyCommand());
         command.Subcommands.Add(PaperStatus());
+        command.Subcommands.Add(PaperSplit());
+        command.Subcommands.Add(PaperAcceptPrice());
         return command;
+    }
+
+    // ---- qa paper split | accept-price (plan 21): the owner resolves a held-back share ----------------------
+
+    private static Command PaperSplit()
+    {
+        var ticker = new Argument<string>("ticker") { Description = "The held share, e.g. ERIC-B" };
+        var ratio = new Argument<string>("ratio") { Description = "New shares per old: 2:1 (a 2-for-1 split) or 1:10 (a 1-for-10 reverse split)" };
+        var stateDir = new Option<string>("--state-dir") { Description = "State folder", DefaultValueFactory = _ => TradingCommands.DefaultStateDir };
+        var auditDir = new Option<string>("--audit-dir") { Description = "Audit folder", DefaultValueFactory = _ => TradingCommands.DefaultAuditDir };
+        var command = new Command("split", "Apply a split you have checked to a Paper position: quantity × ratio, prices ÷ ratio, cost unchanged (plan 21). Offline; refused while a session runs.");
+        command.Arguments.Add(ticker);
+        command.Arguments.Add(ratio);
+        command.Options.Add(stateDir);
+        command.Options.Add(auditDir);
+        command.SetAction(parse => TradingCommands.Execute(parse, w =>
+        {
+            decimal r = CorporateActions.ParseRatio(parse.GetValue(ratio)!);
+            (PaperBook book, OrderbookId id, SessionLock held) = OpenHeld(parse.GetValue(stateDir)!, parse.GetValue(ticker)!);
+            using (held)
+            {
+                w.WriteLine(CorporateActions.SplitByOwner(book, id, r, new AuditLog(parse.GetValue(auditDir)!, TimeProvider.System)));
+            }
+
+            return 0;
+        }));
+        return command;
+    }
+
+    private static Command PaperAcceptPrice()
+    {
+        var ticker = new Argument<string>("ticker") { Description = "The held-back share, e.g. ERIC-B" };
+        var stateDir = new Option<string>("--state-dir") { Description = "State folder", DefaultValueFactory = _ => TradingCommands.DefaultStateDir };
+        var auditDir = new Option<string>("--audit-dir") { Description = "Audit folder", DefaultValueFactory = _ => TradingCommands.DefaultAuditDir };
+        var command = new Command("accept-price", "A held-back share's big move is real (no split): value and trade it at its live price again (plan 21). Offline; refused while a session runs.");
+        command.Arguments.Add(ticker);
+        command.Options.Add(stateDir);
+        command.Options.Add(auditDir);
+        command.SetAction(parse => TradingCommands.Execute(parse, w =>
+        {
+            (PaperBook book, OrderbookId id, SessionLock held) = OpenHeld(parse.GetValue(stateDir)!, parse.GetValue(ticker)!);
+            using (held)
+            {
+                w.WriteLine(CorporateActions.AcceptPriceByOwner(book, id, new AuditLog(parse.GetValue(auditDir)!, TimeProvider.System)));
+            }
+
+            return 0;
+        }));
+        return command;
+    }
+
+    /// <summary>The Paper book and the position of <paramref name="ticker"/>, with the session lock held (no session may run meanwhile).</summary>
+    private static (PaperBook Book, OrderbookId Id, SessionLock Lock) OpenHeld(string stateDir, string ticker)
+    {
+        string dir = Path.Combine(stateDir, TradingCommands.PaperDirName);
+        if (!File.Exists(Path.Combine(dir, PaperBook.FileName)))
+        {
+            throw new ArgumentException("No paper book yet.");
+        }
+
+        SessionLock held = SessionLock.Acquire(stateDir, TimeProvider.System);
+        try
+        {
+            PaperBook book = PaperBook.OpenOrCreate(dir, new PaperConfig("?", 1m, new TimeOnly(9, 10)), null, TimeProvider.System, out _);
+            string wanted = ticker.Trim().Replace('-', ' ');
+            PaperPosition position = book.Positions.FirstOrDefault(p => string.Equals(p.Ticker, wanted, StringComparison.OrdinalIgnoreCase))
+                ?? throw new ArgumentException($"The paper book holds no {wanted}.");
+            return (book, position.OrderbookId, held);
+        }
+        catch
+        {
+            held.Dispose();
+            throw;
+        }
     }
 
     private static Command PaperRun(AvanzaCliServices services)
@@ -128,6 +204,14 @@ internal static partial class AvanzaCommands
                 output.WriteLine(note);
             }
 
+            // Plan 21: dividends and splits, before the day's first valuation fixes R19's start value.
+            IReadOnlyList<CorporateSnapshot> corporate = await CorporateAtStartAsync(
+                ctx, storePath, [.. specs.Select(s => s.OrderbookId).Concat(book.Positions.Select(p => p.OrderbookId)).Distinct()], time, output).ConfigureAwait(false);
+            foreach (string line in CorporateActions.Apply(book, corporate, OrderGateway.StockholmDate(time.GetUtcNow()), audit))
+            {
+                output.WriteLine(line);
+            }
+
             var channel = new PaperOrderChannel(book, setup.Costs, quotes, catalog, time, fx);
             var risk = new PreTradeRiskEngine(setup.Limits);
             var oms = new OrderManager(audit, halts, time);
@@ -188,12 +272,15 @@ internal static partial class AvanzaCommands
                     targets = StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
                 }
 
-                PlanResult plan = DailyPlanner.Plan(
-                    [.. own.Select(i => targets[i]), .. leaving.Select(_ => 0.0)], [.. own.Select(i => listed[i]), .. leaving], book.Snapshot(), gateway.OpenOrders, quotes, risk,
-                    new ExecutionOptions(), definition.Spec.Describe(), now, fx);
-                return Task.FromResult(leaving.Length == 0 ? plan : plan with
+                // Plan 21: valuing the book first tells which positions the split guard holds back; they get no target today.
+                AccountSnapshot snapshot = book.Snapshot();
+                InstrumentSpec[] chosen = [.. own.Select(i => listed[i]), .. leaving];
+                double[] weights = [.. own.Select(i => targets[i]), .. leaving.Select(_ => 0.0)];
+                string[] heldBack = [.. HeldBackNotes(book, quotes, chosen, weights)];
+                PlanResult plan = DailyPlanner.Plan(weights, chosen, snapshot, gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now, fx);
+                return Task.FromResult(leaving.Length == 0 && heldBack.Length == 0 ? plan : plan with
                 {
-                    Notes = [.. leaving.Select(s => $"{s.Ticker}: off the list (exiting), target zero"), .. plan.Notes],
+                    Notes = [.. heldBack, .. leaving.Select(s => $"{s.Ticker}: off the list (exiting), target zero"), .. plan.Notes],
                 });
             }
 
@@ -387,6 +474,59 @@ internal static partial class AvanzaCommands
     }
 
     /// <summary>
+    /// Plan 21: a held-back position (its live price a split-like ratio from its last close mark) gets no target
+    /// (<paramref name="weights"/> set to NaN), and a note that says what to do.
+    /// </summary>
+    private static IEnumerable<string> HeldBackNotes(PaperBook book, IQuoteSource quotes, InstrumentSpec[] chosen, double[] weights)
+    {
+        IReadOnlySet<OrderbookId> heldBack = book.HeldBack;
+        for (int i = 0; i < chosen.Length; i++)
+        {
+            if (!heldBack.Contains(chosen[i].OrderbookId))
+            {
+                continue;
+            }
+
+            weights[i] = double.NaN;
+            PaperPosition? p = book.Positions.FirstOrDefault(x => x.OrderbookId == chosen[i].OrderbookId);
+            Quote? q = quotes.Latest(chosen[i].OrderbookId);
+            decimal? price = q?.Last ?? (q is { Bid: { } bid, Ask: { } ask } ? (bid + ask) / 2 : null);
+            string ticker = chosen[i].Ticker.Replace(' ', '-');
+            (string move, string split) = p?.LastMark is { } last && price is { } now && CorporateActions.SplitLikeMove(last, now) is { } ratio
+                ? (string.Create(CultureInfo.InvariantCulture, $"its price {now:0.####} against its last close {last:0.####} looks like a {CorporateActions.Describe(1 / ratio)} split"),
+                   CorporateActions.Describe(1 / ratio))
+                : ("its price moved like a split", "<new>:<old>");
+            yield return $"{chosen[i].Ticker}: HELD BACK, {move}, and no split is known: not traded today, valued at its last close. "
+                + $"If it split, run 'qa paper split {ticker} {split}'; if the move is real, 'qa paper accept-price {ticker}'.";
+        }
+    }
+
+    /// <summary>
+    /// Plan 21: the dividends and share counts of <paramref name="ids"/> (the list, the exiting shares and whatever the
+    /// book holds), fetched and stored. Informational (ADR 0002 Tier B): a share whose data can't be read is skipped with
+    /// a warning, and its dividends and split check wait for the next session.
+    /// </summary>
+    private static async Task<IReadOnlyList<CorporateSnapshot>> CorporateAtStartAsync(
+        Ctx ctx, string storePath, IReadOnlyList<OrderbookId> ids, TimeProvider time, TextWriter output)
+    {
+        var result = new List<CorporateSnapshot>();
+        using HistoryStore history = HistoryStore.Open(storePath);
+        foreach (OrderbookId id in ids)
+        {
+            try
+            {
+                result.Add(await CorporateDataImporter.ImportAsync(history, ctx.Connection.Gateway, id, AvanzaConnection.StockDetailsSourceVersion, time, ctx.Ct).ConfigureAwait(false));
+            }
+            catch (Exception ex) when (ex is BrokerException or HistoryStoreException or ArgumentException)
+            {
+                output.WriteLine($"WARNING: dividends and the split check are off for {history.GetInstrument(id)?.Instrument.Ticker ?? id.Value} today ({ex.Message}).");
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Brings every allowlisted instrument's daily bars up to its market's last trading day before today (read-only chart
     /// calls, the same as 'qa history import'), so a session never stops at the decision for want of yesterday's bar.
     /// </summary>
@@ -525,11 +665,17 @@ internal static partial class AvanzaCommands
 
             PaperBook book = PaperBook.OpenOrCreate(dir, new PaperConfig("?", 1m, new TimeOnly(9, 10)), null, TimeProvider.System, out _);
             w.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"Paper book ({book.Costs}): started with {book.StartingCash:N2} SEK; cash {book.Cash:N2}; realised P&L {book.RealizedPnl:N2}; fees {book.FeesPaid:N2}."));
+                $"Paper book ({book.Costs}): started with {book.StartingCash:N2} SEK; cash {book.Cash:N2}; realised P&L {book.RealizedPnl:N2}; dividends {book.DividendsReceived:N2}; fees {book.FeesPaid:N2}."));
             foreach (PaperPosition p in book.Positions)
             {
                 string currency = Markets.IsForeign(p.Currency) ? " " + p.Currency : string.Empty;
-                w.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {p.Ticker} ({p.OrderbookId}): {p.Quantity}, cost {p.CostBasis:N2} SEK, last fill {p.LastFillPrice}{currency}"));
+                string close = p.LastMark is { } mark ? string.Create(CultureInfo.InvariantCulture, $", last close {mark:0.####}{currency}") : string.Empty;
+                w.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {p.Ticker} ({p.OrderbookId}): {p.Quantity}, cost {p.CostBasis:N2} SEK, last fill {p.LastFillPrice:0.####}{currency}{close}"));
+            }
+
+            foreach (SplitByHand split in book.SplitsByHand)
+            {
+                w.WriteLine($"  {split.OrderbookId}: split {CorporateActions.Describe(split.Ratio)} by hand on {split.Day:yyyy-MM-dd}; not applied again when Avanza's share count shows it.");
             }
 
             w.WriteLine($"Session running: {(SessionLock.Holder(parse.GetValue(stateDir)!) is { } holder ? holder : "no")}.");

@@ -452,6 +452,11 @@ internal static partial class TradingCommands
             w.WriteLine("  limit " + o.Describe());
         }
 
+        foreach (EodCorporateAction a in r.CorporateActions)
+        {
+            w.WriteLine($"  {a.Kind} {a.Text}");
+        }
+
         foreach (string v in r.Violations)
         {
             w.WriteLine("  VIOLATION: " + v);

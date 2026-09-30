@@ -6,6 +6,7 @@ using QuantAnalyst.Cli.Commands;
 using QuantAnalyst.Trading.Audit;
 using QuantAnalyst.Trading.Observation;
 using QuantAnalyst.Trading.Oms;
+using QuantAnalyst.Trading.Reports;
 
 namespace QuantAnalyst.Avanza.Tests;
 
@@ -249,6 +250,88 @@ public sealed class PaperSpyTests : IDisposable
         Assert.Contains("sold; take it off with qa universe remove ERIC-B",
             Qa(TimeProvider.System, "status", "--config-dir", Config, "--store", Store, "--state-dir", State, "--audit-dir", Audit, "--kill-file", KillFile,
                 "--promotion-dir", Path.Combine(_root, "promotion")).Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ADividend_IsCreditedAtTheSessionStart_AndTheDayReportShowsIt()
+    {
+        // Plan 21: the book holds 7 ERIC B since Friday's session; Avanza's details show an ex-date today.
+        PrepareHistoryAndUniverse();
+        WriteBook("""{ "orderbook_id": "5240", "ticker": "ERIC B", "quantity": 7, "cost_basis": 496, "last_fill_price": 70.86 }""", corporateThrough: "2026-09-25");
+        _server.Always(AvanzaRoutes.StockDetails, _ => FakeAvanza.Json(Fixtures.Mutate("stock-details-5240.json", n => n["dividends"]!["events"]![0]!["exDate"] = "2026-09-28")));
+
+        (int code, string output, string error) = await RunPaper(seconds: 60);
+
+        Assert.True(code == 0, output + error);
+        Assert.Contains("ERIC B: dividend 1.45 SEK × 7 (ex-date 2026-09-28) = 10.15 SEK credited (gross; paid 2026-10-27).", output, StringComparison.Ordinal);
+        using (JsonDocument book = JsonDocument.Parse(File.ReadAllText(Path.Combine(State, "paper", "book.json"))))
+        {
+            Assert.Equal(10.15m, book.RootElement.GetProperty("dividends_received").GetDecimal());
+            Assert.Equal("2026-09-28", book.RootElement.GetProperty("corporate_through").GetString());
+        }
+
+        EodCorporateAction dividend = Assert.Single(EodReport.Build(Audit, new DateOnly(2026, 9, 28), TimeProvider.System).CorporateActions);
+        Assert.Equal(("dividend", 10.15m), (dividend.Kind, dividend.CashSek));
+        Assert.Contains(_server.Requests, r => r.PathAndQuery == AvanzaRoutes.StockDetails.Path("5240"));
+    }
+
+    [Fact]
+    public async Task ASharePricedAtHalfItsLastClose_IsHeldBack_UntilTheOwnerSplitsIt()
+    {
+        // Plan 21: Friday's close was 141.72 and today ERIC B trades at 70.86, with no split in Avanza's share count.
+        PrepareHistoryAndUniverse();
+        WriteBook("""{ "orderbook_id": "5240", "ticker": "ERIC B", "quantity": 7, "cost_basis": 992, "last_fill_price": 141.7, "last_mark": 141.72 }""", corporateThrough: "2026-09-25");
+
+        (int code, string output, string error) = await RunPaper(seconds: 60);
+
+        Assert.True(code == 0, output + error);
+        Assert.True(output.Contains("ERIC B: HELD BACK, its price 70.86 against its last close 141.72 looks like a 2:1 split, and no split is known: not traded today, "
+            + "valued at its last close. If it split, run 'qa paper split ERIC-B 2:1'; if the move is real, 'qa paper accept-price ERIC-B'.", StringComparison.Ordinal), output);
+        Assert.Contains("Paper account: value 45,496.04 SEK (start of day 45,496.04)", output, StringComparison.Ordinal); // 7 × 141.72: no loss
+        Assert.Contains("ERIC B: hold (no target today)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("ERIC B: Accepted", output, StringComparison.Ordinal);
+
+        (code, string split, error) = Qa(TimeProvider.System, "paper", "split", "ERIC-B", "2:1", "--state-dir", State, "--audit-dir", Audit);
+        Assert.True(code == 0, error);
+        Assert.Equal("ERIC B: split 2:1 applied; the position goes from 7 to 14.", split.Trim());
+        using JsonDocument book = JsonDocument.Parse(File.ReadAllText(Path.Combine(State, "paper", "book.json")));
+        JsonElement position = book.RootElement.GetProperty("positions")[0];
+        Assert.Equal((14, 70.86m, 992m), (position.GetProperty("quantity").GetInt64(), position.GetProperty("last_mark").GetDecimal(), position.GetProperty("cost_basis").GetDecimal()));
+        Assert.Equal(2m, book.RootElement.GetProperty("splits_by_hand")[0].GetProperty("ratio").GetDecimal());
+        string status = Qa(TimeProvider.System, "paper", "status", "--state-dir", State).Output;
+        Assert.Contains("ERIC B (5240): 14, cost 992.00 SEK, last fill 70.85, last close 70.86", status, StringComparison.Ordinal);
+        Assert.Contains("5240: split 2:1 by hand on ", status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PaperSplitAndAcceptPrice_NeedAHeldShare_AndAreAudited()
+    {
+        Assert.Contains("No paper book yet", Qa(TimeProvider.System, "paper", "accept-price", "ERIC-B", "--state-dir", State, "--audit-dir", Audit).Error, StringComparison.Ordinal);
+        WriteBook("""{ "orderbook_id": "5240", "ticker": "ERIC B", "quantity": 7, "cost_basis": 496, "last_fill_price": 70.86, "last_mark": 141.72 }""", corporateThrough: null);
+
+        Assert.Contains("The paper book holds no VOLV B", Qa(TimeProvider.System, "paper", "split", "VOLV-B", "2:1", "--state-dir", State, "--audit-dir", Audit).Error, StringComparison.Ordinal);
+        Assert.Contains("not a split ratio", Qa(TimeProvider.System, "paper", "split", "ERIC-B", "3:2", "--state-dir", State, "--audit-dir", Audit).Error, StringComparison.Ordinal);
+
+        (int code, string output, string error) = Qa(TimeProvider.System, "paper", "accept-price", "ERIC-B", "--state-dir", State, "--audit-dir", Audit);
+        Assert.True(code == 0, error);
+        Assert.Equal("ERIC B: its move is taken as real; the next session values and trades it at its live price.", output.Trim());
+        Assert.Contains("has no close mark to compare with", Qa(TimeProvider.System, "paper", "accept-price", "ERIC-B", "--state-dir", State, "--audit-dir", Audit).Output, StringComparison.Ordinal);
+        using JsonDocument book = JsonDocument.Parse(File.ReadAllText(Path.Combine(State, "paper", "book.json")));
+        Assert.False(book.RootElement.GetProperty("positions")[0].TryGetProperty("last_mark", out _));
+        Assert.True(AuditLog.Verify(Audit).Valid);
+    }
+
+    /// <summary>A Paper book as Friday's session left it, holding <paramref name="position"/>.</summary>
+    private void WriteBook(string position, string? corporateThrough)
+    {
+        string paper = Path.Combine(State, "paper");
+        Directory.CreateDirectory(paper);
+        string through = corporateThrough is null ? string.Empty : $""", "corporate_through": "{corporateThrough}" """;
+        File.WriteAllText(Path.Combine(paper, "book.json"), $$"""
+            { "format": "qa-paper-book/1", "account": "PAPER", "costs": "avanza-start", "starting_cash": 45000, "cash": 44504, "fees_paid": 1,
+              "realized_pnl": 0, "start_of_day_value": 0, "saved_utc": "2026-09-25T15:30:00Z"{{through}},
+              "positions": [ {{position}} ] }
+            """);
     }
 
     [Fact]

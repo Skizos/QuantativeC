@@ -42,6 +42,53 @@ public sealed class HistoryImportTests : IDisposable
         Assert.Equal(expected, AvanzaChartImporter.PeriodCovering(DateOnly.Parse(from, System.Globalization.CultureInfo.InvariantCulture), new DateOnly(2026, 9, 25)));
 
     [Fact]
+    public void DividendCheck_ReadsTheOvernightGapOnEachExDate()
+    {
+        static DailyBar Day(int month, int day, decimal open, decimal close) => new(new DateOnly(2026, month, day), open, Math.Max(open, close), Math.Min(open, close), close, 1000);
+        DailyBar[] bars =
+        [
+            Day(3, 25, 100m, 100m), Day(3, 26, 98.1m, 98.5m), // ex 2.00: opens 1.9 % lower (price-only)
+            Day(9, 24, 100m, 100m), Day(9, 25, 100.2m, 99m), // ex 2.00: opens 0.2 % higher (adjusted)
+            Day(9, 28, 100m, 100m), Day(9, 29, 99.9m, 99m), // ex 0.10: too small to see
+        ];
+        DividendEvent Ex(int month, int day, decimal amount, string currency = "SEK") => new(new DateOnly(2026, month, day), null, amount, currency, "ORDINARY");
+
+        (IReadOnlyList<DividendGap> gaps, DividendVerdict verdict) = DividendCheck.Check(
+            [Ex(9, 25, 2m), Ex(3, 26, 2m), Ex(9, 29, 0.1m), Ex(1, 15, 2m), Ex(12, 1, 2m), Ex(9, 29, 1m, "USD")], bars, "SEK");
+
+        Assert.Equal(["no bars around it", "price-only", "adjusted", "too small to see", "paid in USD, the share trades in SEK", "not yet in the history"], gaps.Select(g => g.Reading));
+        Assert.Equal((0.02m, -0.019m), (gaps[1].Yield!.Value, gaps[1].Gap!.Value));
+        Assert.Equal(DividendVerdict.Unclear, verdict); // one each way
+
+        Assert.Equal(DividendVerdict.PriceOnly, DividendCheck.Check([Ex(3, 26, 2m)], bars, "SEK").Verdict);
+        Assert.Equal(DividendVerdict.Adjusted, DividendCheck.Check([Ex(9, 25, 2m)], bars, "SEK").Verdict);
+        Assert.Equal(DividendVerdict.NoData, DividendCheck.Check([Ex(9, 29, 0.1m)], bars, "SEK").Verdict);
+        Assert.Equal(DividendVerdict.NoData, DividendCheck.Check([Ex(3, 26, 2m)], [], "SEK").Verdict);
+    }
+
+    [Fact]
+    public async Task CorporateImport_StoresDividendsAndTheCount_AndReturnsTheCountStoredBeforeToday()
+    {
+        decimal shares = 3_334_151_735m;
+        var dividend = new DividendEvent(new DateOnly(2026, 9, 28), new DateOnly(2026, 10, 1), 1.45m, "SEK", "ORDINARY");
+        var gateway = new FakeGateway { Corporate = id => new CorporateData(id, [dividend], shares, _time.GetUtcNow()) };
+        using HistoryStore store = HistoryStore.Open(_dir.File("quant.duckdb"));
+
+        // The first time there is no earlier count; a second fetch the same day compares with the same earlier count.
+        CorporateSnapshot first = await CorporateDataImporter.ImportAsync(store, gateway, Eric, "stock-details/test", _time, TestContext.Current.CancellationToken);
+        Assert.Null(first.PreviousShares);
+        Assert.Equal(dividend, Assert.Single(store.GetDividends(Eric, CorporateDataImporter.AvanzaStockDetails.Name)).Dividend);
+        Assert.Null((await CorporateDataImporter.ImportAsync(store, gateway, Eric, "stock-details/test", _time, TestContext.Current.CancellationToken)).PreviousShares);
+
+        // The next day the count has doubled (a 2:1 split): the snapshot carries yesterday's count for the split check.
+        _time.Advance(TimeSpan.FromDays(1));
+        shares *= 2;
+        CorporateSnapshot next = await CorporateDataImporter.ImportAsync(store, gateway, Eric, "stock-details/test", _time, TestContext.Current.CancellationToken);
+        Assert.Equal((3_334_151_735m, 6_668_303_470m), (next.PreviousShares!.Value, next.Data.SharesOutstanding!.Value));
+        Assert.Equal(6_668_303_470m, store.LatestShareCount(Eric, CorporateDataImporter.AvanzaStockDetails.Name, new DateOnly(2026, 9, 26))!.Shares);
+    }
+
+    [Fact]
     public async Task Import_WritesLabelledBars_AndReimportIsUnchanged()
     {
         var gateway = new FakeGateway

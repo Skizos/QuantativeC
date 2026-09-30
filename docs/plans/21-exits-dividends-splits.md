@@ -1,6 +1,6 @@
 # 21 — Shares off the list, dividends and splits
 
-- **Status:** planned 2026-09-30, at the owner's request: "build 3, 1 and 2 first" (from the improvement review:
+- **Status:** done 2026-09-30 (A, then B and C), at the owner's request: "build 3, 1 and 2 first" (from the improvement review:
   3 = a share taken off the list is stranded, 1 = dividends are not handled, 2 = splits are not handled).
 - **Gate:** tests for every part; all managed tests green; no live call (the new endpoint is tested on a fixture built
   from the Go SDK's recorded sample); the report and the gate still rebuild from the audit alone.
@@ -44,11 +44,17 @@ is public (Go SDK `GetStockDetails`: "does not require an authenticated session"
   share with `qa probe`.
 - **Store:** `dividend_events` and `share_counts` tables (known-at versioned, like the bars). `qa history import` and
   the Paper session's history refresh fetch them for every listed, exiting and held share.
-- **Paper:** at session start, **before the day's first valuation** (which fixes R19's start value), each held
-  position is credited `quantity × amount` (SEK at the day's rate for a foreign share) for every ex-date after the
-  last session and up to today. The book records what it credited (so a second session the same day credits
-  nothing), and the audit gets a `dividend` record. The price drop on the ex-date is then matched by the cash, so the
-  daily loss stop no longer sees a loss that is not there.
+- **Paper:** at session start, **after the day's start value is fixed** (R19; at the prices before the open, i.e.
+  yesterday's close), each held position is credited `quantity × amount` (SEK at the day's rate for a foreign share)
+  for every ex-date after the last session and up to today. The book records the day it applied (so a second session
+  the same day credits nothing), and the audit gets a `dividend` record. The price drop on the ex-date is then
+  matched by the cash, so the daily loss stop no longer sees a loss that is not there, and the day's return is the
+  total return.
+  - *Changed while building (2026-09-30):* the draft said "before the day's first valuation". That is wrong: the
+    first valuation uses yesterday's close, so a start value that already held the dividend would see the ex-date
+    drop as a loss of exactly the dividend. Crediting after the start value is fixed gives start = yesterday's
+    value, end = today's value + the dividend. The same order is right for a split: the start value is yesterday's
+    shares at yesterday's price.
   - Cash is credited on the ex-date, not on the payment date (value tracking; real cash comes later).
   - Foreign withholding tax is not modelled (the owner has no foreign shares); the audit line says gross.
 - **Report:** the end-of-day report lists the day's dividends; the summary shows the total.
@@ -69,10 +75,45 @@ Neither client has split data. Two signals, both from public data:
    is valued at its last close mark (so the loss stop does not fire on a split nobody has confirmed), and the session
    says what to do.
 3. **By hand:** `qa paper split <TICKER> <K>[:1|1:<K>]` applies a split the owner has checked (offline; audited).
+   The book remembers it (30 days) so the share count, when it catches up, does not split the position again.
+   `qa paper accept-price <TICKER>` instead says the move is real (the close mark is dropped; audited).
 
-The book keeps each position's last close mark (written at the close) for the guard.
+The book keeps each position's last close mark (written at the close) for the guard. The guard is re-evaluated at
+every valuation: a price back in line releases the share; at the close a held-back share keeps its old mark, so it
+stays held back until resolved.
+
+**B and C done 2026-09-30:**
+
+| Part | Code | Tests |
+|---|---|---|
+| Route, DTO, mapper | `AvanzaRoutes.StockDetails` (routes 2026-09-30.1), `StockDetailsDto` (Tier B: `dividends` required, `stock` typed, the rest `JsonElement`), `AvanzaMapper.ToCorporateData` (drift on a bad date or a negative amount), `IBrokerGateway.GetCorporateDataAsync` | `DtoDriftTests` (both fixtures strict, no warnings; missing `dividends` is Tier B drift; a reshaped section is accepted), `MapperTests.StockDetails_…` (Nvidia's split-adjusted amounts, ordering, announced without a payment date, drift paths), `GatewayTests.StockDetails_…` |
+| Store and import | `dividend_events`, `share_counts` (`HistoryStore.Corporate.cs`), `CorporateDataImporter` (the count before today for the split check), `qa history import` and the app's Add store them (best-effort) | `HistoryStoreTests.Dividends_…`, `…ShareCounts_…`, `HistoryImportTests.CorporateImport_…`, `CliDataTests.HistoryImport_…` (both), `MarketSearchTests` |
+| Paper book | `PaperPosition.LastMark`, `PaperBook` (`CreditDividend`, `ApplySplit`, `SplitsByHand`, `AcceptPrice`, `RecordCloseMarks`, the guard in `Mark`), `CorporateActions` (`Apply`, `SplitRatio`, `SplitLikeMove`, `ParseRatio`, `SplitByOwner`, `AcceptPriceByOwner`), the Paper run (details at the start; held-back shares get no target) | `CorporateActionsTests` (41: ratios, once per ex-date, the start value, foreign rates, split before dividend, reverse split fraction, hand split not repeated, the guard, persistence, the report), `PaperSpyTests.ADividend_…`, `…ASharePricedAtHalf…`, `…PaperSplitAndAcceptPrice…` |
+| Report | `EodCorporateAction`, `EodReport.CorporateActions`/`DividendsSek` (from the `dividend`, `split`, `price-accepted` records), the summary, `qa report eod` and the app's day details | `CorporateActionsTests.TheEndOfDayReport_…`, `PaperSpyTests.ADividend_…` |
+| Backtest question | `DividendCheck` and `qa history dividends` | `HistoryImportTests.DividendCheck_…`, `CliDataTests.HistoryImport_StoresTheDividends_…` |
+
+The Stockholm fixture (`stock-details-5240.json`) is synthetic until the owner records the route with a live read;
+the Nvidia one is the Go SDK's recording. **Not live-tested:** the route has never been called against Avanza from
+this code. The first Paper session will call it (public, read-only); a schema difference there is Tier B (a warning,
+the session trades on).
 
 ## Not in this plan
 
 - Other corporate actions (spin-offs, rights issues, mergers): the price guard holds such a share back and says so.
 - Dividend reinvestment, withholding tax, the payment-date cash lag.
+- The backtest's total return: `qa history dividends` says whether the history leaves dividends out; adding them to
+  the backtest engine is a separate change (it would alter every recorded trial's comparability).
+- Confirm mode: the live account is Avanza's own, which pays dividends and applies splits itself. The guard is
+  Paper-only.
+
+## Limits
+
+- A real fall of about half (or a rise to about double) looks like a split to the guard: the share is held back and
+  valued at yesterday's close until the owner says `accept-price`. The session says so every day; it is not silent.
+- The share count is Avanza's, as shown the day it was read; a count updated days after the split is caught by the
+  guard first, and by the hand-split memory after.
+- A split is applied once per day (a second session the same day sees the same count change and skips it).
+- If a share's count read fails on the very day it is bought, after a split during a stretch when it was neither
+  listed nor held, the next session compares with the count from before that stretch and splits the new position
+  wrongly. The guard then sees the price at k times the new mark and holds it back, so nothing trades on it; the
+  owner undoes it with `qa paper split <TICKER> 1:k`. Rare enough not to model further.

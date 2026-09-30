@@ -208,6 +208,7 @@ public sealed class PaperSession(
     {
         _queue.RemoveAll(q => q.Market == m);
         gateway.AuditCloseMarks(_markets.Length == 1 ? null : m.Market.Trades); // plan 19: before the day orders end
+        book.RecordCloseMarks(); // plan 21: the split guard compares tomorrow's prices with these
         int ended = _markets.Length == 1 ? channel.EndOfDay("day order expired at the close") : channel.EndOfDay($"day order expired at the {m.Mic} close", m.Market.Trades);
         await ReconcileAsync(ct).ConfigureAwait(false);
         DateOnly today = OrderGateway.StockholmDate(now);

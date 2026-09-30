@@ -253,6 +253,37 @@ internal static partial class AvanzaMapper
         return bars;
     }
 
+    /// <summary>
+    /// Plan 21: the dividends (past and announced, ordered by ex-date, a date listed twice kept once) and the share count.
+    /// A date that is not yyyy-MM-dd, or a negative amount, is drift (Tier B: the feature is off for the day).
+    /// </summary>
+    public static CorporateData ToCorporateData(OrderbookId id, StockDetailsDto dto, DateTimeOffset now)
+    {
+        var dividends = new List<DividendEvent>();
+        void Add(List<DividendEventDto> events, string where)
+        {
+            for (int i = 0; i < events.Count; i++)
+            {
+                DividendEventDto e = events[i];
+                string path = $"$.dividends.{where}[{i}]";
+                DateOnly exDate = ParseDateString(e.ExDate) ?? throw Drift(AvanzaRoutes.StockDetails, StockDetailsDto.Version, DtoTier.B, path + ".exDate", "expected a yyyy-MM-dd date");
+                DateOnly? paid = string.IsNullOrEmpty(e.PaymentDate) ? null
+                    : ParseDateString(e.PaymentDate) ?? throw Drift(AvanzaRoutes.StockDetails, StockDetailsDto.Version, DtoTier.B, path + ".paymentDate", "expected a yyyy-MM-dd date");
+                if (e.Amount < 0)
+                {
+                    throw Drift(AvanzaRoutes.StockDetails, StockDetailsDto.Version, DtoTier.B, path + ".amount", "a dividend cannot be negative");
+                }
+
+                dividends.Add(new DividendEvent(exDate, paid, e.Amount, e.CurrencyCode, e.DividendType ?? "UNKNOWN"));
+            }
+        }
+
+        Add(dto.Dividends.PastEvents, "pastEvents");
+        Add(dto.Dividends.Events, "events");
+        DividendEvent[] ordered = [.. dividends.DistinctBy(d => (d.ExDate, d.Type, d.Currency)).OrderBy(d => d.ExDate)];
+        return new CorporateData(id, ordered, dto.Stock?.NumberOfShares is > 0 and var shares ? shares : null, now);
+    }
+
     public static IReadOnlyList<BrokerTransaction> ToTransactions(TransactionsDto dto)
     {
         var result = new List<BrokerTransaction>(dto.Transactions.Count);

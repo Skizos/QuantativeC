@@ -62,6 +62,18 @@ public sealed partial class HistoryStore : IDisposable
             PRIMARY KEY (orderbook_id, source, resolution, bar_start, known_at))
         """,
         """
+        CREATE TABLE IF NOT EXISTS dividend_events (
+            orderbook_id VARCHAR NOT NULL, ex_date DATE NOT NULL, dividend_type VARCHAR NOT NULL, amount DECIMAL(18,6) NOT NULL,
+            currency VARCHAR NOT NULL, payment_date DATE, known_at TIMESTAMP NOT NULL, source VARCHAR NOT NULL, source_version VARCHAR NOT NULL,
+            PRIMARY KEY (orderbook_id, source, ex_date, dividend_type, known_at))
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS share_counts (
+            orderbook_id VARCHAR NOT NULL, as_of DATE NOT NULL, shares DECIMAL(18,2) NOT NULL,
+            known_at TIMESTAMP NOT NULL, source VARCHAR NOT NULL, source_version VARCHAR NOT NULL,
+            PRIMARY KEY (orderbook_id, source, as_of, known_at))
+        """,
+        """
         CREATE TABLE IF NOT EXISTS spread_samples (
             orderbook_id VARCHAR NOT NULL, sampled_at TIMESTAMP NOT NULL,
             bid DECIMAL(18,6) NOT NULL, ask DECIMAL(18,6) NOT NULL, bid_volume DECIMAL(18,6) NOT NULL, ask_volume DECIMAL(18,6) NOT NULL,

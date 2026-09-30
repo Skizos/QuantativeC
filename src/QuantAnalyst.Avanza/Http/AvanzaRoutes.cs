@@ -34,7 +34,8 @@ public sealed record AvanzaRoute(string Name, string Method, string PathTemplate
 /// </summary>
 public static class AvanzaRoutes
 {
-    public const string RoutesVersion = "2026-09-26.2"; // .1: order routes in AvanzaOrderRoutes (Phase 6); .2: AvanzaPreflightRoutes (Phase 7 step 1)
+    // .1: order routes in AvanzaOrderRoutes (Phase 6); .2: AvanzaPreflightRoutes (Phase 7 step 1); 2026-09-30.1: StockDetails (plan 21)
+    public const string RoutesVersion = "2026-09-30.1";
 
     public static readonly Uri DefaultBaseAddress = new("https://www.avanza.se");
 
@@ -142,6 +143,13 @@ public static class AvanzaRoutes
     public static readonly AvanzaRoute PriceChart = new(
         "price-chart", "GET", "/_api/price-chart/stock/{0}", DtoTier.B, false, Qluxzz);
 
+    /// <summary>
+    /// A stock's extended data; we read only its dividends (past and announced) and share count (plan 21). Public: the Go
+    /// SDK's <c>GetStockDetails</c> "does not require an authenticated session".
+    /// </summary>
+    public static readonly AvanzaRoute StockDetails = new(
+        "stock-details", "GET", "/_api/market-guide/stock/{0}/details", DtoTier.B, false, GoSdk + "/market/service.go");
+
     /// <summary>Transactions; query <c>from</c>, <c>to</c> (yyyy-MM-dd), <c>includeResult</c>.</summary>
     public static readonly AvanzaRoute Transactions = new(
         "transactions", "GET", "/_api/transactions/list", DtoTier.B, false, GoSdk + "/accounts/service.go");
@@ -164,7 +172,7 @@ public static class AvanzaRoutes
     [
         UserCredentials, Totp, SessionInfo, StartPage, BankIdStart, BankIdRestart, BankIdCollect, BankIdLogin, TradingPage,
         LoginRedirect, AccountsOverview, TradingAccounts, Positions, Orders, Deals,
-        Orderbook, MarketData, Search, PriceChart, Transactions, OrderDepthStream,
+        Orderbook, MarketData, Search, PriceChart, StockDetails, Transactions, OrderDepthStream,
     ];
 }
 

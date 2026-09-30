@@ -36,6 +36,19 @@ public sealed class GatewayTests
     }
 
     [Fact]
+    public async Task StockDetails_ReadTheDividendsAndTheShareCount()
+    {
+        using var rig = new TestRig();
+        await rig.Connection.Authenticator.LoginAsync(Ct);
+        CorporateData data = await rig.Connection.Gateway.GetCorporateDataAsync(new OrderbookId("5240"), Ct);
+
+        Assert.Equal(AvanzaRoutes.StockDetails.Path("5240"), rig.Server.Requests[^1].PathAndQuery);
+        Assert.Equal("GET", rig.Server.Requests[^1].Method);
+        Assert.Equal(3_334_151_735m, data.SharesOutstanding);
+        Assert.Equal(new DividendEvent(new DateOnly(2026, 10, 22), new DateOnly(2026, 10, 27), 1.45m, "SEK", "ORDINARY"), data.Dividends[^1]);
+    }
+
+    [Fact]
     public async Task QueryStrings_UseTheClientsWireFormat()
     {
         using var rig = new TestRig();

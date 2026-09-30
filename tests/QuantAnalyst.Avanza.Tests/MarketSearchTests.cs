@@ -205,8 +205,11 @@ public sealed class MarketSearchTests : IDisposable
         Assert.Contains("resolution=day", chart, StringComparison.Ordinal);
         Assert.DoesNotContain("one_month", chart, StringComparison.Ordinal);
 
+        // Plan 21: and stored its dividends and share count.
+        Assert.StartsWith("Dividends: ", added.Import.CorporateNote, StringComparison.Ordinal);
+
         // Nothing but the login and reads was asked of Avanza.
-        string[] allowed = [.. new[] { AvanzaRoutes.UserCredentials, AvanzaRoutes.Totp, AvanzaRoutes.Search, AvanzaRoutes.Orderbook, AvanzaRoutes.PriceChart }
+        string[] allowed = [.. new[] { AvanzaRoutes.UserCredentials, AvanzaRoutes.Totp, AvanzaRoutes.Search, AvanzaRoutes.Orderbook, AvanzaRoutes.PriceChart, AvanzaRoutes.StockDetails }
             .Select(r => r.PathTemplate.Split('{')[0])];
         Assert.All(_server.Requests, r => Assert.Contains(allowed, a => r.PathAndQuery.StartsWith(a, StringComparison.Ordinal)));
 

@@ -21,6 +21,7 @@ internal static partial class AvanzaCommands
         var command = new Command("history", "Daily price history in the local store (data/quant.duckdb), with known-at versioning.");
         command.Subcommands.Add(HistoryImport(services));
         command.Subcommands.Add(HistoryShow());
+        command.Subcommands.Add(HistoryDividends());
         return command;
     }
 
@@ -86,6 +87,11 @@ internal static partial class AvanzaCommands
             if (result.Fx is { } fx)
             {
                 output.WriteLine($"FX fixings (ADR 0005): {FxCommands.Describe(fx)} Source: {fx.Source.Label}.");
+            }
+
+            if (result.CorporateNote is { } corporate)
+            {
+                output.WriteLine(corporate);
             }
 
             foreach (string warning in report.Warnings)
@@ -155,6 +161,82 @@ internal static partial class AvanzaCommands
 
             table.Write(w);
             w.WriteLine($"{bars.Count} bar(s); prices in {r.Currency}; dates are Nasdaq Stockholm trading dates.");
+            return 0;
+        }));
+        return command;
+    }
+    private static Command HistoryDividends()
+    {
+        var ticker = new Argument<string?>("ticker") { Description = "Ticker as stored, e.g. ERIC-B", Arity = ArgumentArity.ZeroOrOne };
+        var id = new Option<string?>("--id") { Description = "Avanza orderbook id instead of a ticker" };
+        var store = DataCommands.StoreOption();
+        var json = new Option<bool>("--json") { Description = "JSON output" };
+        var command = new Command(
+            "dividends",
+            "Show a share's stored dividends and check the stored price history on each ex-date: does a backtest on it include dividends? (Plan 21; offline, no login.)");
+        command.Arguments.Add(ticker);
+        command.Options.Add(id);
+        command.Options.Add(store);
+        command.Options.Add(json);
+        command.SetAction(parse => DataCommands.Execute(parse, w =>
+        {
+            using HistoryStore history = DataCommands.OpenExisting(parse.GetValue(store)!);
+            InstrumentRecord r = DataCommands.FindInstrument(history, parse.GetValue(ticker), parse.GetValue(id), null).Instrument;
+            DividendEvent[] dividends = [.. history.GetDividends(r.OrderbookId, CorporateDataImporter.AvanzaStockDetails.Name).Select(d => d.Dividend)];
+            IReadOnlyList<StoredBar> bars = history.GetDailyBars(r.OrderbookId, AvanzaChartImporter.AvanzaPriceChart.Name);
+            (IReadOnlyList<DividendGap> gaps, DividendVerdict verdict) = DividendCheck.Check(dividends, [.. bars.Select(b => b.Bar)], r.Currency);
+            StoredShareCount? shares = history.LatestShareCount(r.OrderbookId, CorporateDataImporter.AvanzaStockDetails.Name, DateOnly.MaxValue);
+
+            if (parse.GetValue(json))
+            {
+                w.WriteLine(JsonSerializer.Serialize(new
+                {
+                    orderbookId = r.OrderbookId.Value,
+                    r.Ticker,
+                    r.Currency,
+                    sharesOutstanding = shares?.Shares,
+                    dividends = gaps.Select(g => new
+                    {
+                        g.Dividend.ExDate,
+                        g.Dividend.PaymentDate,
+                        g.Dividend.Amount,
+                        g.Dividend.Currency,
+                        g.Dividend.Type,
+                        g.PreviousClose,
+                        g.ExOpen,
+                        g.Yield,
+                        g.Gap,
+                        g.Reading,
+                    }),
+                    verdict = verdict.ToString(),
+                }, QaCli.Json));
+                return 0;
+            }
+
+            w.WriteLine($"{r.Ticker} {r.Name} (orderbook {r.OrderbookId}, {r.Currency})");
+            if (dividends.Length == 0)
+            {
+                w.WriteLine($"No dividends stored. 'qa history import {r.Ticker.Replace(' ', '-')}' stores them (and every Paper session does for the shares it trades).");
+                return 0;
+            }
+
+            w.WriteLine($"Source: {CorporateDataImporter.AvanzaStockDetails.Label}.");
+            var table = new TextTable(("ex-date", false), ("amount", true), ("paid", false), ("close before", true), ("ex open", true), ("yield", true), ("gap", true), ("reading", false));
+            foreach (DividendGap g in gaps)
+            {
+                CultureInfo c = CultureInfo.InvariantCulture;
+                table.Add(g.Dividend.ExDate.ToString("yyyy-MM-dd", c), string.Create(c, $"{g.Dividend.Amount:0.####} {g.Dividend.Currency}"),
+                    g.Dividend.PaymentDate?.ToString("yyyy-MM-dd", c) ?? "-", g.PreviousClose is { } p ? Num(p) : "-", g.ExOpen is { } o ? Num(o) : "-",
+                    g.Yield is { } y ? y.ToString("0.00%", c) : "-", g.Gap is { } gap ? gap.ToString("+0.00%;-0.00%;0.00%", c) : "-", g.Reading);
+            }
+
+            table.Write(w);
+            if (shares is not null)
+            {
+                w.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Share count {shares.Shares:N0} (as of {shares.AsOf:yyyy-MM-dd}); a split multiplies it, and the Paper book follows it."));
+            }
+
+            w.WriteLine(DividendCheck.Describe(verdict));
             return 0;
         }));
         return command;

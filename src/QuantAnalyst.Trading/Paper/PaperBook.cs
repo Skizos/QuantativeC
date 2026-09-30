@@ -12,7 +12,11 @@ public sealed class PaperBookException(string message) : Exception(message);
 /// <param name="CostBasis">In SEK, fees included.</param>
 /// <param name="LastFillPrice">In the share's currency.</param>
 /// <param name="Currency">The share's currency (ADR 0005): its value in SEK is quantity × price × the day's rate.</param>
-public sealed record PaperPosition(OrderbookId OrderbookId, string Ticker, long Quantity, decimal CostBasis, decimal LastFillPrice, string Currency = "SEK");
+/// <param name="LastMark">Its price at the last session's close (plan 21), which the split guard compares with; null before the first close.</param>
+public sealed record PaperPosition(OrderbookId OrderbookId, string Ticker, long Quantity, decimal CostBasis, decimal LastFillPrice, string Currency = "SEK", decimal? LastMark = null);
+
+/// <summary>A split the owner applied by hand (<c>qa paper split</c>, plan 21) that Avanza's share count has not shown yet.</summary>
+public sealed record SplitByHand(OrderbookId OrderbookId, decimal Ratio, DateOnly Day);
 
 /// <summary>
 /// The paper account: cash, positions and fees, in SEK. It is the Paper source of truth for the account state (the
@@ -47,6 +51,10 @@ public sealed class PaperBook : IAccountState
     private decimal _realized;
     private DateOnly? _startOfDayDate;
     private decimal _startOfDayValue;
+    private DateOnly? _corporateThrough;
+    private decimal _dividends;
+    private readonly HashSet<OrderbookId> _heldBack = [];
+    private readonly Dictionary<OrderbookId, SplitByHand> _splitsByHand = [];
 
     private PaperBook(string? directory, string costs, decimal startingCash, IQuoteSource? marks, TimeProvider time, IFxRates? fx)
     {
@@ -127,6 +135,58 @@ public sealed class PaperBook : IAccountState
 
     public string? BookPath => _directory is null ? null : Path.Combine(_directory, FileName);
 
+    /// <summary>Gets the last day whose dividends and splits were applied (plan 21); null before the first time.</summary>
+    public DateOnly? CorporateThrough
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _corporateThrough;
+            }
+        }
+    }
+
+    /// <summary>Gets the dividends credited so far, in SEK (plan 21).</summary>
+    public decimal DividendsReceived
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _dividends;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the positions held back at the last valuation (plan 21): their live price is a split-like ratio away from
+    /// their last close mark with no split applied, so they are valued at that mark and not traded until the price is
+    /// back in line or the owner resolves it.
+    /// </summary>
+    public IReadOnlySet<OrderbookId> HeldBack
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return new HashSet<OrderbookId>(_heldBack.Where(_positions.ContainsKey));
+            }
+        }
+    }
+
+    /// <summary>Gets the splits the owner applied by hand that Avanza's share count has not shown yet (plan 21).</summary>
+    public IReadOnlyList<SplitByHand> SplitsByHand
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return [.. _splitsByHand.Values];
+            }
+        }
+    }
+
     /// <summary>A book that is never saved (tests and dry runs).</summary>
     public static PaperBook InMemory(decimal cash, string costs, IQuoteSource? marks, TimeProvider time, IFxRates? fx = null)
     {
@@ -175,11 +235,19 @@ public sealed class PaperBook : IAccountState
             _realized = file.RealizedPnl,
             _startOfDayDate = file.StartOfDayDate,
             _startOfDayValue = file.StartOfDayValue,
+            _corporateThrough = file.CorporateThrough,
+            _dividends = file.DividendsReceived,
         };
         foreach (PositionFile p in file.Positions)
         {
             var id = new OrderbookId(p.OrderbookId);
-            book._positions[id] = new PaperPosition(id, p.Ticker, p.Quantity, p.CostBasis, p.LastFillPrice, p.Currency ?? "SEK");
+            book._positions[id] = new PaperPosition(id, p.Ticker, p.Quantity, p.CostBasis, p.LastFillPrice, p.Currency ?? "SEK", p.LastMark);
+        }
+
+        foreach (SplitFile s in file.SplitsByHand ?? [])
+        {
+            var id = new OrderbookId(s.OrderbookId);
+            book._splitsByHand[id] = new SplitByHand(id, s.Ratio, s.Day);
         }
 
         if (file.Costs != config.Costs || file.StartingCash != config.Cash)
@@ -224,7 +292,8 @@ public sealed class PaperBook : IAccountState
     public Task<AccountSnapshot> GetAsync(CancellationToken ct) => Task.FromResult(Snapshot());
 
     /// <summary>
-    /// Cash, positions and values now. Positions are marked at the last trade, else the mid, else the last paper fill.
+    /// Cash, positions and values now. Positions are marked at the last trade, else the mid, else the last close mark,
+    /// else the last paper fill (plan 21: a split-like move from the last close mark is held back, see <see cref="HeldBack"/>).
     /// The first snapshot of a Stockholm day fixes that day's start value (R19).
     /// </summary>
     public AccountSnapshot Snapshot()
@@ -301,7 +370,7 @@ public sealed class PaperBook : IAccountState
                 }
 
                 _cash -= value + fees;
-                _positions[id] = new PaperPosition(id, ticker, (held?.Quantity ?? 0) + quantity, (held?.CostBasis ?? 0) + value + fees, price, currency);
+                _positions[id] = new PaperPosition(id, ticker, (held?.Quantity ?? 0) + quantity, (held?.CostBasis ?? 0) + value + fees, price, currency, held?.LastMark);
             }
             else
             {
@@ -331,10 +400,175 @@ public sealed class PaperBook : IAccountState
         }
     }
 
+    /// <summary>
+    /// Plan 21: credits a dividend on a held position (quantity × <paramref name="perShare"/>, in SEK at
+    /// <paramref name="sekPerUnit"/>), gross, on the ex-date. Returns the SEK credited; 0 when the share is not held.
+    /// </summary>
+    internal decimal CreditDividend(OrderbookId id, decimal perShare, decimal sekPerUnit)
+    {
+        if (perShare < 0 || sekPerUnit <= 0)
+        {
+            throw new PaperBookException($"a dividend of {perShare} at {sekPerUnit} SEK is not valid");
+        }
+
+        lock (_lock)
+        {
+            if (!_positions.TryGetValue(id, out PaperPosition? p))
+            {
+                return 0m;
+            }
+
+            decimal cash = decimal.Round(p.Quantity * perShare * sekPerUnit, 2, MidpointRounding.AwayFromZero);
+            _cash += cash;
+            _dividends += cash;
+            Save();
+            return cash;
+        }
+    }
+
+    /// <summary>
+    /// Plan 21: a split of <paramref name="ratio"/> new shares per old (0.5 for a 1:2 reverse split). The quantity is
+    /// multiplied (a fraction a reverse split leaves is paid out in cash at the last price), prices are divided, the cost
+    /// is unchanged. Returns the quantities before and after and the cash for the fraction. A split
+    /// <paramref name="byHand"/> is remembered until Avanza's share count shows it (<see cref="TakeSplitByHand"/>), so
+    /// it is not applied twice.
+    /// </summary>
+    internal (long Before, long After, decimal CashForFraction) ApplySplit(OrderbookId id, decimal ratio, bool byHand = false)
+    {
+        if (ratio <= 0 || ratio == 1)
+        {
+            throw new PaperBookException($"a split ratio of {ratio} is not valid");
+        }
+
+        lock (_lock)
+        {
+            if (!_positions.TryGetValue(id, out PaperPosition? p))
+            {
+                return (0, 0, 0m);
+            }
+
+            // A 1:k reverse split arrives as 1/k, which a decimal does not hold exactly: prices are multiplied by k instead.
+            bool reverse = ratio < 1;
+            decimal k = reverse ? decimal.Round(1 / ratio, 6) : ratio;
+            decimal Price(decimal old) => reverse ? old * k : old / k;
+            decimal exact = reverse ? p.Quantity / k : p.Quantity * k;
+            long after = (long)decimal.Floor(exact);
+            decimal newPrice = Price(p.LastMark ?? p.LastFillPrice);
+            decimal cash = decimal.Round((exact - after) * newPrice * (_fx.SekPerUnit(p.Currency) ?? 1m), 2, MidpointRounding.AwayFromZero);
+            _cash += cash;
+            if (after == 0)
+            {
+                _positions.Remove(id);
+            }
+            else
+            {
+                _positions[id] = p with
+                {
+                    Quantity = after,
+                    LastFillPrice = Price(p.LastFillPrice),
+                    LastMark = p.LastMark is { } m ? Price(m) : null,
+                };
+            }
+
+            _heldBack.Remove(id);
+            if (byHand)
+            {
+                _splitsByHand[id] = new SplitByHand(id, ratio, OrderGateway.StockholmDate(_time.GetUtcNow()));
+            }
+
+            Save();
+            return (p.Quantity, after, cash);
+        }
+    }
+
+    /// <summary>Plan 21: the split the owner applied by hand to <paramref name="id"/> and Avanza's count had not shown yet, now forgotten; null if none.</summary>
+    internal SplitByHand? TakeSplitByHand(OrderbookId id)
+    {
+        lock (_lock)
+        {
+            if (!_splitsByHand.Remove(id, out SplitByHand? s))
+            {
+                return null;
+            }
+
+            Save();
+            return s;
+        }
+    }
+
+    /// <summary>Plan 21: the owner says a held-back share's move is real (no split): its last close mark is dropped.</summary>
+    internal bool AcceptPrice(OrderbookId id)
+    {
+        lock (_lock)
+        {
+            if (!_positions.TryGetValue(id, out PaperPosition? p) || p.LastMark is null)
+            {
+                return false;
+            }
+
+            _positions[id] = p with { LastMark = null };
+            _heldBack.Remove(id);
+            Save();
+            return true;
+        }
+    }
+
+    /// <summary>Plan 21: the day of the last dividends and splits applied.</summary>
+    internal void SetCorporateThrough(DateOnly day)
+    {
+        lock (_lock)
+        {
+            _corporateThrough = day;
+            Save();
+        }
+    }
+
+    /// <summary>
+    /// Plan 21: at the close, each position's live price becomes its last close mark, which the next session's split guard
+    /// compares with. A position whose price is still a split-like ratio from its mark keeps the old mark, so it stays
+    /// held back until the owner resolves it.
+    /// </summary>
+    public void RecordCloseMarks()
+    {
+        lock (_lock)
+        {
+            foreach (PaperPosition p in _positions.Values.ToList())
+            {
+                if (LivePrice(p) is { } price && !IsSplitLike(p, price))
+                {
+                    _positions[p.OrderbookId] = p with { LastMark = price };
+                }
+            }
+
+            Save();
+        }
+    }
+
+    /// <summary>
+    /// The price a position is valued at: the last trade, else the mid, else the last close mark, else the last paper
+    /// fill. Plan 21: a live price a
+    /// split-like ratio away from the last close mark holds the position back, valued at that mark (the daily loss stop
+    /// does not fire on a split nobody has confirmed).
+    /// </summary>
     private decimal Mark(PaperPosition p)
     {
+        decimal? live = LivePrice(p);
+        if (live is { } price && IsSplitLike(p, price))
+        {
+            _heldBack.Add(p.OrderbookId);
+            return p.LastMark!.Value;
+        }
+
+        _heldBack.Remove(p.OrderbookId);
+        return live ?? p.LastMark ?? p.LastFillPrice;
+    }
+
+    private static bool IsSplitLike(PaperPosition p, decimal price) => p.LastMark is { } last && CorporateActions.SplitLikeMove(last, price) is not null;
+
+    private decimal? LivePrice(PaperPosition p)
+    {
         Quote? q = _marks?.Latest(p.OrderbookId);
-        return q?.Last ?? (q is { Bid: { } bid, Ask: { } ask } ? (bid + ask) / 2 : p.LastFillPrice);
+        return q?.Last ?? (q is { Bid: { } bid, Ask: { } ask } ? (bid + ask) / 2 : null);
     }
 
     /// <summary>A position's value in SEK: at the mark and the day's rate, or at cost when its currency has no rate.</summary>
@@ -359,8 +593,11 @@ public sealed class PaperBook : IAccountState
             _startOfDayDate,
             _startOfDayValue,
             [.. _positions.Values.OrderBy(p => p.Ticker, StringComparer.Ordinal).Select(p => new PositionFile(p.OrderbookId.Value, p.Ticker, p.Quantity, p.CostBasis, p.LastFillPrice,
-                Markets.IsForeign(p.Currency) ? p.Currency : null))],
-            _time.GetUtcNow());
+                Markets.IsForeign(p.Currency) ? p.Currency : null, p.LastMark))],
+            _time.GetUtcNow(),
+            _corporateThrough,
+            _dividends,
+            _splitsByHand.Count == 0 ? null : [.. _splitsByHand.Values.OrderBy(x => x.OrderbookId.Value, StringComparer.Ordinal).Select(x => new SplitFile(x.OrderbookId.Value, x.Ratio, x.Day))]);
         string path = Path.Combine(_directory, FileName);
         string temp = path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(file, Json));
@@ -386,10 +623,15 @@ public sealed class PaperBook : IAccountState
         DateOnly? StartOfDayDate,
         decimal StartOfDayValue,
         IReadOnlyList<PositionFile> Positions,
-        DateTimeOffset SavedUtc);
+        DateTimeOffset SavedUtc,
+        DateOnly? CorporateThrough = null,
+        decimal DividendsReceived = 0m,
+        IReadOnlyList<SplitFile>? SplitsByHand = null);
+
+    private sealed record SplitFile(string OrderbookId, decimal Ratio, DateOnly Day);
 
     /// <summary>A position; <c>currency</c> is written for a foreign share only, so a Swedish book reads as before.</summary>
-    private sealed record PositionFile(string OrderbookId, string Ticker, long Quantity, decimal CostBasis, decimal LastFillPrice, string? Currency = null);
+    private sealed record PositionFile(string OrderbookId, string Ticker, long Quantity, decimal CostBasis, decimal LastFillPrice, string? Currency = null, decimal? LastMark = null);
 
     private sealed record FillLine(
         DateTimeOffset AtUtc, Guid ClientOrderId, string OrderbookId, string Ticker, string Side, long Quantity, decimal Price, decimal Courtage, decimal FxFee, decimal CashAfter,
