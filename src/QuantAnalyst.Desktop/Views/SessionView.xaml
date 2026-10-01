@@ -43,6 +43,55 @@
                 </c:AdaptiveRow>
             </Border>
 
+            <!-- Manual orders (plan 23): a request the Paper session sends through the same risk checks as the strategy's
+                 orders; the strategy then leaves the share alone until it is released. Works with or without a session. -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Text="Buy or sell by hand" Style="{StaticResource H2}" />
+                    <TextBlock Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,4,0,10"
+                               Text="Paper only. The running session, or the next one, sends it in the trading window (09:05–17:20) through the same risk checks as the strategy's orders. The strategy then leaves that share alone until you release it." />
+                    <WrapPanel>
+                        <StackPanel Margin="0,0,10,6">
+                            <TextBlock Text="Share" Style="{StaticResource Caption}" />
+                            <ComboBox ItemsSource="{Binding ManualTickers}" SelectedItem="{Binding ManualTicker}" Width="140" ToolTip="A share on your list (an exiting one can only be sold)" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,10,6">
+                            <TextBlock Text="Buy or sell" Style="{StaticResource Caption}" />
+                            <ComboBox ItemsSource="{Binding ManualSides}" SelectedItem="{Binding ManualSide}" Width="90" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,10,6">
+                            <TextBlock Text="Shares" Style="{StaticResource Caption}" />
+                            <TextBox Text="{Binding ManualQuantity, UpdateSourceTrigger=PropertyChanged}" Width="90" ToolTip="A whole number of shares" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,10,6">
+                            <TextBlock Text="Limit (optional)" Style="{StaticResource Caption}" />
+                            <TextBox Text="{Binding ManualLimit, UpdateSourceTrigger=PropertyChanged}" Width="110" ToolTip="Empty: the ask for a buy, the bid for a sell" />
+                        </StackPanel>
+                        <Button Style="{StaticResource Primary}" Content="Place" Command="{Binding PlaceManualCommand}" VerticalAlignment="Bottom" Margin="0,0,10,6" />
+                        <Button Content="Refresh" Command="{Binding RefreshManualCommand}" VerticalAlignment="Bottom" Margin="0,0,0,6" />
+                    </WrapPanel>
+                    <ItemsControl ItemsSource="{Binding ManualLines}" Margin="0,6,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" Style="{StaticResource MonoText}" TextWrapping="Wrap" Margin="0,1" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <ItemsControl ItemsSource="{Binding ManualShares}" Margin="0,6,0,0">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <DockPanel Margin="0,2">
+                                    <Button DockPanel.Dock="Right" Content="Release"
+                                            Command="{Binding DataContext.ReleaseManualCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}"
+                                            ToolTip="Give it back to the strategy: from the next decision it trades the share to its target again" />
+                                    <TextBlock Text="{Binding}" Style="{StaticResource H3}" VerticalAlignment="Center" />
+                                </DockPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+
             <!-- Today, live: shown once the session has reported. -->
             <StackPanel Visibility="{Binding Live.HasData, Converter={StaticResource Visibility}}">
                 <WrapPanel Margin="0,0,0,4">

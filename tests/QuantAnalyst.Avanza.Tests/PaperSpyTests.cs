@@ -432,6 +432,37 @@ public sealed class PaperSpyTests : IDisposable
     }
 
     [Fact]
+    public async Task AManualBuy_IsSentBeforeTheDecision_AndTheStrategyThenLeavesTheShare()
+    {
+        // Plan 23: placed before the session; sent as soon as the session has a price (09:09:40, in the window).
+        PrepareHistoryAndUniverse();
+        (int code, string placed, string error) = Qa(TimeProvider.System, "paper", "manual", "buy", "ERIC-B", "3", "--config-dir", Config, "--state-dir", State);
+        Assert.True(code == 0, error);
+        Assert.Contains("No Paper session is running: the next one sends it", placed, StringComparison.Ordinal);
+
+        (code, string output, error) = await RunPaper(seconds: 60);
+
+        Assert.True(code == 0, output + error);
+        Assert.True(output.Contains("manual Buy 3 ERIC B: Accepted (Filled, filled 3/3 @ 70.86)", StringComparison.Ordinal), output); // at the ask
+        Assert.Contains("ERIC B: yours (manual), the strategy leaves it; 'qa paper release ERIC-B' gives it back", output, StringComparison.Ordinal);
+        Assert.Contains("decision: 0 order(s)", output, StringComparison.Ordinal);
+        using (JsonDocument book = JsonDocument.Parse(File.ReadAllText(Path.Combine(State, "paper", "book.json"))))
+        {
+            Assert.Equal("5240", book.RootElement.GetProperty("manual_holds")[0].GetString());
+            Assert.Equal(3, book.RootElement.GetProperty("positions")[0].GetProperty("quantity").GetInt64());
+        }
+
+        string orders = Qa(TimeProvider.System, "paper", "orders", "--config-dir", Config, "--state-dir", State).Output;
+        Assert.Contains("Manual shares (the strategy leaves them): ERIC B.", orders, StringComparison.Ordinal);
+        EodReport report = EodReport.Build(Audit, new DateOnly(2026, 9, 28), TimeProvider.System);
+        Assert.Equal(1, report.ManualOrdersSent);
+
+        // Released: the next session's decision trades it again.
+        Assert.Contains("The next Paper session applies it before its decision.",
+            Qa(TimeProvider.System, "paper", "release", "ERIC-B", "--config-dir", Config, "--state-dir", State).Output, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ASavedStrategy_AndAnAllowlist_AreEnough_TheSessionImportsTheHistoryItNeeds()
     {
         File.WriteAllText(Path.Combine(Config, "universe.json"), """{ "format": "qa-universe/1", "instruments": [ { "orderbook_id": "5240", "ticker": "ERIC B", "name": "Ericsson B" } ] }""");

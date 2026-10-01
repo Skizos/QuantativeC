@@ -7,6 +7,7 @@ using QuantAnalyst.Trading.Model;
 using QuantAnalyst.Trading.Observation;
 using QuantAnalyst.Trading.Oms;
 using QuantAnalyst.Trading.Reconciliation;
+using QuantAnalyst.Trading.Risk;
 using QuantAnalyst.Trading.Scheduling;
 
 namespace QuantAnalyst.Trading.Paper;
@@ -85,7 +86,8 @@ public sealed class PaperSession(
         ? [.. markets.Select(m => new MarketDay(m))]
         : throw new ArgumentException("A session needs at least one market.", nameof(markets));
 
-    private readonly List<(MarketDay Market, OrderIntent Intent)> _queue = [];
+    private readonly List<Queued> _queue = [];
+    private readonly HashSet<Guid> _manualOrders = [];
     private DateOnly? _reportedOn;
     private DateTimeOffset? _lastSubmit;
     private int _decisions;
@@ -95,6 +97,12 @@ public sealed class PaperSession(
     private bool _lastClean = true;
     private readonly ISessionObserver? _observer = GuardedObserver.Wrap(observer);
     private DateTimeOffset? _lastAccountTick;
+
+    /// <summary>
+    /// Gets the owner's manual requests (plan 23): taken each step, sent through the gateway ahead of the strategy's
+    /// queued orders; null when the session takes none.
+    /// </summary>
+    public ManualOrderDesk? Manual { get; init; }
 
     /// <summary>A session on Nasdaq Stockholm alone (a Swedish-only list): one decision, one close.</summary>
     public PaperSession(
@@ -118,6 +126,7 @@ public sealed class PaperSession(
     public async Task<PaperSessionSummary> RunAsync(DateTimeOffset stopAtUtc, CancellationToken ct)
     {
         audit.Append("session-start", new { mode = "Paper", stopAtUtc, book.Costs, cash = book.Cash });
+        Manual?.Recover();
         TellAccount(force: true);
         try
         {
@@ -136,6 +145,11 @@ public sealed class PaperSession(
         }
         finally
         {
+            foreach (Queued q in _queue.Where(q => q.Manual is not null))
+            {
+                Manual?.NotSent(q.Manual!.Request, q.Manual.WasManual, "the session stopped before it was sent");
+            }
+
             _queue.Clear();
             await gateway.CancelAllAsync("session stopped", CancellationToken.None).ConfigureAwait(false);
             channel.EndOfDay("session stopped");
@@ -178,15 +192,29 @@ public sealed class PaperSession(
             }
         }
 
+        if (Manual is { } desk)
+        {
+            await TakeManualAsync(desk, now, ct).ConfigureAwait(false);
+        }
+
         if (_lastSubmit is not { } s || now - s >= PaceBetweenOrders)
         {
             // The first queued intent whose market still takes orders; the rest go at their market's close.
             int next = _queue.FindIndex(q => q.Market.Today(now) is { } p && now < p.WindowCloseUtc);
             if (next >= 0)
             {
-                OrderIntent intent = _queue[next].Intent;
+                Queued queued = _queue[next];
                 _queue.RemoveAt(next);
-                await SubmitNextAsync(intent, ct).ConfigureAwait(false);
+                SubmitResult result = await SubmitNextAsync(queued.Intent, ct).ConfigureAwait(false);
+                if (queued.Manual is { } ticket)
+                {
+                    if (result.Order is { } order)
+                    {
+                        _manualOrders.Add(order.ClientOrderId);
+                    }
+
+                    Manual?.Sent(ticket.Request, result, ticket.WasManual);
+                }
             }
         }
 
@@ -206,6 +234,11 @@ public sealed class PaperSession(
     /// </summary>
     private async Task CloseAsync(MarketDay m, DateTimeOffset now, CancellationToken ct)
     {
+        foreach (Queued q in _queue.Where(q => q.Market == m && q.Manual is not null))
+        {
+            Manual?.NotSent(q.Manual!.Request, q.Manual.WasManual, $"the {m.Mic} close came before it was sent");
+        }
+
         _queue.RemoveAll(q => q.Market == m);
         gateway.AuditCloseMarks(_markets.Length == 1 ? null : m.Market.Trades); // plan 19: before the day orders end
         book.RecordCloseMarks(); // plan 21: the split guard compares tomorrow's prices with these
@@ -281,11 +314,66 @@ public sealed class PaperSession(
 
         foreach (OrderIntent intent in plan.Intents)
         {
-            _queue.Add((m, intent));
+            if (book.ManualHolds.Contains(intent.OrderbookId))
+            {
+                continue; // plan 23: the owner trades it by hand (the decision gives it no target; a late take-over may race)
+            }
+
+            _queue.Add(new Queued(m, intent));
         }
     }
 
-    private async Task SubmitNextAsync(OrderIntent queued, CancellationToken ct)
+    /// <summary>
+    /// Plan 23: the owner's due requests. Each share an order is for becomes manual first: the strategy's queued orders
+    /// for it are dropped and its working ones cancelled, and the manual order goes to the front of the queue.
+    /// </summary>
+    private async Task TakeManualAsync(ManualOrderDesk desk, DateTimeOffset now, CancellationToken ct)
+    {
+        IReadOnlyList<(ManualOrderRequest Request, OrderIntent Intent, InstrumentSpec Spec)> due = desk.Due(now, spec => WindowFor(spec, now));
+        foreach ((ManualOrderRequest request, OrderIntent intent, InstrumentSpec spec) in due)
+        {
+            MarketDay? market = _markets.FirstOrDefault(m => m.Market.Trades(spec));
+            if (market is null)
+            {
+                desk.NotSent(request, book.ManualHolds.Contains(intent.OrderbookId), "no market of this session trades it");
+                continue;
+            }
+
+            bool wasManual = !book.HoldManually(intent.OrderbookId);
+            _queue.RemoveAll(q => q.Manual is null && q.Intent.OrderbookId == intent.OrderbookId);
+            foreach (OpenOrderView working in gateway.OpenOrders.Where(o => o.OrderbookId == intent.OrderbookId && !_manualOrders.Contains(o.ClientOrderId)))
+            {
+                await gateway.CancelAsync(working.ClientOrderId, "the owner trades this share by hand", ct).ConfigureAwait(false);
+            }
+
+            int firstStrategy = _queue.FindIndex(q => q.Manual is null);
+            _queue.Insert(firstStrategy < 0 ? _queue.Count : firstStrategy, new Queued(market, intent, new ManualTicket(request, wasManual)));
+        }
+    }
+
+    /// <summary>Where the market of <paramref name="spec"/> stands now, for a manual request; null when it does not trade today.</summary>
+    private ManualWindow? WindowFor(InstrumentSpec spec, DateTimeOffset now)
+    {
+        MarketDay? m = _markets.FirstOrDefault(x => x.Market.Trades(spec));
+        if (m?.Today(now) is not { } plan)
+        {
+            return null;
+        }
+
+        DateTimeOffset previousClose = DateTimeOffset.MinValue;
+        for (DateOnly d = plan.Date.AddDays(-1); d > plan.Date.AddDays(-15); d = d.AddDays(-1))
+        {
+            if (m.Market.Schedule.Plan(d) is { } before)
+            {
+                previousClose = before.CloseUtc;
+                break;
+            }
+        }
+
+        return new ManualWindow(now >= plan.WindowOpenUtc && now < plan.WindowCloseUtc && m.EndedOn != plan.Date, previousClose);
+    }
+
+    private async Task<SubmitResult> SubmitNextAsync(OrderIntent queued, CancellationToken ct)
     {
         DateTimeOffset now = time.GetUtcNow();
         _lastSubmit = now;
@@ -305,7 +393,8 @@ public sealed class PaperSession(
         string detail = r.Order is { } o
             ? string.Create(CultureInfo.InvariantCulture, $"{o.State}, filled {o.FilledVolume}/{o.Volume}{(o.AverageFillPrice is { } p ? $" @ {p:0.####}" : string.Empty)}")
             : r.Message;
-        output.WriteLine($"{Local(now)} {intent.Side} {intent.Quantity} {intent.Ticker}: {r.Status} ({detail})");
+        output.WriteLine($"{Local(now)} {(intent.StrategyId == ManualOrderDesk.StrategyId ? "manual " : string.Empty)}{intent.Side} {intent.Quantity} {intent.Ticker}: {r.Status} ({detail})");
+        return r;
     }
 
     private async Task ReconcileAsync(CancellationToken ct)
@@ -351,6 +440,12 @@ public sealed class PaperSession(
         Core.Market.MarketTime.ToStockholm(utc).ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 
     /// <summary>A market and what the session has done there today (its own local date).</summary>
+    /// <summary>An intent waiting for its turn (paced, R11); a manual one carries its request (plan 23).</summary>
+    private sealed record Queued(MarketDay Market, OrderIntent Intent, ManualTicket? Manual = null);
+
+    /// <param name="WasManual">The share was manual before this request: a refused order leaves it so.</param>
+    private sealed record ManualTicket(ManualOrderRequest Request, bool WasManual);
+
     private sealed class MarketDay(SessionMarket market)
     {
         public SessionMarket Market { get; } = market;

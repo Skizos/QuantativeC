@@ -38,6 +38,95 @@ internal static partial class AvanzaCommands
         command.Subcommands.Add(PaperStatus());
         command.Subcommands.Add(PaperSplit());
         command.Subcommands.Add(PaperAcceptPrice());
+        command.Subcommands.Add(PaperManual());
+        command.Subcommands.Add(PaperOrders());
+        command.Subcommands.Add(PaperRelease());
+        return command;
+    }
+
+    // ---- qa paper manual | orders | release (plan 23): buying and selling by hand ----------------------------
+
+    /// <summary>
+    /// <c>qa paper manual buy|sell</c>: buy and sell are an argument, not commands of their own, so the command tree keeps
+    /// no verb named after a broker order (CliAvanzaTests); this is Paper only.
+    /// </summary>
+    private static Command PaperManual()
+    {
+        var side = new Argument<string>("side") { Description = "buy or sell" };
+        var ticker = new Argument<string>("ticker") { Description = "A share on the list, e.g. ERIC-B (a sell also takes an exiting share)" };
+        var quantity = new Argument<long>("quantity") { Description = "Number of shares" };
+        var limit = new Option<decimal?>("--limit") { Description = "Limit price in the share's currency (default: the ask for a buy, the bid for a sell)" };
+        var stateDir = new Option<string>("--state-dir") { Description = "State folder", DefaultValueFactory = _ => TradingCommands.DefaultStateDir };
+        var configDir = TradingCommands.ConfigDirOption();
+        var command = new Command("manual",
+            "Buy or sell by hand in Paper (plan 23): 'qa paper manual buy ERIC-B 7'. The running Paper session (or the next one) sends it through the same risk checks as the strategy's orders; the strategy then leaves the share alone until 'qa paper release'.");
+        command.Arguments.Add(side);
+        command.Arguments.Add(ticker);
+        command.Arguments.Add(quantity);
+        command.Options.Add(limit);
+        command.Options.Add(stateDir);
+        command.Options.Add(configDir);
+        command.SetAction(parse => TradingCommands.Execute(parse, w =>
+        {
+            string state = parse.GetValue(stateDir)!;
+            ManualOrderRequest r = ManualTrading.Place(TradingCommands.ResolveConfigDir(parse.GetValue(configDir)), state, ManualTrading.Side(parse.GetValue(side)!),
+                parse.GetValue(ticker)!, parse.GetValue(quantity), parse.GetValue(limit), "cli", TimeProvider.System);
+            w.WriteLine(ManualTrading.Placed(r, state));
+            return 0;
+        }));
+        return command;
+    }
+
+    private static Command PaperOrders()
+    {
+        var stateDir = new Option<string>("--state-dir") { Description = "State folder", DefaultValueFactory = _ => TradingCommands.DefaultStateDir };
+        var configDir = TradingCommands.ConfigDirOption();
+        var cancel = new Option<string?>("--cancel") { Description = "Remove this waiting request first (its id, e.g. M261001-7f3a)" };
+        var command = new Command("orders", "The manual requests still waiting, today's outcomes and the manual shares (plan 23); --cancel removes a waiting request. Offline.");
+        command.Options.Add(stateDir);
+        command.Options.Add(configDir);
+        command.Options.Add(cancel);
+        command.SetAction(parse => TradingCommands.Execute(parse, w =>
+        {
+            string state = parse.GetValue(stateDir)!;
+            if (parse.GetValue(cancel) is { } id)
+            {
+                var inbox = new ManualOrderInbox(Path.Combine(state, TradingCommands.PaperDirName), TimeProvider.System);
+                if (!inbox.Cancel(id))
+                {
+                    throw new ArgumentException($"No waiting request {id}: it was sent or finished already ('qa paper orders' shows it), or the id is wrong.");
+                }
+
+                w.WriteLine($"Request {id} cancelled.");
+            }
+
+            foreach (string line in ManualTrading.Lines(state, TradingCommands.ResolveConfigDir(parse.GetValue(configDir)), TimeProvider.System))
+            {
+                w.WriteLine(line);
+            }
+
+            return 0;
+        }));
+        return command;
+    }
+
+    private static Command PaperRelease()
+    {
+        var ticker = new Argument<string>("ticker") { Description = "A manual share, e.g. ERIC-B" };
+        var stateDir = new Option<string>("--state-dir") { Description = "State folder", DefaultValueFactory = _ => TradingCommands.DefaultStateDir };
+        var configDir = TradingCommands.ConfigDirOption();
+        var command = new Command("release", "Give a share you traded by hand back to the strategy (plan 23): from the next decision it trades it to its target again.");
+        command.Arguments.Add(ticker);
+        command.Options.Add(stateDir);
+        command.Options.Add(configDir);
+        command.SetAction(parse => TradingCommands.Execute(parse, w =>
+        {
+            string state = parse.GetValue(stateDir)!;
+            ManualOrderRequest r = ManualTrading.Place(TradingCommands.ResolveConfigDir(parse.GetValue(configDir)), state, ManualAction.Release,
+                parse.GetValue(ticker)!, 0, null, "cli", TimeProvider.System);
+            w.WriteLine(ManualTrading.Placed(r, state));
+            return 0;
+        }));
         return command;
     }
 
@@ -293,7 +382,7 @@ internal static partial class AvanzaCommands
                 AccountSnapshot snapshot = book.Snapshot();
                 InstrumentSpec[] chosen = [.. own.Select(i => listed[i]), .. leaving];
                 double[] weights = [.. own.Select(i => targets[i]), .. leaving.Select(_ => 0.0)];
-                string[] heldBack = [.. HeldBackNotes(book, quotes, chosen, weights)];
+                string[] heldBack = [.. HeldBackNotes(book, quotes, chosen, weights), .. ManualNotes(book, chosen, weights)];
                 PlanResult plan = DailyPlanner.Plan(weights, chosen, snapshot, gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now, fx);
                 return Task.FromResult(leaving.Length == 0 && heldBack.Length == 0 && auctionNotes.Length == 0 ? plan : plan with
                 {
@@ -351,7 +440,11 @@ internal static partial class AvanzaCommands
                 [.. markets.Select(m => new SessionMarket(m.Schedule, ct => Decide(m, ct), m.Trades)
                 {
                     Prices = now => DailyPlanner.Coverage(specs.Where(m.Trades), quotes, risk, now),
-                })], audit, time, output, EndOfDayReport, observer);
+                })], audit, time, output, EndOfDayReport, observer)
+            {
+                // Plan 23: the owner's buys and sells by hand ('qa paper manual', the app), through the same gateway.
+                Manual = new ManualOrderDesk(new ManualOrderInbox(Path.Combine(stateDir, TradingCommands.PaperDirName), time), book, quotes, catalog, risk, audit, output),
+            };
             PaperSessionSummary summary;
             try
             {
@@ -490,6 +583,20 @@ internal static partial class AvanzaCommands
         catch (Exception ex) when (ex is ArgumentException or IOException or InvalidDataException or System.Text.Json.JsonException)
         {
             return null;
+        }
+    }
+
+    /// <summary>Plan 23: a share the owner trades by hand gets no target (<paramref name="weights"/> set to NaN) until released.</summary>
+    private static IEnumerable<string> ManualNotes(PaperBook book, InstrumentSpec[] chosen, double[] weights)
+    {
+        IReadOnlySet<OrderbookId> manual = book.ManualHolds;
+        for (int i = 0; i < chosen.Length; i++)
+        {
+            if (manual.Contains(chosen[i].OrderbookId) && !double.IsNaN(weights[i]))
+            {
+                weights[i] = double.NaN;
+                yield return $"{chosen[i].Ticker}: yours (manual), the strategy leaves it; 'qa paper release {chosen[i].Ticker.Replace(' ', '-')}' gives it back";
+            }
         }
     }
 
@@ -692,6 +799,12 @@ internal static partial class AvanzaCommands
                 string currency = Markets.IsForeign(p.Currency) ? " " + p.Currency : string.Empty;
                 string close = p.LastMark is { } mark ? string.Create(CultureInfo.InvariantCulture, $", last close {mark:0.####}{currency}") : string.Empty;
                 w.WriteLine(string.Create(CultureInfo.InvariantCulture, $"  {p.Ticker} ({p.OrderbookId}): {p.Quantity}, cost {p.CostBasis:N2} SEK, last fill {p.LastFillPrice:0.####}{currency}{close}"));
+            }
+
+            foreach (OrderbookId manual in book.ManualHolds)
+            {
+                PaperPosition? held = book.Positions.FirstOrDefault(p => p.OrderbookId == manual);
+                w.WriteLine($"  {held?.Ticker ?? manual.Value}: manual (the strategy leaves it; 'qa paper release' gives it back).");
             }
 
             foreach (SplitByHand split in book.SplitsByHand)

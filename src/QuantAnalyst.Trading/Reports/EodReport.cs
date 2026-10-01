@@ -259,6 +259,12 @@ public sealed record EodReport
     /// <summary>Gets the dividends and splits the Paper book applied at the day's start (plan 21); the day's return includes them.</summary>
     public IReadOnlyList<EodCorporateAction> CorporateActions { get; init; } = [];
 
+    /// <summary>Gets the owner's manual requests finished that day (plan 23), one line each, e.g. "[M261001-7f3a] Buy 7 ERIC B (at the ask): sent".</summary>
+    public IReadOnlyList<string> ManualOrders { get; init; } = [];
+
+    /// <summary>Gets how many manual orders the gateway accepted that day (plan 23): the day is then not the strategy's alone.</summary>
+    public int ManualOrdersSent { get; init; }
+
     /// <summary>Gets the dividends credited that day, in SEK (plan 21).</summary>
     [JsonIgnore]
     public decimal DividendsSek => CorporateActions.Where(a => a.Kind == "dividend").Sum(a => a.CashSek);
@@ -338,8 +344,9 @@ public sealed record EodReport
         int dividends = CorporateActions.Count(x => x.Kind == "dividend"), splits = CorporateActions.Count(x => x.Kind == "split");
         string corporate = dividends + splits == 0 ? string.Empty
             : string.Create(c, $" Corporate actions: {(dividends > 0 ? $"{dividends} dividend(s), {DividendsSek:N2} SEK" : string.Empty)}{(dividends > 0 && splits > 0 ? ", " : string.Empty)}{(splits > 0 ? $"{splits} split(s)" : string.Empty)}.");
+        string manual = ManualOrders.Count == 0 ? string.Empty : string.Create(c, $" Manual: {ManualOrders.Count} request(s), {ManualOrdersSent} sent.");
         return string.Create(c,
-            $"{Date:yyyy-MM-dd} {state}: {Submitted} sent, {Accepted} accepted, {RiskRejected} risk-rejected, {Fills.Count} fill(s) ({FillSanityOutliers} outside ±{SanityLimitBps:0} bps), reconciliation {ReconciliationRuns - ReconciliationMismatchRuns}/{ReconciliationRuns} clean, {Violations.Count} violation(s); {account}.{corporate}{fillRate}{live}");
+            $"{Date:yyyy-MM-dd} {state}: {Submitted} sent, {Accepted} accepted, {RiskRejected} risk-rejected, {Fills.Count} fill(s) ({FillSanityOutliers} outside ±{SanityLimitBps:0} bps), reconciliation {ReconciliationRuns - ReconciliationMismatchRuns}/{ReconciliationRuns} clean, {Violations.Count} violation(s); {account}.{corporate}{manual}{fillRate}{live}");
     }
 
     private sealed class Builder
@@ -362,6 +369,8 @@ public sealed record EodReport
         private readonly Dictionary<string, SentOrder> _orders = [];
         private readonly Dictionary<string, CloseMark> _marks = [];
         private readonly List<EodCorporateAction> _corporate = [];
+        private readonly List<string> _manual = [];
+        private int _manualSent;
 
         public List<string> Violations { get; } = [];
 
@@ -522,6 +531,13 @@ public sealed record EodReport
                 case "price-accepted":
                     _corporate.Add(Corporate(kind, d));
                     break;
+                case "manual-order":
+                    string outcome = Str(d, "outcome") ?? "?";
+                    _manualSent += outcome == "sent" ? 1 : 0;
+                    string quantity = Long(d, "quantity") is > 0 and var q ? $" {q}" : string.Empty;
+                    string limit = Num(d, "limit") is { } l ? string.Create(CultureInfo.InvariantCulture, $" limit {l:0.####}") : string.Empty;
+                    _manual.Add($"[{Str(d, "id")}] {Str(d, "action")}{quantity} {Str(d, "ticker")}{limit}: {outcome} ({Str(d, "message")})");
+                    break;
                 case "halt":
                     string reason = Str(d, "reason") ?? "?";
                     string detail = Str(d, "detail") ?? string.Empty;
@@ -616,6 +632,8 @@ public sealed record EodReport
                 FillRate = EodFillRate.From(LimitOrders()),
                 UnknownAtEnd = unknownAtEnd,
                 CorporateActions = _corporate,
+                ManualOrders = _manual,
+                ManualOrdersSent = _manualSent,
                 AuditChainValid = chainValid,
                 Violations = Violations,
                 Events = Events,

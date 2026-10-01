@@ -457,6 +457,11 @@ internal static partial class TradingCommands
             w.WriteLine($"  {a.Kind} {a.Text}");
         }
 
+        foreach (string m in r.ManualOrders)
+        {
+            w.WriteLine("  manual " + m);
+        }
+
         foreach (string v in r.Violations)
         {
             w.WriteLine("  VIOLATION: " + v);

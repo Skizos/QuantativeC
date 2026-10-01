@@ -163,6 +163,9 @@ public sealed record WeeklyReport
     /// <summary>Gets why the intraday collection could not be read this time (e.g. the store is in use); null when it was.</summary>
     public string? IntradayUnavailable { get; init; }
 
+    /// <summary>Gets how many manual orders the gateway accepted this week (plan 23): Paper is then not the strategy alone.</summary>
+    public int ManualOrdersSent { get; init; }
+
     public required DateTimeOffset GeneratedUtc { get; init; }
 
     private static readonly JsonSerializerOptions Json = new()
@@ -233,6 +236,7 @@ public sealed record WeeklyReport
             FillRateSinceStart = EodFillRate.Combine(reports.Where(r => r.Date <= sunday)),
             Intraday = intraday,
             IntradayNeeded = intradayNeeded,
+            ManualOrdersSent = week.Sum(r => r.ManualOrdersSent),
             GeneratedUtc = now,
         };
     }
@@ -254,6 +258,12 @@ public sealed record WeeklyReport
         string ret = Return is { } w ? string.Create(c, $"{w:+0.00%;-0.00%;0.00%}{(EndValue is { } v ? $" (value {v:N2} SEK)" : string.Empty)}") : "no Paper day with values";
         string missing = NoSessionDays > 0 ? $", {NoSessionDays} without a session" : string.Empty;
         lines.Add(string.Create(c, $"Week: {ret}, fees {Fees:N2} SEK; {CleanDays} of {TradingDays} trading day(s) clean{missing}; Confirm gate: {Gate}."));
+
+        if (ManualOrdersSent > 0)
+        {
+            lines.Add(string.Create(c,
+                $"Manual: {ManualOrdersSent} order(s) by hand this week: the returns are not the strategy's alone, so the comparison with the backtest says less."));
+        }
 
         if (Backtest is { } b)
         {

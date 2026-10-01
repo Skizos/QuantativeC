@@ -207,6 +207,41 @@ public sealed class CliTradingTests : IDisposable
     }
 
     [Fact]
+    public void PaperOrder_PlacesARequest_ThatOrdersListsAndCancelRemoves()
+    {
+        // Plan 23: offline; the Paper session sends it later through the gateway.
+        new Trading.Risk.Universe([new Trading.Risk.UniverseEntry(new Core.OrderbookId("5240"), "ERIC B", "Ericsson B")],
+            [new Trading.Risk.UniverseEntry(new Core.OrderbookId("5239"), "ERIC A", "Ericsson A")]).Save(Path.Combine(Config, "universe.json"));
+
+        // Nothing manual and nothing waiting yet: there is nothing to release.
+        Assert.Contains("ERIC B is not manual", Qa("paper", "release", "ERIC-B", "--config-dir", Config, "--state-dir", State).Error, StringComparison.Ordinal);
+
+        (int code, string output, string error) = Qa("paper", "manual", "buy", "ERIC-B", "7", "--config-dir", Config, "--state-dir", State);
+        Assert.True(code == 0, error);
+        Assert.Matches(@"^Buy 7 ERIC B \(at the ask\) \[M\d{6}-[0-9a-f]{4}\] placed\. No Paper session is running: the next one sends it in its trading window\.", output);
+        string id = System.Text.RegularExpressions.Regex.Match(output, @"\[(M\d{6}-[0-9a-f]{4})\]").Groups[1].Value;
+
+        Assert.Equal(0, Qa("paper", "manual", "sell", "eric a", "2", "--limit", "120.5", "--config-dir", Config, "--state-dir", State).Code); // exiting: sell only
+        Assert.Contains("is off the list (exiting): it can only be sold", Qa("paper", "manual", "buy", "ERIC-A", "1", "--config-dir", Config, "--state-dir", State).Error, StringComparison.Ordinal);
+        Assert.Contains("VOLV B is not on the list: add it first", Qa("paper", "manual", "buy", "VOLV-B", "1", "--config-dir", Config, "--state-dir", State).Error, StringComparison.Ordinal);
+        Assert.NotEqual(0, Qa("paper", "manual", "buy", "ERIC-B", "0", "--config-dir", Config, "--state-dir", State).Code);
+
+        (code, output, _) = Qa("paper", "orders", "--config-dir", Config, "--state-dir", State);
+        Assert.Equal(0, code);
+        Assert.Contains("Waiting (2):", output, StringComparison.Ordinal);
+        Assert.Contains($"[{id}] Buy 7 ERIC B (at the ask)", output, StringComparison.Ordinal);
+        Assert.Contains("Sell 2 ERIC A (limit 120.5)", output, StringComparison.Ordinal);
+        Assert.Contains("Manual shares: none", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa("paper", "orders", "--cancel", id, "--config-dir", Config, "--state-dir", State);
+        Assert.Equal(0, code);
+        Assert.StartsWith($"Request {id} cancelled.", output, StringComparison.Ordinal);
+        Assert.Contains("No waiting request", Qa("paper", "orders", "--cancel", id, "--config-dir", Config, "--state-dir", State).Error, StringComparison.Ordinal);
+        Assert.Contains("Waiting (1):", output, StringComparison.Ordinal);
+        Assert.Contains($"[{id}] Buy 7 ERIC B (at the ask): cancelled", output, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RiskLimits_AreSizedForThePaperAccount()
     {
         (int code, string output, string error) = Qa("risk-limits", "--config-dir", Config);

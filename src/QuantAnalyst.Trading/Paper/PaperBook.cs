@@ -55,6 +55,7 @@ public sealed class PaperBook : IAccountState
     private decimal _dividends;
     private readonly HashSet<OrderbookId> _heldBack = [];
     private readonly Dictionary<OrderbookId, SplitByHand> _splitsByHand = [];
+    private readonly HashSet<OrderbookId> _manual = [];
 
     private PaperBook(string? directory, string costs, decimal startingCash, IQuoteSource? marks, TimeProvider time, IFxRates? fx)
     {
@@ -175,6 +176,21 @@ public sealed class PaperBook : IAccountState
         }
     }
 
+    /// <summary>
+    /// Gets the shares the owner trades by hand (plan 23): the strategy leaves them alone (no targets, no orders) until
+    /// the owner releases them. A share stays manual after it is sold to zero, so the strategy does not buy it back.
+    /// </summary>
+    public IReadOnlySet<OrderbookId> ManualHolds
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return new HashSet<OrderbookId>(_manual);
+            }
+        }
+    }
+
     /// <summary>Gets the splits the owner applied by hand that Avanza's share count has not shown yet (plan 21).</summary>
     public IReadOnlyList<SplitByHand> SplitsByHand
     {
@@ -244,6 +260,11 @@ public sealed class PaperBook : IAccountState
             book._positions[id] = new PaperPosition(id, p.Ticker, p.Quantity, p.CostBasis, p.LastFillPrice, p.Currency ?? "SEK", p.LastMark);
         }
 
+        foreach (string manual in file.ManualHolds ?? [])
+        {
+            book._manual.Add(new OrderbookId(manual));
+        }
+
         foreach (SplitFile s in file.SplitsByHand ?? [])
         {
             var id = new OrderbookId(s.OrderbookId);
@@ -262,6 +283,26 @@ public sealed class PaperBook : IAccountState
     /// The positions in <c>book.json</c> of <paramref name="directory"/>, read without opening the book (plan 21: whether a
     /// share taken off the list is still held). Empty without a book.
     /// </summary>
+    /// <summary>Plan 23: the manual shares of the book in <paramref name="directory"/>, read without opening it; empty without a book.</summary>
+    public static IReadOnlySet<OrderbookId> ManualIn(string directory)
+    {
+        string path = Path.Combine(directory, FileName);
+        if (!File.Exists(path))
+        {
+            return new HashSet<OrderbookId>();
+        }
+
+        try
+        {
+            BookFile file = JsonSerializer.Deserialize<BookFile>(File.ReadAllText(path), Json) ?? throw new JsonException("empty file");
+            return new HashSet<OrderbookId>((file.ManualHolds ?? []).Select(id => new OrderbookId(id)));
+        }
+        catch (JsonException ex)
+        {
+            throw new PaperBookException($"{path} is not a valid paper book ({ex.Message}).");
+        }
+    }
+
     public static IReadOnlyDictionary<OrderbookId, long> HeldIn(string directory)
     {
         string path = Path.Combine(directory, FileName);
@@ -513,6 +554,36 @@ public sealed class PaperBook : IAccountState
         }
     }
 
+    /// <summary>Plan 23: the owner trades <paramref name="id"/> by hand from now on; true when it was not manual before.</summary>
+    internal bool HoldManually(OrderbookId id)
+    {
+        lock (_lock)
+        {
+            if (!_manual.Add(id))
+            {
+                return false;
+            }
+
+            Save();
+            return true;
+        }
+    }
+
+    /// <summary>Plan 23: gives <paramref name="id"/> back to the strategy; false when it was not manual.</summary>
+    internal bool ReleaseManual(OrderbookId id)
+    {
+        lock (_lock)
+        {
+            if (!_manual.Remove(id))
+            {
+                return false;
+            }
+
+            Save();
+            return true;
+        }
+    }
+
     /// <summary>Plan 21: the day of the last dividends and splits applied.</summary>
     internal void SetCorporateThrough(DateOnly day)
     {
@@ -597,7 +668,8 @@ public sealed class PaperBook : IAccountState
             _time.GetUtcNow(),
             _corporateThrough,
             _dividends,
-            _splitsByHand.Count == 0 ? null : [.. _splitsByHand.Values.OrderBy(x => x.OrderbookId.Value, StringComparer.Ordinal).Select(x => new SplitFile(x.OrderbookId.Value, x.Ratio, x.Day))]);
+            _splitsByHand.Count == 0 ? null : [.. _splitsByHand.Values.OrderBy(x => x.OrderbookId.Value, StringComparer.Ordinal).Select(x => new SplitFile(x.OrderbookId.Value, x.Ratio, x.Day))],
+            _manual.Count == 0 ? null : [.. _manual.Select(m => m.Value).Order(StringComparer.Ordinal)]);
         string path = Path.Combine(_directory, FileName);
         string temp = path + ".tmp";
         File.WriteAllText(temp, JsonSerializer.Serialize(file, Json));
@@ -626,7 +698,8 @@ public sealed class PaperBook : IAccountState
         DateTimeOffset SavedUtc,
         DateOnly? CorporateThrough = null,
         decimal DividendsReceived = 0m,
-        IReadOnlyList<SplitFile>? SplitsByHand = null);
+        IReadOnlyList<SplitFile>? SplitsByHand = null,
+        IReadOnlyList<string>? ManualHolds = null);
 
     private sealed record SplitFile(string OrderbookId, decimal Ratio, DateOnly Day);
 

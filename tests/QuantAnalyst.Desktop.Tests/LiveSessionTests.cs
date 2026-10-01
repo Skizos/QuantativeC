@@ -4,6 +4,7 @@ using QuantAnalyst.Desktop.Core.Engine;
 using QuantAnalyst.Desktop.Core.ViewModels;
 using QuantAnalyst.Trading.Observation;
 using QuantAnalyst.Trading.Oms;
+using QuantAnalyst.Trading.Paper;
 
 namespace QuantAnalyst.Desktop.Tests;
 
@@ -144,5 +145,42 @@ public sealed class LiveSessionTests
 
         await shell.Session.RefreshAsync();
         Assert.Equal(("idle", "Not running"), (shell.Session.Phase, shell.Session.PhaseText));
+    }
+}
+
+/// <summary>Plan 23: the Trading page's Buy or sell by hand card places the same requests as 'qa paper manual'.</summary>
+public sealed class ManualOrderCardTests
+{
+    [Fact]
+    public async Task TheCard_PlacesARequest_ListsIt_AndOnlyTakesACompleteOrder()
+    {
+        using var ws = new TempWorkspace();
+        ws.AllowEricB();
+        var shell = new ShellViewModel(ws.Workspace, new QaEngine(new ImmediateDispatcher(), new ScriptedRunner().Run, null), ws.Time);
+        SessionViewModel page = shell.Session;
+        await page.RefreshAsync();
+
+        Assert.Equal(["ERIC B"], page.ManualTickers);
+        Assert.Equal("ERIC B", page.ManualTicker);
+        Assert.False(page.PlaceManualCommand.CanExecute(null)); // no quantity yet
+        page.ManualQuantity = "abc";
+        Assert.False(page.PlaceManualCommand.CanExecute(null));
+        page.ManualQuantity = "7";
+        page.ManualLimit = "-1";
+        Assert.False(page.PlaceManualCommand.CanExecute(null));
+        page.ManualLimit = "70,5"; // a Swedish decimal comma is accepted
+        page.ManualSide = "Sell";
+        Assert.True(page.PlaceManualCommand.CanExecute(null));
+
+        await page.PlaceManualCommand.ExecuteAsync();
+
+        Assert.Contains("Sell 7 ERIC B (limit 70.5)", page.Message, StringComparison.Ordinal);
+        Assert.Contains("No Paper session is running: the next one sends it", page.Message, StringComparison.Ordinal);
+        Assert.Equal((string.Empty, string.Empty), (page.ManualQuantity, page.ManualLimit));
+        Assert.Contains(page.ManualLines, l => l == "Waiting (1):");
+        Assert.Contains(page.ManualLines, l => l.Contains("Sell 7 ERIC B (limit 70.5)", StringComparison.Ordinal));
+        ManualOrderRequest request = Assert.Single(new ManualOrderInbox(Path.Combine(ws.Workspace.StateDir, "paper"), ws.Time).Pending());
+        Assert.Equal(("app", ManualAction.Sell, 70.5m), (request.Source, request.Action, request.Limit!.Value));
+        Assert.Empty(page.ManualShares);
     }
 }

@@ -159,4 +159,17 @@ public sealed class WeeklyReportTests
         Assert.Equal(m, WeeklyReport.MondayOf(m.AddDays(6)));
         Assert.Equal(week.ToUpperInvariant(), WeeklyReport.WeekName(m.AddDays(3)));
     }
+
+    [Fact]
+    public void AWeekWithManualOrders_SaysTheReturnIsNotTheStrategysAlone()
+    {
+        // Plan 23.
+        EodReport manual = Day(Monday, 5_000m, 5_010m, 4_000m) with { ManualOrdersSent = 2 };
+        WeeklyReport w = WeeklyReport.Build(Monday, [Monday], [manual], Gate(1), null, null, null, Now);
+
+        Assert.Equal(2, w.ManualOrdersSent);
+        Assert.Contains("Manual: 2 order(s) by hand this week: the returns are not the strategy's alone, so the comparison with the backtest says less.", w.Lines());
+        Assert.DoesNotContain(WeeklyReport.Build(Monday, [Monday], [Day(Monday, 5_000m, 5_010m, 4_000m)], Gate(1), null, null, null, Now).Lines(),
+            l => l.StartsWith("Manual:", StringComparison.Ordinal));
+    }
 }

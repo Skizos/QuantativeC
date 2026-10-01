@@ -38,6 +38,10 @@ public sealed class SessionViewModel : PageViewModel
     private string _resetReason = string.Empty;
     private string _phase = "idle";
     private string _phaseText = "Not running";
+    private string? _manualTicker;
+    private string _manualSide = "Buy";
+    private string _manualQuantity = string.Empty;
+    private string _manualLimit = string.Empty;
 
     public SessionViewModel(Workspace workspace, QaEngine engine, TimeProvider time, Func<string> login)
         : base(PageKind.Session, "Trading", "Today's Paper session: the saved strategy on live Avanza prices, with simulated orders. Nothing is sent to Avanza.", engine)
@@ -50,6 +54,9 @@ public sealed class SessionViewModel : PageViewModel
         StartCommand = new AsyncCommand(StartAsync, () => !IsBusy && !KillActive, ex => Say(ex.Message, isError: true));
         StopCommand = new RelayCommand(Engine.Cancel, () => IsRunning);
         ResetKillCommand = new AsyncCommand(ResetKillAsync, () => !IsBusy && KillActive && ResetReason.Trim().Length > 0, ex => Say(ex.Message, isError: true));
+        PlaceManualCommand = new AsyncCommand(PlaceManualAsync, () => ManualOrder() is not null, ex => Say(ex.Message, isError: true));
+        ReleaseManualCommand = new AsyncCommand(p => ReleaseManualAsync(p as string), p => p is string, ex => Say(ex.Message, isError: true));
+        RefreshManualCommand = new RelayCommand(LoadManual);
     }
 
     public ObservableCollection<string> Log { get; } = [];
@@ -124,6 +131,76 @@ public sealed class SessionViewModel : PageViewModel
 
     public AsyncCommand StartCommand { get; }
 
+    // ---- Trade by hand (plan 23): requests the Paper session sends through the same risk checks ----------------
+
+    /// <summary>Gets the shares a manual order may be for: the list's, then the exiting ones (sell only).</summary>
+    public ObservableCollection<string> ManualTickers { get; } = [];
+
+    public IReadOnlyList<string> ManualSides { get; } = ["Buy", "Sell"];
+
+    public string? ManualTicker
+    {
+        get => _manualTicker;
+        set
+        {
+            if (Set(ref _manualTicker, value))
+            {
+                PlaceManualCommand.Refresh();
+            }
+        }
+    }
+
+    public string ManualSide
+    {
+        get => _manualSide;
+        set
+        {
+            if (Set(ref _manualSide, value ?? "Buy"))
+            {
+                PlaceManualCommand.Refresh();
+            }
+        }
+    }
+
+    /// <summary>Gets or sets the number of shares, as typed.</summary>
+    public string ManualQuantity
+    {
+        get => _manualQuantity;
+        set
+        {
+            if (Set(ref _manualQuantity, value ?? string.Empty))
+            {
+                PlaceManualCommand.Refresh();
+            }
+        }
+    }
+
+    /// <summary>Gets or sets the limit as typed (empty: the ask for a buy, the bid for a sell).</summary>
+    public string ManualLimit
+    {
+        get => _manualLimit;
+        set
+        {
+            if (Set(ref _manualLimit, value ?? string.Empty))
+            {
+                PlaceManualCommand.Refresh();
+            }
+        }
+    }
+
+    /// <summary>Gets the waiting requests, today's outcomes and the manual shares, as <c>qa paper orders</c> prints them.</summary>
+    public ObservableCollection<string> ManualLines { get; } = [];
+
+    /// <summary>Gets the shares the strategy leaves to you (each with Release).</summary>
+    public ObservableCollection<string> ManualShares { get; } = [];
+
+    public AsyncCommand PlaceManualCommand { get; }
+
+    /// <summary>Gets the command that gives a manual share (its ticker the parameter) back to the strategy.</summary>
+    public AsyncCommand ReleaseManualCommand { get; }
+
+    public RelayCommand RefreshManualCommand { get; }
+
     public RelayCommand StopCommand { get; }
 
     public AsyncCommand ResetKillCommand { get; }
@@ -134,6 +211,7 @@ public sealed class SessionViewModel : PageViewModel
         LoadAccount();
         LoadSchedule();
         LoadPhase();
+        LoadManual();
         return Task.CompletedTask;
     }
 
@@ -184,6 +262,91 @@ public sealed class SessionViewModel : PageViewModel
         }
 
         await RefreshAsync();
+    }
+
+    /// <summary>The order as typed, or null while it is incomplete: a share, a whole number of shares above zero, an optional limit above zero.</summary>
+    private (ManualAction Side, string Ticker, long Quantity, decimal? Limit)? ManualOrder()
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        if (ManualTicker is not { } ticker || !long.TryParse(ManualQuantity.Trim(), NumberStyles.None, c, out long quantity) || quantity <= 0)
+        {
+            return null;
+        }
+
+        string limitText = ManualLimit.Trim().Replace(',', '.');
+        decimal? limit = null;
+        if (limitText.Length > 0)
+        {
+            if (!decimal.TryParse(limitText, NumberStyles.AllowDecimalPoint, c, out decimal l) || l <= 0)
+            {
+                return null;
+            }
+
+            limit = l;
+        }
+
+        return (ManualSide == "Sell" ? ManualAction.Sell : ManualAction.Buy, ticker, quantity, limit);
+    }
+
+    private Task PlaceManualAsync()
+    {
+        if (ManualOrder() is not { } order)
+        {
+            return Task.CompletedTask;
+        }
+
+        ManualOrderRequest request = ManualTrading.Place(_workspace.ConfigDir, _workspace.StateDir, order.Side, order.Ticker, order.Quantity, order.Limit, "app", _time);
+        Say(ManualTrading.Placed(request, _workspace.StateDir).Replace("'qa paper release", "Release ('qa paper release", StringComparison.Ordinal));
+        ManualQuantity = string.Empty;
+        ManualLimit = string.Empty;
+        LoadManual();
+        return Task.CompletedTask;
+    }
+
+    private Task ReleaseManualAsync(string? ticker)
+    {
+        if (ticker is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        ManualOrderRequest request = ManualTrading.Place(_workspace.ConfigDir, _workspace.StateDir, ManualAction.Release, ticker, 0, null, "app", _time);
+        Say(ManualTrading.Placed(request, _workspace.StateDir));
+        LoadManual();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The shares to trade by hand, the requests and the manual shares (plan 23); local files only.</summary>
+    private void LoadManual()
+    {
+        string? selected = ManualTicker;
+        ManualTickers.Clear();
+        ManualLines.Clear();
+        ManualShares.Clear();
+        try
+        {
+            Universe universe = Universe.Load(Path.Combine(_workspace.ConfigDir, Universe.FileName));
+            foreach (UniverseEntry e in universe.Entries.Concat(universe.Exiting))
+            {
+                ManualTickers.Add(e.Ticker);
+            }
+
+            foreach (string line in ManualTrading.Lines(_workspace.StateDir, _workspace.ConfigDir, _time))
+            {
+                ManualLines.Add(line);
+            }
+
+            foreach (string ticker in ManualTrading.ManualShares(Path.Combine(_workspace.StateDir, TradingCommands.PaperDirName), _workspace.ConfigDir))
+            {
+                ManualShares.Add(ticker);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or TradingConfigException or PaperBookException or System.Text.Json.JsonException)
+        {
+            ManualLines.Add($"The manual orders could not be read: {ex.Message}");
+        }
+
+        ManualTicker = selected is not null && ManualTickers.Contains(selected) ? selected : ManualTickers.FirstOrDefault();
     }
 
     private void OnLine(OutputLine line)
