@@ -104,7 +104,8 @@ public sealed class FreeTradesTests : IDisposable
     {
         File.Copy(Path.Combine(RepoConfig, "costs.avanza-start.json"), Path.Combine(_dir, "costs.avanza-start.json"));
         string mini = File.ReadAllText(Path.Combine(RepoConfig, "costs.avanza-mini.json"));
-        string chained = mini.Replace("\"verified_on\": \"", "\"free_trades\": { \"trades\": 1, \"months\": 12, \"then\": \"avanza-start\" },\n  \"verified_on\": \"", StringComparison.Ordinal);
+        // The file's own verified_on (two-space indent), not marketplace_courtage's (plan 22).
+        string chained = mini.Replace("\n  \"verified_on\": \"", "\n  \"free_trades\": { \"trades\": 1, \"months\": 12, \"then\": \"avanza-start\" },\n  \"verified_on\": \"", StringComparison.Ordinal);
         Assert.NotEqual(mini, chained);
         File.WriteAllText(Path.Combine(_dir, "costs.avanza-mini.json"), chained);
 

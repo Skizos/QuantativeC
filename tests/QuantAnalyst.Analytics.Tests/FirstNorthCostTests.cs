@@ -3,7 +3,7 @@ using QuantAnalyst.Analytics.Backtesting;
 namespace QuantAnalyst.Analytics.Tests;
 
 /// <summary>
-/// Plan 22: a First North share pays First North's courtage (0.25 %, minimum 1 SEK on Start and Mini, UNVERIFIED), not
+/// Plan 22: a First North share pays First North's courtage (0.25 %, minimum 1 SEK on Start and Mini; verified 2026-10-01), not
 /// the main market's (free on Start), in a backtest as in Paper; a marketplace the class has no courtage for is refused.
 /// </summary>
 public sealed class FirstNorthCostTests
@@ -30,13 +30,13 @@ public sealed class FirstNorthCostTests
     [InlineData("avanza-small", 39, 0.0015)]
     [InlineData("avanza-medium", 69, 0.00069)]
     [InlineData("avanza-fastpris", 99, 0)]
-    public void EveryClass_HasItsFirstNorthCourtage_UnverifiedUntilChecked(string name, double min, double rate)
+    public void EveryClass_HasItsFirstNorthCourtage_VerifiedAgainstThePriceList(string name, double min, double rate)
     {
         CostModel c = CostModel.Load(Path.Combine(RepoConfig, $"costs.{name}.json"));
         Assert.Equal(new MarketplaceCourtage((decimal)min, (decimal)rate), c.MarketplaceFor("FNSE"));
         Assert.Null(c.MarketplaceFor("XSTO"));
         Assert.Null(c.MarketplaceFor((string?)null));
-        Assert.Null(c.MarketplaceVerifiedOn);
+        Assert.Equal(new DateOnly(2026, 10, 1), c.MarketplaceVerifiedOn); // the owner's screenshot of the price list
     }
 
     [Fact]

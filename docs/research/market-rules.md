@@ -68,6 +68,36 @@ Primary pages (blocked here; UNVERIFIED extracts):
 | Fast Pris | max 99 kr per order (flat) | UNVERIFIED |
 | Pro / Private Banking | separate classes. A Pro extract says a minimum of 49 kr or 0.034 %, plus a monthly minimum commission. | UNVERIFIED, out of scope for v1 |
 
+### Verified 2026-10-01: the price list for trading in Sweden (owner's screenshot)
+
+Source: Avanza, "Prislista för handel i Sverige"
+(<https://www.avanza.se/konton-lan-prislista/prislista/handel-sverige.html>), screenshot by the owner on 2026-10-01,
+saved as [`assets/avanza-prislista-handel-sverige-2026-10-01.png`](assets/avanza-prislista-handel-sverige-2026-10-01.png).
+Rörligt courtage (variable rate) / lägsta courtage (minimum) per order:
+
+| Marketplace | Order type | Start | Mini | Small | Medium | Fast Pris |
+|---|---|---|---|---|---|---|
+| **Stockholmsbörsen** | internet | 0 % / 0 SEK | 0.25 % / 1 SEK | 0.15 % / 39 SEK | 0.069 % / 69 SEK | 0 % / 99 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+| **First North** | internet | 0.25 % / 1 SEK | 0.25 % / 1 SEK | 0.15 % / 39 SEK | 0.069 % / 69 SEK | 0 % / 99 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+| **NGM, Nordic MTF, PepMarket** | internet | 0.25 % / 19 SEK | 0.25 % / 19 SEK | 0.15 % / 39 SEK | 0.069 % / 69 SEK | 0.045 % / 99 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+| **Spotlight Stock Market** | internet | 0.25 % / 19 SEK | 0.25 % / 19 SEK | 0.15 % / 59 SEK | 0.069 % / 69 SEK | 0.045 % / 99 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+| **Inofficiella (beQuoted)** | internet | 0.25 % / 119 SEK | 0.25 % / 119 SEK | 0.15 % / 119 SEK | 0.069 % / 119 SEK | 0.045 % / 119 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+
+- The courtage on an order is max(rate × order value, minimum). Fast Pris on Stockholmsbörsen and First North is a
+  flat 99 SEK.
+- **In the cost files** (`config/costs.avanza-*.json`): the Stockholmsbörsen internet row is each class's `courtage`
+  (verified 2026-09-26, re-confirmed by this screenshot); the First North internet row is `marketplace_courtage.FNSE`
+  (verified 2026-10-01, plan 22). The program places internet orders only, so the phone rows are not used.
+- **Not modelled yet:** NGM, Nordic MTF, PepMarket, Spotlight and beQuoted. Adding one needs Avanza's marketplace code
+  for it (as `FNSE` is First North's), which the program has not seen yet; until then such shares are refused.
+- **Not on the screenshot:** the Start footnote (the 50,000 SEK limit and the 500 free trades a year), and whether
+  First North trades count towards those 500 (the program assumes they don't and charges them First North's courtage).
+
 - **Currency exchange fee** for non-SEK instruments: **0.25 %** per a search extract (UNVERIFIED).
 - **Switching class:** free and immediate, per Avanza help pages (extract).
 

@@ -37,15 +37,16 @@ login, one call):
 ### Costs on First North
 
 The Start and Mini classes are free (Start) or 0.25 % on the main market only. First North costs **0.25 %, minimum
-1 SEK** in both classes (search extract of Avanza's price list, 2026-09-30, UNVERIFIED; the owner's screenshot of
-2026-09-26 said "First North from 1 kr"). Costs are always on (CLAUDE.md), so:
+1 SEK** in both classes (search extract of Avanza's price list, 2026-09-30; **verified 2026-10-01** against the
+owner's screenshot of the whole price list for trading in Sweden, saved in `docs/research/assets/` and transcribed in
+`docs/research/market-rules.md` §4: every class's First North row matches the cost files). Costs are always on (CLAUDE.md), so:
 
 - `costs.*.json` gains `marketplace_courtage: { "FNSE": { "min", "rate" }, "source_url", "verified_on", "basis" }`.
 - A SEK share on a marketplace other than XSTO pays that marketplace's courtage in the backtest (per instrument, as a
   foreign share does, ADR 0005), in Paper fills, in the Confirm pre-trade fee comparison, and in the intraday report.
   A marketplace with no entry in the class is refused (never charged the main market's price).
 - Start's 500 free trades are for the main market; First North trades pay their courtage and are not counted
-  (UNVERIFIED; the owner checks the footnote).
+  (not on the 2026-10-01 screenshot: the Start footnote is still to be checked).
 
 ## B. Up to 10 names in Paper
 
@@ -72,7 +73,7 @@ budget (2 requests/s, burst 5) and R15 (a quote older than 10 s blocks orders):
 |---|---|---|
 | Measuring the trading model | `TradingModelCheck` (`Classify`, `MeasureAsync`, `Apply`, `KnownContinuous`); `InstrumentImport.RecordAsync` used by `qa history import`, the app's Add (before its check; a quiet week keeps the stored model) and the Paper history refresh; `qa history import` prints the measurement | `TradingModelCheckTests` (continuous, auction, too few, zero volume, a quiet week, the one chart call), `CliDataTests.HistoryImport_OfAFirstNorthShare_…` (both ways, then `qa universe add`), `MarketSearchTests.AFirstNorthShare…` (refused before its import; added and measured once) |
 | The list's rules | `Allowlist.Check` (known Swedish marketplaces `XSTO`, `FNSE`; auction and unknown with the measured reason), `qa status` | `CliTradingTests.Universe_Refuses…` (FNSE unknown, FNSE auction, Spotlight), `…AddsAFirstNorthShareMeasuredAsContinuous`, `CliUsabilityTests` |
-| First North courtage | `marketplace_courtage.FNSE` in all five cost files (UNVERIFIED), `CostModel.Marketplaces`/`MarketplaceFor`/`CourtageIn(…, marketPlace)`, `PanelInstrument.MarketPlace`; the backtest (per share), the allowance (not counted), `Recost`, the intraday report, Paper fills and R9's estimate, Confirm's `ModelFees`; a Paper share on a marketplace without a courtage is skipped with a warning | `FirstNorthCostTests` (every class, 0.25 %/1 SEK, unknown marketplace refused, XSTO not allowed as an entry, a backtest charges it) |
+| First North courtage | `marketplace_courtage.FNSE` in all five cost files (verified 2026-10-01), `CostModel.Marketplaces`/`MarketplaceFor`/`CourtageIn(…, marketPlace)`, `PanelInstrument.MarketPlace`; the backtest (per share), the allowance (not counted), `Recost`, the intraday report, Paper fills and R9's estimate, Confirm's `ModelFees`; a Paper share on a marketplace without a courtage is skipped with a warning | `FirstNorthCostTests` (every class, 0.25 %/1 SEK, unknown marketplace refused, XSTO not allowed as an entry, a backtest charges it) |
 | Paper decision | a listed share not continuous is left out of the panel with a note (and holds) | `PaperSpyTests.AListedShareThatTradesOnlyInAuctions_IsLeftOut_TheOthersStillTrade` |
 | 10 names | `Allowlist.MaxNames = 10`, `PaperPolling` (interval, `MaxPolled` 14), `PaperSetup`, Confirm's 5-stream check before any login, the app's texts | `CliTradingTests.PaperPolls_…`, `…Universe_TakesASixthName_ButRefusesAnEleventh…`, `ConfirmSpyTests.AListOfMoreThanFive…`, `PaperSpyTests.TenNames_AreTraded_EachPolledAboutEverySevenSeconds` (10 orders; 7–11 polls a share in 60 s, 13 with the old 5 s: checked by reverting the interval), `SearchPageTests`, `MarketSearchTests` |
 

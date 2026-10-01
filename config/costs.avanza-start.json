@@ -15,8 +15,8 @@
   "marketplace_courtage": {
     "FNSE": { "min": 1.0, "rate": 0.0025 },
     "source_url": "https://www.avanza.se/konton-lan-prislista/prislista/handel-sverige.html",
-    "verified_on": null,
-    "basis": "UNVERIFIED (plan 22, 2026-09-30): a search-engine extract of Avanza's price list for trading in Sweden gives First North at 0.25 %, minimum 1 SEK, for both Start and Mini (avanza.se is not reachable from the development container); the owner's screenshot of 2026-09-26 said 'First North from 1 kr'. Check the price list and set verified_on. Start's free trades are taken to be for the main market only: First North trades pay this courtage and do not count towards the 500."
+    "verified_on": "2026-10-01",
+    "basis": "Verified 2026-10-01 against the owner's screenshot of Avanza's price list for trading in Sweden (docs/research/assets/avanza-prislista-handel-sverige-2026-10-01.png, transcribed in docs/research/market-rules.md section 4): First North, Start: rörligt courtage 0.25 %, lägsta courtage 1 SEK (internet orders; phone orders cost more and are not used). Not on the screenshot: whether First North trades count towards Start's 500 free trades; they are taken to pay this courtage and not to count (see free_trades, still unverified)."
   },
   "slippage_bps": 5.0,
   "half_spread_bps": 5.0,
@@ -33,5 +33,5 @@
   },
   "source_url": "https://www.avanza.se/priser-och-avgifter.html",
   "verified_on": "2026-09-26",
-  "basis": "Nasdaq Stockholm (main market) courtage from the owner's screenshot of Avanza's price list, 2026-09-26: 'Start. För dig som gör små affärer. 100% återbetalning av fondavgifter. Valbar om du har under 50 000 kr*' - rörligt courtage 0 %, lägsta courtage 0 kr. The footnote (*) was not in the screenshot. Other marketplaces cost more (Spotlight Stock Market from 19 kr, First North from 1 kr); backtests only accept main-market instruments. FX fee: the owner confirmed on 2026-09-26 that Start has no FX fee while the capital stays under the class limit (over it, Start can't be kept and the new class's fee applies; backtests note that crossing). Slippage, half-spread and participation cap are modelling choices."
+  "basis": "Nasdaq Stockholm (main market) courtage from the owner's screenshot of Avanza's price list, 2026-09-26: 'Start. För dig som gör små affärer. 100% återbetalning av fondavgifter. Valbar om du har under 50 000 kr*' - rörligt courtage 0 %, lägsta courtage 0 kr. The footnote (*) was not in the screenshot. Other marketplaces cost more (Spotlight Stock Market from 19 kr, First North from 1 kr); backtests accept the main market and First North (marketplace_courtage, plan 22), nothing else. FX fee: the owner confirmed on 2026-09-26 that Start has no FX fee while the capital stays under the class limit (over it, Start can't be kept and the new class's fee applies; backtests note that crossing). Slippage, half-spread and participation cap are modelling choices. Re-confirmed 2026-10-01 by the owner's screenshot of the whole price list for trading in Sweden (docs/research/assets/avanza-prislista-handel-sverige-2026-10-01.png): the Stockholmsbörsen row matches."
 }
