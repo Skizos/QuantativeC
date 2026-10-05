@@ -62,9 +62,14 @@
                             <TextBlock Text="{Binding ThisWeek}" Style="{StaticResource ChipText}" Foreground="{Binding ThisWeekMark, Converter={StaticResource MarkToBrush}}" />
                         </Border>
                         <TextBlock Text="SINCE THE FIRST PAPER DAY" Style="{StaticResource Overline}" />
-                        <Border Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="0,2,0,0"
+                        <Border Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="0,2,0,8"
                                 Background="{Binding SinceStartMark, Converter={StaticResource MarkToSoftBrush}}">
                             <TextBlock Text="{Binding SinceStart}" Style="{StaticResource ChipText}" Foreground="{Binding SinceStartMark, Converter={StaticResource MarkToBrush}}" />
+                        </Border>
+                        <TextBlock Text="AGAINST HOLDING THE LIST" Style="{StaticResource Overline}" />
+                        <Border Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="0,2,0,0"
+                                Background="{Binding HoldMark, Converter={StaticResource MarkToSoftBrush}}">
+                            <TextBlock Text="{Binding Hold}" Style="{StaticResource ChipText}" Foreground="{Binding HoldMark, Converter={StaticResource MarkToBrush}}" />
                         </Border>
                     </StackPanel>
                     <ScrollViewer c:AdaptiveRow.Fill="True" MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">

@@ -419,6 +419,7 @@ public sealed class ViewModelTests : IDisposable
         Assert.Equal(("within the backtest's range", "ok"), (week.ThisWeek, week.ThisWeekMark));
         Assert.Equal(("within the backtest's range", "ok"), (week.SinceStart, week.SinceStartMark));
         Assert.Equal("2 of 5 trading day(s) clean, 3 without a session", week.Days);
+        Assert.Equal(("from the second Paper day", "none"), (week.Hold, week.HoldMark)); // these days have no close marks
         Assert.Contains(week.Lines, l => l.StartsWith("Against the backtest T000001, ma-cross(fast=20, slow=100) on ERIC B", StringComparison.Ordinal));
         Assert.Empty(shell.Reports.WeekNote);
 
@@ -441,6 +442,11 @@ public sealed class ViewModelTests : IDisposable
         // While a command runs the page does not open the price store; the rest of the week still shows.
         IReadOnlyList<string> lines = Cli.Commands.TradingCommands.BuildWeek(_ws.Workspace.WeekPaths, new DateOnly(2026, 9, 25), _ws.Time.GetUtcNow(), readStore: false).Lines();
         Assert.Equal("Intraday bars: shown when nothing else runs (the price store is in use).", lines[^1]);
+
+        // Plan 24: the chip against holding the list is coloured only once the difference is more than noise.
+        Assert.Equal(("0.31 points ahead over 3 day(s), noise so far", "info"), WeekCard.HoldVerdict(new Trading.Reports.PaperVsList(3, 0.02m, 0.03m, 0.5m, 0.0169m, null)));
+        Assert.Equal(("1.20 points behind over 30 day(s)", "FAIL"), WeekCard.HoldVerdict(new Trading.Reports.PaperVsList(30, 0.01m, 0.05m, 0.44m, 0.022m, -2.4)));
+        Assert.Equal(("1.20 points ahead over 30 day(s)", "ok"), WeekCard.HoldVerdict(new Trading.Reports.PaperVsList(30, 0.034m, 0.05m, 0.44m, 0.022m, 2.1)));
 
         Assert.Equal(("below the backtest's range", "FAIL"), WeekCard.Verdict(new Trading.Reports.PaperVsBacktest(5, -0.1m, 0.5m, 0, -0.02, 0.02, "BELOW the range: …"), true));
         Assert.Equal(("above the backtest's range", "info"), WeekCard.Verdict(new Trading.Reports.PaperVsBacktest(5, 0.1m, 0.5m, 0, -0.02, 0.02, "above the range"), true));

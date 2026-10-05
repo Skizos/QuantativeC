@@ -72,3 +72,6 @@
 
 Only trading days up to today are listed (a later day has had no session yet), and the intraday coverage counts the
 days before today (today's bars come in the evening). All managed tests pass; nothing live was called.
+
+**Later (plan 24, 2026-10-05):** the summary also compares Paper with simply holding its list at equal weights, at the
+same close prices (`docs/plans/24-hold-the-list.md`).

@@ -184,26 +184,67 @@ internal static partial class TradingCommands
         IntradayCoverage? intraday = null;
         int? needed = null;
         string? unavailable = null;
+        IReadOnlyDictionary<string, IReadOnlyList<DividendEvent>>? dividends = null;
+        string? dividendsMissing = null;
         if (!readStore)
         {
             unavailable = "shown when nothing else runs (the price store is in use)";
+            dividendsMissing = "the price store is in use";
         }
         else
         {
             try
             {
                 intraday = IntradayWeek(paths.Store, paths.ConfigDir, [.. trading.Where(d => d < today)], out needed);
+                dividends = ListDividends(paths.Store, reports, out dividendsMissing);
             }
             catch (Exception ex) when (ex is HistoryStoreException or IOException || DataCommands.IsStoreFailure(ex))
             {
                 unavailable = "the price store is busy; they show again next time";
+                dividendsMissing = "the price store is busy";
             }
         }
 
-        return WeeklyReport.Build(chosen, trading, reports, gate, Expectation(paths.ConfigDir, paths.Ledger), intraday, needed, now) with
+        WeeklyReport week = WeeklyReport.Build(chosen, trading, reports, gate, Expectation(paths.ConfigDir, paths.Ledger), intraday, needed, now, dividends);
+        return week with
         {
             IntradayUnavailable = unavailable,
+            HoldDividendsMissing = dividends is null ? dividendsMissing ?? week.HoldDividendsMissing : null,
         };
+    }
+
+    /// <summary>
+    /// Plan 24: the dividends of every share in the reports' close marks, as stored at each Paper start (plan 21), for
+    /// holding the list. Null, with <paramref name="missing"/> saying why, when the store has none to give.
+    /// </summary>
+    private static Dictionary<string, IReadOnlyList<DividendEvent>>? ListDividends(string storePath, IReadOnlyList<EodReport> reports, out string? missing)
+    {
+        missing = null;
+        string[] ids = [.. reports.SelectMany(r => r.CloseMarks).Select(m => m.OrderbookId).Distinct(StringComparer.Ordinal)];
+        if (ids.Length == 0)
+        {
+            return new Dictionary<string, IReadOnlyList<DividendEvent>>(StringComparer.Ordinal);
+        }
+
+        if (!File.Exists(storePath))
+        {
+            missing = "no price store";
+            return null;
+        }
+
+        using HistoryStore history = HistoryStore.Open(storePath);
+        string source = CorporateDataImporter.AvanzaStockDetails.Name;
+        if (history.GetSource(source) is null)
+        {
+            missing = "not fetched yet: a Paper session fetches them when it starts";
+            return null;
+        }
+
+        DateOnly from = reports.Min(r => r.Date).AddDays(-1), to = reports.Max(r => r.Date);
+        return ids.ToDictionary(
+            id => id,
+            id => (IReadOnlyList<DividendEvent>)[.. history.GetDividends(new OrderbookId(id), source, from, to).Select(d => d.Dividend)],
+            StringComparer.Ordinal);
     }
 
     /// <summary>The saved strategy's recorded backtest, on today's allowlist if there is one (plan 20); null without either.</summary>

@@ -150,6 +150,16 @@ public sealed class EodReportTests : IDisposable
     }
 
     [Fact]
+    public void TheDaysReport_KeepsEveryListedSharesClose()
+    {
+        // Plan 24: the comparison with holding the list reads them; the last trade, else the mid.
+        FillRateDay();
+        Assert.Equal(
+            [new EodCloseMark("1001", "TEST B", "SEK", 51.0m, 1m), new EodCloseMark("4478", "AAPL", "USD", 202m, 10m), new EodCloseMark("5240", "ERIC B", "SEK", 100.0m, 1m)],
+            EodReport.Build(AuditDir, Monday, _time).CloseMarks);
+    }
+
+    [Fact]
     public void TheFillRate_CountsWhatFilled_AndWhatTheUnfilledMissedAgainstTheBacktest()
     {
         FillRateDay();

@@ -191,6 +191,11 @@ public sealed record EodFillRate(
 /// <param name="CashSek">The cash it brought: the dividend, or a reverse split's fraction.</param>
 public sealed record EodCorporateAction(string Kind, string Ticker, string Text, decimal CashSek);
 
+/// <summary>A listed share's price at a market's close (plan 19's <c>close-mark</c> record; plan 24 compares with holding the list).</summary>
+/// <param name="Close">The last trade, else the mid; null without a price at the close.</param>
+/// <param name="SekPerUnit">SEK per unit of <paramref name="Currency"/> (1 for SEK).</param>
+public sealed record EodCloseMark(string OrderbookId, string Ticker, string Currency, decimal? Close, decimal SekPerUnit);
+
 /// <summary>
 /// The end-of-day report (ADR 0003 §3 and §8). It is rebuilt from the day's audit file alone, the tamper-evident
 /// record, never from session memory, so it can be regenerated and checked at any time (<c>qa report eod</c>) and the
@@ -264,6 +269,9 @@ public sealed record EodReport
 
     /// <summary>Gets how many manual orders the gateway accepted that day (plan 23): the day is then not the strategy's alone.</summary>
     public int ManualOrdersSent { get; init; }
+
+    /// <summary>Gets every listed share's price at its market's close (plan 19), by orderbook id; empty before plan 19 or without a close.</summary>
+    public IReadOnlyList<EodCloseMark> CloseMarks { get; init; } = [];
 
     /// <summary>Gets the dividends credited that day, in SEK (plan 21).</summary>
     [JsonIgnore]
@@ -519,7 +527,7 @@ public sealed record EodReport
                     {
                         _marks[marked] = new CloseMark(
                             Num(d, "last") ?? (Num(d, "bid") is { } bid && Num(d, "ask") is { } ask ? (bid + ask) / 2 : null),
-                            Num(d, "dayLow"), Num(d, "dayHigh"), Num(d, "sekPerUnit") ?? 1m);
+                            Num(d, "dayLow"), Num(d, "dayHigh"), Num(d, "sekPerUnit") ?? 1m, Str(d, "ticker") ?? marked, Str(d, "currency") ?? "SEK");
                     }
 
                     break;
@@ -632,6 +640,7 @@ public sealed record EodReport
                 FillRate = EodFillRate.From(LimitOrders()),
                 UnknownAtEnd = unknownAtEnd,
                 CorporateActions = _corporate,
+                CloseMarks = [.. _marks.OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => new EodCloseMark(m.Key, m.Value.Ticker, m.Value.Currency, m.Value.Close, m.Value.SekPerUnit))],
                 ManualOrders = _manual,
                 ManualOrdersSent = _manualSent,
                 AuditChainValid = chainValid,
@@ -737,7 +746,7 @@ public sealed record EodReport
         }
 
         /// <summary>A share's prices at the close (plan 19).</summary>
-        private sealed record CloseMark(decimal? Close, decimal? DayLow, decimal? DayHigh, decimal SekPerUnit);
+        private sealed record CloseMark(decimal? Close, decimal? DayLow, decimal? DayHigh, decimal SekPerUnit, string Ticker, string Currency);
 
         /// <summary>A Confirm order while its day's audit is read.</summary>
         private sealed record LiveOrder

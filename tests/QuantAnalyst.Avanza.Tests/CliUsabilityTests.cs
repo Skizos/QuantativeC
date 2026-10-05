@@ -191,10 +191,12 @@ public sealed class CliUsabilityTests : IDisposable
             Status = Analytics.Backtesting.TrialStatus.Ok,
             Metrics = new Analytics.Backtesting.TrialMetrics(500, 0.05, 0.79, 0, 3, 0.1, 0.05, 0.16, 0.2, 1, 100, 0.9, null, 1, null),
         });
-        foreach ((int day, decimal start, decimal end, decimal cash) in new[] { (28, 5000m, 5010m, 2500m), (29, 5010m, 4990m, 2490m) })
+        // Plan 24: ERIC B closes at 70.00, then 70.70 with a 0.35 dividend going ex on Tuesday: the list made 1.5 % on Tuesday.
+        foreach ((int day, decimal start, decimal end, decimal cash, decimal close) in new[] { (28, 5000m, 5010m, 2500m, 70m), (29, 5010m, 4990m, 2490m, 70.7m) })
         {
             var log = new Trading.Audit.AuditLog(Audit, new FakeTimeProvider(new DateTimeOffset(2026, 9, day, 7, 0, 0, TimeSpan.Zero)));
             log.Append("session-start", new { mode = "Paper" });
+            log.Append("close-mark", new { orderbookId = "5240", ticker = "ERIC B", currency = "SEK", last = close, sekPerUnit = 1m });
             log.Append("end-of-day", new { day = new { startOfDayValue = start, accountValue = end, cash, feesPaid = 0m } });
         }
 
@@ -207,6 +209,8 @@ public sealed class CliUsabilityTests : IDisposable
             store.RegisterSource(AvanzaChartImporter.AvanzaPriceChart);
             store.UpsertIntradayBars(new OrderbookId("5240"), ChartResolution.FiveMinutes, [Nine(28)], AvanzaChartImporter.AvanzaPriceChart, "test", Saturday);
             store.UpsertIntradayBars(new OrderbookId("5240"), ChartResolution.TenMinutes, [Nine(29)], AvanzaChartImporter.AvanzaPriceChart, "test", Saturday);
+            store.RegisterSource(CorporateDataImporter.AvanzaStockDetails);
+            store.UpsertDividends(new OrderbookId("5240"), [new DividendEvent(new DateOnly(2026, 9, 29), null, 0.35m, "SEK", "ORDINARY")], CorporateDataImporter.AvanzaStockDetails, "test", Saturday);
         }
 
         string policy = Path.Combine(Config, Analytics.Backtesting.IntradayHoldout.FileName);
@@ -222,6 +226,8 @@ public sealed class CliUsabilityTests : IDisposable
         Assert.Contains("Week: -0.20% (value 4,990.00 SEK), fees 0.00 SEK; 2 of 5 trading day(s) clean, 3 without a session; Confirm gate: 2 of 10 clean Paper days in a row.", output, StringComparison.Ordinal);
         Assert.Contains("Against the backtest T000001, buy-and-hold(entry=5) on ERIC B, 2016-01-04..2026-09-25, costs avanza-start", output, StringComparison.Ordinal);
         Assert.Contains("  this week: 2 day(s) at 50 % invested: Paper -0.20%; the backtest expects +0.05% (95 % range -1.35% to +1.45%): within the range", output, StringComparison.Ordinal);
+        Assert.Contains("Against holding the list (equal weights, dividends included, no costs; the same close prices as Paper):", output, StringComparison.Ordinal);
+        Assert.Contains("  this week: 1 day(s): Paper -0.40%; the list +1.50% (at Paper's 50 % invested +0.75%): Paper 1.15 points behind at the same exposure", output, StringComparison.Ordinal);
         Assert.Contains(string.Create(System.Globalization.CultureInfo.InvariantCulture,
             $"Intraday bars, 5 trading day(s): ERIC B 2 (1 at 10 minutes) (missing 09-30, 10-01, 10-02); 2 day(s) collected so far of the {needed} the go/no-go needs."), output, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(weeks, "2026-W40.json")));

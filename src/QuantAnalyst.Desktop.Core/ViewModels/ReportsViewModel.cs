@@ -27,9 +27,11 @@ public sealed record ReportRow(DateOnly Date, string State, string Summary, IRea
 /// </summary>
 /// <param name="ReturnMark">"up", "down" or "flat".</param>
 /// <param name="ThisWeekMark">"ok" within the backtest's range, "FAIL" below it, "info" above it, "none" nothing to compare.</param>
+/// <param name="Hold">Paper against holding the list since the start (plan 24), e.g. "0.31 points ahead over 12 day(s), noise so far".</param>
+/// <param name="HoldMark">"ok" ahead and "FAIL" behind once the difference is more than noise, "info" before, "none" nothing to compare.</param>
 public sealed record WeekCard(
     string Title, string Return, string ReturnMark, string ThisWeek, string ThisWeekMark, string SinceStart, string SinceStartMark, string Days,
-    IReadOnlyList<string> Lines)
+    string Hold, string HoldMark, IReadOnlyList<string> Lines)
 {
     public static WeekCard From(WeeklyReport week)
     {
@@ -37,6 +39,7 @@ public sealed record WeekCard(
         CultureInfo c = CultureInfo.InvariantCulture;
         (string thisWeek, string thisMark) = Verdict(week.ThisWeek, week.Backtest is not null);
         (string since, string sinceMark) = Verdict(week.SinceStart, week.Backtest is not null);
+        (string hold, string holdMark) = HoldVerdict(week.HoldSinceStart);
         string missing = week.NoSessionDays > 0 ? string.Create(c, $", {week.NoSessionDays} without a session") : string.Empty;
         return new WeekCard(
             string.Create(c, $"WEEK {week.Week} · {week.Monday:ddd d MMM} – {week.Monday.AddDays(6):ddd d MMM}").ToUpperInvariant(),
@@ -47,7 +50,28 @@ public sealed record WeekCard(
             since,
             sinceMark,
             string.Create(c, $"{week.CleanDays} of {week.TradingDays} trading day(s) clean{missing}"),
+            hold,
+            holdMark,
             [.. week.Lines().Skip(1)]);
+    }
+
+    /// <summary>The chip's words and colour mark for Paper against holding the list (plan 24): coloured once it is more than noise.</summary>
+    internal static (string Word, string Mark) HoldVerdict(PaperVsList? v)
+    {
+        if (v is null)
+        {
+            return ("from the second Paper day", "none");
+        }
+
+        if (v.Difference == 0m)
+        {
+            return (string.Create(CultureInfo.InvariantCulture, $"level with it over {v.Days} day(s)"), "none");
+        }
+
+        bool clear = v.TStat is { } t && Math.Abs(t) >= HoldTheList.TNoise;
+        string word = string.Create(CultureInfo.InvariantCulture,
+            $"{Math.Abs(v.Difference) * 100:0.00} points {(v.Difference > 0 ? "ahead" : "behind")} over {v.Days} day(s){(clear ? string.Empty : ", noise so far")}");
+        return (word, !clear ? "info" : v.Difference > 0 ? "ok" : "FAIL");
     }
 
     /// <summary>The chip's words and colour mark for a comparison with the backtest.</summary>

@@ -98,8 +98,9 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
   - **Use for Paper** saves it
 - **Reports:** the gate dots, each day marked CLEAN / NOT CLEAN / INCOMPLETE, and the selected day's details. The week
   card shows the **week of the selected day** (the same summary as `.\qa report week`): its return, whether Paper is
-  within, below or above the backtest's range this week and since the first Paper day, the clean days, and the whole
-  summary beside it. Select a day of an earlier week to see that week.
+  within, below or above the backtest's range this week and since the first Paper day, how far it is ahead of or
+  behind **holding the list** (coloured once it is more than noise), the clean days, and the whole summary beside it.
+  Select a day of an earlier week to see that week.
 - **Bottom bar:** what is running now, and (click it) the activity log with every command's full output.
 
 Numbers on screen are Swedish style (`5 012,40 kr`, `+0,20 %`); commands and files keep their usual format.
@@ -227,6 +228,16 @@ backtest (the one in the trial ledger) makes on an average day, scaled by how mu
 - "no session" days count against nothing, but each one is a day the Confirm gate and the fill statistics did not get.
 - The intraday line says whether the evening collection ran, and how far the collection is from the intraday
   go/no-go.
+
+**Against holding the list** (plan 24). The summary also compares Paper with simply holding the shares on your list at
+equal weights (the same close prices Paper used, their dividends included, no costs):
+- "the list +2.10%" is what the list did fully invested; "at Paper's 46 % invested +0.97%" is the same with Paper's
+  cash, the fair comparison for what the strategy did with the money it had in shares.
+- "Paper 0.57 points behind at the same exposure" is the strategy's timing and costs against doing nothing. A week of it
+  says little: watch the "since" line and its t. Once it reads "more than noise" and **behind**, week after week, the
+  strategy loses to holding the same shares: a simpler strategy (`buy-and-hold` in the backtest) would have earned more.
+- If Paper is far behind fully invested but close at its own exposure, the cash is the cost: with few names R7's 20 %
+  per name keeps much of the account in cash. More names (up to 10) let more of it work.
 
 A day is **clean** when it ran to the close with:
 - no violations

@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using QuantAnalyst.Analytics.Backtesting;
 using QuantAnalyst.Analytics.Statistics;
+using QuantAnalyst.Core.Market;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Trading.Modes;
 
@@ -111,8 +112,9 @@ public sealed record BacktestExpectation(
 
 /// <summary>
 /// The weekly summary (plan 20): the week's Paper days, Paper's return against the saved strategy's recorded backtest
-/// (this week and since the first Paper day), the limit fill rate (plan 19), and the intraday collection (plan 17). Built
-/// from the end-of-day reports (rebuilt from the audit), the trial ledger and the store; nothing is asked of Avanza.
+/// and against holding the list (plan 24; this week and since the first Paper day), the limit fill rate (plan 19), and
+/// the intraday collection (plan 17). Built from the end-of-day reports (rebuilt from the audit), the trial ledger and
+/// the store; nothing is asked of Avanza.
 /// </summary>
 public sealed record WeeklyReport
 {
@@ -166,6 +168,21 @@ public sealed record WeeklyReport
     /// <summary>Gets how many manual orders the gateway accepted this week (plan 23): Paper is then not the strategy alone.</summary>
     public int ManualOrdersSent { get; init; }
 
+    /// <summary>Gets Paper against holding the list this week (plan 24); null without a Paper day that has a Paper close before it.</summary>
+    public PaperVsList? HoldThisWeek { get; init; }
+
+    /// <summary>Gets the first day of <see cref="HoldSinceStart"/>.</summary>
+    public DateOnly? HoldFirstDay { get; init; }
+
+    /// <summary>Gets Paper against holding the list since the first comparable Paper day (plan 24).</summary>
+    public PaperVsList? HoldSinceStart { get; init; }
+
+    /// <summary>Gets why the list's dividends are left out (e.g. the store was busy); null when they are counted.</summary>
+    public string? HoldDividendsMissing { get; init; }
+
+    /// <summary>Gets the listed shares left out of this week's days, e.g. "Tue ERIC B (split-like move)".</summary>
+    public IReadOnlyList<string> HoldLeftOut { get; init; } = [];
+
     public required DateTimeOffset GeneratedUtc { get; init; }
 
     private static readonly JsonSerializerOptions Json = new()
@@ -200,9 +217,10 @@ public sealed record WeeklyReport
     /// <param name="day">Any day of the week to summarize.</param>
     /// <param name="tradingDays">The Stockholm trading days of that week.</param>
     /// <param name="reports">Every day's end-of-day report (for the weeks before, too: "since the start").</param>
+    /// <param name="dividends">The listed shares' dividends by orderbook id, for holding the list (plan 24); null leaves them out.</param>
     public static WeeklyReport Build(
         DateOnly day, IReadOnlyList<DateOnly> tradingDays, IReadOnlyList<EodReport> reports, GateResult gate, BacktestExpectation? backtest,
-        IntradayCoverage? intraday, int? intradayNeeded, DateTimeOffset now)
+        IntradayCoverage? intraday, int? intradayNeeded, DateTimeOffset now, IReadOnlyDictionary<string, IReadOnlyList<DividendEvent>>? dividends = null)
     {
         ArgumentNullException.ThrowIfNull(tradingDays);
         ArgumentNullException.ThrowIfNull(reports);
@@ -216,6 +234,8 @@ public sealed record WeeklyReport
         WeekDay[] paperWeek = [.. days.Where(d => d.IsPaper && d.Return is not null)];
         WeekDay[] paperSince = [.. reports.Where(r => r.Date <= sunday).OrderBy(r => r.Date).Select(Row).Where(d => d.IsPaper && d.Return is not null)];
         EodReport[] week = [.. byDay.Values.OrderBy(r => r.Date)];
+        IReadOnlyList<ListDay> held = HoldTheList.Days(reports.Where(r => r.Date <= sunday), dividends);
+        ListDay[] heldThisWeek = [.. held.Where(d => d.Date >= monday)];
         return new WeeklyReport
         {
             Week = WeekName(monday),
@@ -237,6 +257,11 @@ public sealed record WeeklyReport
             Intraday = intraday,
             IntradayNeeded = intradayNeeded,
             ManualOrdersSent = week.Sum(r => r.ManualOrdersSent),
+            HoldThisWeek = HoldTheList.Compare(heldThisWeek),
+            HoldFirstDay = held.Count == 0 ? null : held[0].Date,
+            HoldSinceStart = HoldTheList.Compare(held),
+            HoldDividendsMissing = dividends is null ? "not read" : null,
+            HoldLeftOut = [.. heldThisWeek.SelectMany(d => d.LeftOut.Select(x => d.Date.ToString("ddd", CultureInfo.InvariantCulture) + " " + x))],
             GeneratedUtc = now,
         };
     }
@@ -282,6 +307,22 @@ public sealed record WeeklyReport
         else
         {
             lines.Add("Against the backtest: no successful backtest of the saved strategy on imported data in the trial ledger (qa backtest run first).");
+        }
+
+        if (HoldSinceStart is { } hold && HoldFirstDay is { } holdFirst)
+        {
+            string dividendsNote = HoldDividendsMissing is { } why ? $"dividends left out ({why})" : "dividends included";
+            lines.Add($"Against holding the list (equal weights, {dividendsNote}, no costs; the same close prices as Paper):");
+            lines.Add("  this week: " + (HoldThisWeek?.Describe() ?? "no Paper day with a Paper close before it"));
+            lines.Add(string.Create(c, $"  since {holdFirst:yyyy-MM-dd}: {hold.Describe()}"));
+            if (HoldLeftOut.Count > 0)
+            {
+                lines.Add("  left out this week: " + string.Join("; ", HoldLeftOut));
+            }
+        }
+        else
+        {
+            lines.Add("Against holding the list: from the second Paper day with close prices (each day runs from the Paper close before it).");
         }
 
         lines.Add("Limits this week: " + (FillRate?.Describe() ?? "no orders") + (FillRateSinceStart is { } all ? $". Since the start: {all.Describe()}." : "."));
