@@ -75,7 +75,13 @@ A review of plans 21–23 found these holes; each is fixed with a test.
 | `qa status` said nothing about waiting requests or manual shares | A **Manual** line for each | `CliTradingTests.PaperOrder_…` |
 | `qa status` crashed when `paper.json` named a cost file that is missing (found while testing the line above) | `BacktestConfigException` is a FAIL line like other broken files | `CliUsabilityTests.Status_ReportsABrokenFile_…` |
 | `qa status` still advised "Add names (up to 5)" after plan 22 raised the list to 10 | Says `Allowlist.MaxNames` | — |
-| The Desktop tests raced the Status page's first refresh for the history store ("(store busy)" now and then) | The tests await the shell's first refresh | `ForeignSharesAppTests`, `ManualOrderCardTests` (3 full runs green) |
+
+**Still open:** `ForeignSharesAppTests.TheInstrumentsList_SaysAUsSharesCurrencyAndMarket` fails now and then in a full
+solution run (its US share's line read "(store busy)": the Instruments page could not open the test's own history
+store). A first guess, a race with the Status page's first refresh, was wrong: the shell starts no refresh when it is
+built, and each test has its own store, so that change was taken back. The test failed once in 9 full runs after it
+and never alone; a diagnostic build that put the exception into the text ran 6 full runs without a failure, so the
+cause is not known yet. Next time it fails, the run's output is what to keep.
 
 ## Not in this plan
 

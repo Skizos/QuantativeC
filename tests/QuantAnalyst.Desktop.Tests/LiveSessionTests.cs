@@ -158,7 +158,6 @@ public sealed class ManualOrderCardTests
         ws.AllowEricB();
         var shell = new ShellViewModel(ws.Workspace, new QaEngine(new ImmediateDispatcher(), new ScriptedRunner().Run, null), ws.Time);
         SessionViewModel page = shell.Session;
-        await shell.Refreshing;
         await page.RefreshAsync();
 
         Assert.Equal(["ERIC B"], page.ManualTickers);
