@@ -131,6 +131,77 @@ public sealed class ManualOrdersTests : IDisposable
     }
 
     [Fact]
+    public async Task AManualOrderRightAfterTheCancelsItCaused_WaitsOutR12_InsteadOfBeingRefused()
+    {
+        // Review: the strategy's two buys rest (09:10:00 and 09:10:13); at 09:10:30 the pace allows an order at once, but
+        // the cancels count as actions on ERIC B, so R12 wants 5 s before the manual buy.
+        await StepFor(TimeSpan.FromSeconds(90));
+        Assert.Equal(2, _oms.All.Count(o => o.State == OmsState.Working));
+
+        _inbox.Place(ManualAction.Buy, Eric, "ERIC B", 3, null, "app");
+        await StepFor(TimeSpan.FromSeconds(10));
+
+        Assert.All(_oms.All.Where(o => o.Volume != 3), o => Assert.Equal(OmsState.Cancelled, o.State));
+        OmsOrder manual = _oms.All.Single(o => o.Volume == 3);
+        Assert.Equal(OmsState.Filled, manual.State);
+        Assert.Equal(new DateTimeOffset(2026, 9, 28, 7, 10, 35, TimeSpan.Zero), manual.CreatedUtc); // 5 s after the cancels
+        Assert.Equal("sent", Assert.Single(_inbox.Done()).Outcome);
+        Assert.DoesNotContain("R12", _output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ARequestPlacedAfterTheWindowClosed_IsForTheNextTradingDay()
+    {
+        // Friday 17:25 Stockholm: after the trading window (17:20), before the close (17:30). Monday sends it.
+        var friday = new FakeTimeProvider(new DateTimeOffset(2026, 9, 25, 15, 25, 0, TimeSpan.Zero));
+        ManualOrderRequest late = new ManualOrderInbox(_dir.File("paper"), friday).Place(ManualAction.Buy, Eric, "ERIC B", 2, null, "cli");
+
+        await StepFor(TimeSpan.FromSeconds(3));
+
+        Assert.Equal(("sent", late.Id), (Assert.Single(_inbox.Done()).Outcome, Assert.Single(_inbox.Done()).Request.Id));
+        Assert.Equal(2, _book.Position(Eric));
+    }
+
+    [Fact]
+    public async Task ARequestStillWaitingAtTheClose_ExpiresThen_InTheDaysReport()
+    {
+        // No live price all day: the buy waits; at the close it expires (the report shows it), but a request placed after
+        // the window closed is for the next trading day.
+        ManualOrderRequest r = _inbox.Place(ManualAction.Buy, Eric, "ERIC B", 2, null, "cli");
+        await _session.StepAsync(CancellationToken.None);
+        Assert.Single(_inbox.Pending());
+
+        _time.SetUtcNow(new DateTimeOffset(2026, 9, 28, 15, 25, 0, TimeSpan.Zero)); // 17:25
+        ManualOrderRequest tomorrow = _inbox.Place(ManualAction.Sell, Eric, "ERIC B", 1, 101m, "cli");
+        _time.SetUtcNow(new DateTimeOffset(2026, 9, 28, 15, 30, 5, TimeSpan.Zero)); // 17:30:05, after the close
+        await _session.StepAsync(CancellationToken.None);
+
+        ManualOrderOutcome expired = Assert.Single(_inbox.Done());
+        Assert.Equal(("expired", r.Id), (expired.Outcome, expired.Request.Id));
+        Assert.Equal("the trading window closed at 17:20 before it was sent (no live price came); a request is for one trading day", expired.Message);
+        Assert.Equal([tomorrow], _inbox.Pending());
+        EodReport report = EodReport.Build(_audit.Directory, new DateOnly(2026, 9, 28), _time);
+        Assert.StartsWith($"[{r.Id}] Buy 2 ERIC B: expired", Assert.Single(report.ManualOrders), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnOutcomeThatCannotBeWritten_DoesNotStopTheSession_TheAuditHasIt()
+    {
+        // Review: a CLI cancel may hold done.jsonl for a moment; a file that stays unwritable must not crash the session.
+        var desk = new ManualOrderDesk(_inbox, _book, _quotes, new InstrumentCatalog([OrderPreparationTests.Spec()]), new PreTradeRiskEngine(RiskLimits.AdrDefaults), _audit, _output);
+        _quotes.Set(Eric, _time.GetUtcNow(), 100.4m, 500, 100.6m, 700, 100.5m, 10_000);
+        _inbox.Place(ManualAction.Buy, Eric, "ERIC B", 2, null, "cli");
+        Assert.Single(desk.Due(_time.GetUtcNow(), _ => new ManualWindow(true, DateTimeOffset.MinValue)));
+        Directory.CreateDirectory(Path.Combine(_inbox.Directory, ManualOrderInbox.DoneFileName)); // a folder where the file should be
+
+        desk.Recover();
+
+        Assert.Contains("(not written to manual/done.jsonl:", _output.ToString(), StringComparison.Ordinal);
+        Assert.Contains("manual-order", AuditLog.Read(Directory.GetFiles(_audit.Directory, "*.jsonl").Single()).Select(x => x.GetProperty("kind").GetString()));
+        Assert.Empty(desk.Due(_time.GetUtcNow(), _ => new ManualWindow(true, DateTimeOffset.MinValue)));
+    }
+
+    [Fact]
     public async Task ARefusedManualOrder_LeavesTheShareToTheStrategy()
     {
         _inbox.Place(ManualAction.Buy, Eric, "ERIC B", 1_000, null, "cli"); // 100,600 SEK: R6 allows 10 % of the account
@@ -157,7 +228,7 @@ public sealed class ManualOrdersTests : IDisposable
         Assert.Empty(_oms.All);
         IReadOnlyList<ManualOrderOutcome> done = _inbox.Done();
         Assert.Equal("expired", done.Single(d => d.Request.Id == stale.Id).Outcome);
-        Assert.Contains("placed before the close of 2026-09-25", done.Single(d => d.Request.Id == stale.Id).Message, StringComparison.Ordinal);
+        Assert.Contains("placed before the trading window of 2026-09-25 closed", done.Single(d => d.Request.Id == stale.Id).Message, StringComparison.Ordinal);
         Assert.Equal("released", done.Single(d => d.Request.Action == ManualAction.Release).Outcome);
         Assert.DoesNotContain(Eric, _book.ManualHolds);
     }

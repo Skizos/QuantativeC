@@ -55,6 +55,9 @@ public sealed class ManualOrderInbox
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower), new OrderbookIdConverter() },
     };
 
+    // A cancel from the CLI or the app may hold done.jsonl for a moment (Windows refuses a second writer).
+    private static readonly TimeSpan[] AppendRetries = [TimeSpan.FromMilliseconds(20), TimeSpan.FromMilliseconds(80), TimeSpan.FromMilliseconds(250)];
+
     private readonly TimeProvider _time;
 
     /// <param name="paperDirectory">The Paper book's folder, <c>state/paper</c>.</param>
@@ -129,7 +132,7 @@ public sealed class ManualOrderInbox
             return false;
         }
 
-        AppendDone(new ManualOrderOutcome(request, "cancelled", "cancelled by the owner before it was sent", _time.GetUtcNow()));
+        _ = TryAppendDone(new ManualOrderOutcome(request, "cancelled", "cancelled by the owner before it was sent", _time.GetUtcNow()));
         return true;
     }
 
@@ -170,12 +173,24 @@ public sealed class ManualOrderInbox
         }
     }
 
-    /// <summary>Records the outcome of a taken request.</summary>
-    internal ManualOrderOutcome Finish(ManualOrderRequest request, string outcome, string message)
+    /// <summary>
+    /// Records the outcome of a taken request. It never throws on a busy or locked file (the CLI or the app may append a
+    /// cancel at the same moment): <paramref name="error"/> says what could not be written; the audit has the outcome.
+    /// </summary>
+    internal ManualOrderOutcome Finish(ManualOrderRequest request, string outcome, string message, out string? error)
     {
         var done = new ManualOrderOutcome(request, outcome, message, _time.GetUtcNow());
-        AppendDone(done);
-        File.Delete(Path.Combine(TakenDirectory, request.Id + ".json"));
+        error = TryAppendDone(done);
+        try
+        {
+            File.Delete(Path.Combine(TakenDirectory, request.Id + ".json"));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Left in taken/: the next session reports it as interrupted, and never sends it again.
+            error ??= ex.Message;
+        }
+
         return done;
     }
 
@@ -185,8 +200,28 @@ public sealed class ManualOrderInbox
 
     private string PendingPath(string id) => Path.Combine(Directory, id + ".json");
 
-    private void AppendDone(ManualOrderOutcome outcome) =>
-        File.AppendAllText(Path.Combine(Directory, DoneFileName), JsonSerializer.Serialize(outcome, Json) + "\n");
+    /// <summary>Appends an outcome to <c>done.jsonl</c>, retrying a moment while another process writes it; the error when it can't.</summary>
+    private string? TryAppendDone(ManualOrderOutcome outcome)
+    {
+        string line = JsonSerializer.Serialize(outcome, Json) + "\n";
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.AppendAllText(Path.Combine(Directory, DoneFileName), line);
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == AppendRetries.Length)
+                {
+                    return ex.Message;
+                }
+
+                Thread.Sleep(AppendRetries[attempt]);
+            }
+        }
+    }
 
     private static ManualOrderRequest? Read(string path)
     {
@@ -210,8 +245,12 @@ public sealed class ManualOrderInbox
 
 /// <summary>Where a share's market stands for a manual request (plan 23), as the session sees it.</summary>
 /// <param name="Open">Inside today's trading window (R16).</param>
-/// <param name="PreviousCloseUtc">The close of the market's last trading day before today: a request made before it has expired.</param>
-public sealed record ManualWindow(bool Open, DateTimeOffset PreviousCloseUtc);
+/// <param name="PreviousWindowCloseUtc">
+/// The end of the trading window (R16) on the market's last trading day before today. A request is for the first window
+/// that ends after it was placed: one placed before this end has expired; one placed later (also between the window's
+/// end and the close) is for today.
+/// </param>
+public sealed record ManualWindow(bool Open, DateTimeOffset PreviousWindowCloseUtc);
 
 /// <summary>
 /// Plan 23: the Paper session's side of the manual requests. It turns a due request into an intent for the gateway
@@ -273,12 +312,12 @@ public sealed class ManualOrderDesk(ManualOrderInbox inbox, PaperBook book, IQuo
                 continue; // its market does not trade today: it waits
             }
 
-            if (r.CreatedUtc < w.PreviousCloseUtc)
+            if (r.CreatedUtc < w.PreviousWindowCloseUtc)
             {
                 if (inbox.Take(r) is not null)
                 {
                     Record(r, "expired", string.Create(CultureInfo.InvariantCulture,
-                        $"placed before the close of {MarketTime.ToStockholm(w.PreviousCloseUtc):yyyy-MM-dd} and no session sent it that day; a request is for one trading day"));
+                        $"placed before the trading window of {MarketTime.ToStockholm(w.PreviousWindowCloseUtc):yyyy-MM-dd} closed and no session sent it that day; a request is for one trading day"));
                 }
 
                 continue;
@@ -315,6 +354,29 @@ public sealed class ManualOrderDesk(ManualOrderInbox inbox, PaperBook book, IQuo
         return due;
     }
 
+    /// <summary>
+    /// A market's close: the orders still waiting for a share of that market (<paramref name="trades"/>) that were placed
+    /// before its trading window ended (<paramref name="windowCloseUtc"/>) expire now, so the day's report shows them. One
+    /// placed after the window ended waits for the next trading day.
+    /// </summary>
+    public void ExpireAtClose(Func<InstrumentSpec, bool> trades, DateTimeOffset windowCloseUtc)
+    {
+        ArgumentNullException.ThrowIfNull(trades);
+        foreach (ManualOrderRequest r in inbox.Pending())
+        {
+            if (r.Action == ManualAction.Release || r.CreatedUtc >= windowCloseUtc || instruments.Find(r.OrderbookId) is not { } spec || !trades(spec))
+            {
+                continue;
+            }
+
+            if (inbox.Take(r) is not null)
+            {
+                Record(r, "expired", string.Create(CultureInfo.InvariantCulture,
+                    $"the trading window closed at {MarketTime.ToStockholm(windowCloseUtc):HH:mm} before it was sent{(_waiting.Contains(r.Id) ? " (no live price came)" : string.Empty)}; a request is for one trading day"));
+            }
+        }
+    }
+
     /// <summary>The gateway's answer to a manual order. A refused order (no broker acceptance) does not keep the share manual unless it was before.</summary>
     public void Sent(ManualOrderRequest request, SubmitResult result, bool wasManual)
     {
@@ -348,7 +410,7 @@ public sealed class ManualOrderDesk(ManualOrderInbox inbox, PaperBook book, IQuo
 
     private void Record(ManualOrderRequest r, string outcome, string message)
     {
-        ManualOrderOutcome done = inbox.Finish(r, outcome, message);
+        ManualOrderOutcome done = inbox.Finish(r, outcome, message, out string? error);
         audit.Append("manual-order", new
         {
             r.Id,
@@ -363,6 +425,10 @@ public sealed class ManualOrderDesk(ManualOrderInbox inbox, PaperBook book, IQuo
             message,
         });
         output.WriteLine($"{Local(done.AtUtc)} manual {r.Describe()} [{r.Id}]: {outcome} ({message})");
+        if (error is not null)
+        {
+            output.WriteLine($"  (not written to {ManualOrderInbox.DirectoryName}/{ManualOrderInbox.DoneFileName}: {error}; the audit has it)");
+        }
     }
 
     private static string Local(DateTimeOffset utc) => MarketTime.ToStockholm(utc).ToString("HH:mm:ss", CultureInfo.InvariantCulture);

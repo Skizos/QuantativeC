@@ -253,12 +253,16 @@ You can trade a share on your list yourself, in Paper only:
 What happens:
 1. The order waits as a request. The running session (or the next one) sends it within seconds in the trading
    window, 09:05–17:20, through the same risk checks as the strategy's orders. Without a limit it buys at the ask
-   (sells at the bid). A request is for one trading day.
+   (sells at the bid). A request is for one trading day: the first window that ends after you place it (placed after
+   17:20, it is for the next trading day). One not sent by then (say, no live price came) expires at that day's close
+   and shows in the day's report. If the strategy had orders working for the share, they are cancelled first and your
+   order follows 5 seconds later (R12).
 2. Once it is sent, the share is **yours**: the strategy cancels its own orders for it and leaves it alone at every
    decision ("ERIC B: yours (manual)").
 3. **Release** (or `.\qa paper release ERIC-B`) gives the share back: from the next decision the strategy trades it to its
    target again.
-4. `.\qa paper orders` shows what is waiting and what happened today; `--cancel <id>` removes a waiting request. The
+4. `.\qa paper orders` shows what is waiting and what happened today; `--cancel <id>` removes a waiting request.
+   `.\qa status` lists waiting requests and your manual shares too. The
    day's report lists your manual orders, and the weekly summary notes a week with them (the comparison with the
    backtest then says less, because the returns are not the strategy's alone).
 
@@ -361,7 +365,7 @@ says whether an intraday strategy is worth trying on paper. What you do:
 | `FASTAT: the buy limit 0.642 is below the ask 0.645 (spread 0.94 %): it rests until a trade prints through it` | The limit is the last price + 0.5 %, and this share's spread is wider, so the order waits in the book instead of buying at the ask. That is the strategy's (and the backtest's) choice | Nothing. Such an order may stay unfilled and expires at the close; the end-of-day report shows it |
 | `… is still held: it moves to the exiting list` after `qa universe remove` | You took a share off the list that Paper still holds. It is not dropped (it would be stranded): the next session sells it, and only sells it | Nothing. When `qa status` says `sold; take it off with qa universe remove …`, run that |
 | `manual Buy 7 ERIC B [M…]: rejected (RiskRejected: R6 …)` | Your manual order broke a risk check (here: more than 10 % of the account in one order). Nothing was sent and the share stays the strategy's | Place a smaller order |
-| `manual … expired (placed before the close of …)` | A manual request waited past a close without a session to send it. A request is for one trading day | Place it again on the day you want it |
+| `manual … expired (placed before the trading window of … closed …)` or `(the trading window closed at 17:20 before it was sent …)` | A manual request was not sent in its trading day: no session ran, or no live price came. A request is for one trading day | Place it again on the day you want it |
 | `ERIC B: yours (manual), the strategy leaves it` in the decision | You bought or sold ERIC B by hand; the strategy holds it until you release it | `.\qa paper release ERIC-B` (or Release on the Trading page) when the strategy should take it back |
 | `ERIC B: dividend 1.45 SEK × 7 (ex-date …) = 10.15 SEK credited` at the start of a session | A share you hold went ex-dividend since the last session. The book is credited on the ex-date (gross), so the day's price drop is matched by the cash and is not a loss for the loss stop | Nothing. The end-of-day report lists it. The real cash comes on the payment date |
 | `ERIC B: split 2:1 (Avanza's share count went from … to …)` at the start of a session | A share you hold split: the book now holds twice as many at half the price, same cost | Nothing. If it looks wrong (not a real split), tell Claude with the line |

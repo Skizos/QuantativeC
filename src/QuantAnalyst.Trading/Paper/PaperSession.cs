@@ -199,8 +199,9 @@ public sealed class PaperSession(
 
         if (_lastSubmit is not { } s || now - s >= PaceBetweenOrders)
         {
-            // The first queued intent whose market still takes orders; the rest go at their market's close.
-            int next = _queue.FindIndex(q => q.Market.Today(now) is { } p && now < p.WindowCloseUtc);
+            // The first queued intent whose market still takes orders and whose share is past R11/R12 (a manual order
+            // right after the cancels it caused waits its 5 s); the rest go at their market's close.
+            int next = _queue.FindIndex(q => q.Market.Today(now) is { } p && now < p.WindowCloseUtc && gateway.NextActionAt(q.Intent.OrderbookId) <= now);
             if (next >= 0)
             {
                 Queued queued = _queue[next];
@@ -237,6 +238,11 @@ public sealed class PaperSession(
         foreach (Queued q in _queue.Where(q => q.Market == m && q.Manual is not null))
         {
             Manual?.NotSent(q.Manual!.Request, q.Manual.WasManual, $"the {m.Mic} close came before it was sent");
+        }
+
+        if (m.Today(now) is { } closing)
+        {
+            Manual?.ExpireAtClose(m.Market.Trades, closing.WindowCloseUtc); // plan 23: in today's report, not tomorrow's
         }
 
         _queue.RemoveAll(q => q.Market == m);
@@ -360,17 +366,17 @@ public sealed class PaperSession(
             return null;
         }
 
-        DateTimeOffset previousClose = DateTimeOffset.MinValue;
+        DateTimeOffset previousWindowClose = DateTimeOffset.MinValue;
         for (DateOnly d = plan.Date.AddDays(-1); d > plan.Date.AddDays(-15); d = d.AddDays(-1))
         {
             if (m.Market.Schedule.Plan(d) is { } before)
             {
-                previousClose = before.CloseUtc;
+                previousWindowClose = before.WindowCloseUtc;
                 break;
             }
         }
 
-        return new ManualWindow(now >= plan.WindowOpenUtc && now < plan.WindowCloseUtc && m.EndedOn != plan.Date, previousClose);
+        return new ManualWindow(now >= plan.WindowOpenUtc && now < plan.WindowCloseUtc && m.EndedOn != plan.Date, previousWindowClose);
     }
 
     private async Task<SubmitResult> SubmitNextAsync(OrderIntent queued, CancellationToken ct)
@@ -439,13 +445,13 @@ public sealed class PaperSession(
     private static string Local(DateTimeOffset utc) =>
         Core.Market.MarketTime.ToStockholm(utc).ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 
-    /// <summary>A market and what the session has done there today (its own local date).</summary>
     /// <summary>An intent waiting for its turn (paced, R11); a manual one carries its request (plan 23).</summary>
     private sealed record Queued(MarketDay Market, OrderIntent Intent, ManualTicket? Manual = null);
 
     /// <param name="WasManual">The share was manual before this request: a refused order leaves it so.</param>
     private sealed record ManualTicket(ManualOrderRequest Request, bool WasManual);
 
+    /// <summary>A market and what the session has done there today (its own local date).</summary>
     private sealed class MarketDay(SessionMarket market)
     {
         public SessionMarket Market { get; } = market;

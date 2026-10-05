@@ -146,6 +146,11 @@ internal static class StatusCommand
             CheckExiting(r, universe, paths);
         }
 
+        if (universe is not null)
+        {
+            CheckManual(r, universe, paths, time);
+        }
+
         if (calendar is not null)
         {
             CheckIntraday(r, paths.Store, calendar);
@@ -157,7 +162,7 @@ internal static class StatusCommand
             r.Add(Mark.Warn, "Invested", string.Create(CultureInfo.InvariantCulture,
                 $"at most {cap:P0} of the account: R7 allows {limits.MaxPositionPctOfAccount:P0} per name and the allowlist has {universe.Entries.Count}"));
             r.Step(Priority.Advice, string.Create(CultureInfo.InvariantCulture,
-                $"With {universe.Entries.Count} name(s) Paper can invest only {cap:P0} (R7: {limits.MaxPositionPctOfAccount:P0} per name), whatever the backtest held. Add names (up to 5) to use more of the account."));
+                $"With {universe.Entries.Count} name(s) Paper can invest only {cap:P0} (R7: {limits.MaxPositionPctOfAccount:P0} per name), whatever the backtest held. Add names (up to {Allowlist.MaxNames}) to use more of the account."));
         }
 
         if (calendar is not null)
@@ -416,6 +421,29 @@ internal static class StatusCommand
                 r.Add(Mark.Ok, "Exiting", $"{e.Ticker}: sold; take it off with qa universe remove {e.Ticker.Replace(' ', '-')}");
                 r.Step(Priority.Advice, $"{e.Ticker} is sold: take it off the exiting list with qa universe remove {e.Ticker.Replace(' ', '-')}");
             }
+        }
+    }
+
+    /// <summary>Plan 23: the owner's waiting buys and sells by hand, and the shares the strategy leaves to the owner. Silent without any.</summary>
+    private static void CheckManual(StatusReport r, Universe universe, StatusPaths paths, TimeProvider time)
+    {
+        string paperDir = Path.Combine(paths.StateDir, TradingCommands.PaperDirName);
+        IReadOnlyList<ManualOrderRequest>? waiting = Try(r, "Manual", () => new ManualOrderInbox(paperDir, time).Pending());
+        IReadOnlySet<OrderbookId>? manual = Try(r, "Manual", () => PaperBook.ManualIn(paperDir));
+        if (waiting is { Count: > 0 })
+        {
+            bool running = SessionLock.Holder(paths.StateDir) is not null;
+            r.Add(Mark.Ok, "Manual", $"{waiting.Count} waiting: {string.Join("; ", waiting.Select(w => $"{w.Describe()} [{w.Id}]"))}; "
+                + (running ? "the running Paper session sends them in its trading window" : "the next Paper session sends them in its trading window")
+                + " (qa paper orders)");
+        }
+
+        if (manual is { Count: > 0 })
+        {
+            string tickers = string.Join(", ", manual
+                .Select(id => universe.Entries.Concat(universe.Exiting).FirstOrDefault(e => e.OrderbookId == id)?.Ticker ?? id.Value)
+                .Order(StringComparer.Ordinal));
+            r.Add(Mark.Ok, "Manual", $"{tickers}: yours (bought or sold by hand), the strategy leaves them; 'qa paper release <TICKER>' gives one back");
         }
     }
 
@@ -754,7 +782,7 @@ internal static class StatusCommand
         {
             return check();
         }
-        catch (Exception ex) when (ex is TradingConfigException or ArgumentException or CalendarConfigException or InvalidDataException or IOException
+        catch (Exception ex) when (ex is TradingConfigException or BacktestConfigException or ArgumentException or CalendarConfigException or InvalidDataException or IOException
                                        or JsonException or UnauthorizedAccessException or PaperBookException or HistoryStoreException or InvalidOperationException
                                    || DataCommands.IsStoreFailure(ex))
         {

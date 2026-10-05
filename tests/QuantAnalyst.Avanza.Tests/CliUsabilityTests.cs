@@ -239,6 +239,12 @@ public sealed class CliUsabilityTests : IDisposable
         Assert.Equal(0, code);
         Assert.Contains("FAIL  Paper account", output, StringComparison.Ordinal);
         Assert.StartsWith("1. Fix paper account:", Steps(output)[0], StringComparison.Ordinal);
+
+        // A cost file that is missing (paper.json names one that isn't there) is a FAIL line too, not a crash.
+        File.WriteAllText(Path.Combine(Config, "paper.json"), """{ "format": "qa-paper/1", "costs": "avanza-nonesuch", "cash": 5000, "decision_time": "09:10" }""");
+        (code, output, _) = Status();
+        Assert.Equal(0, code);
+        Assert.Matches(@"FAIL  Paper account\s+Cost model .*costs\.avanza-nonesuch\.json not found", output);
     }
 
     [Fact]

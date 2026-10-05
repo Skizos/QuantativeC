@@ -239,6 +239,19 @@ public sealed class CliTradingTests : IDisposable
         Assert.Contains("No waiting request", Qa("paper", "orders", "--cancel", id, "--config-dir", Config, "--state-dir", State).Error, StringComparison.Ordinal);
         Assert.Contains("Waiting (1):", output, StringComparison.Ordinal);
         Assert.Contains($"[{id}] Buy 7 ERIC B (at the ask): cancelled", output, StringComparison.Ordinal);
+
+        // qa status shows the waiting request and the manual shares (none yet: a session marks a share manual).
+        (code, string status, error) = Qa("status", "--config-dir", Config, "--store", Store, "--state-dir", State, "--audit-dir", Audit,
+            "--kill-file", KillFile, "--promotion-dir", Path.Combine(_root, "promotion"));
+        Assert.True(code == 0, error);
+        Assert.Matches(@"ok    Manual\s+1 waiting: Sell 2 ERIC A \(limit 120\.5\) \[M\d{6}-[0-9a-f]{4}\]; the next Paper session sends them in its trading window \(qa paper orders\)", status);
+        Assert.DoesNotContain("yours (bought or sold by hand)", status, StringComparison.Ordinal);
+
+        Trading.Paper.PaperBook book = Trading.Paper.PaperBook.OpenOrCreate(Path.Combine(State, TradingCommands.PaperDirName), new Trading.Paper.PaperConfig("avanza-mini", 5_000m, new TimeOnly(9, 10)), null, TimeProvider.System, out _);
+        book.HoldManually(new Core.OrderbookId("5240"));
+        status = Qa("status", "--config-dir", Config, "--store", Store, "--state-dir", State, "--audit-dir", Audit,
+            "--kill-file", KillFile, "--promotion-dir", Path.Combine(_root, "promotion")).Output;
+        Assert.Contains("ERIC B: yours (bought or sold by hand), the strategy leaves them; 'qa paper release <TICKER>' gives one back", status, StringComparison.Ordinal);
     }
 
     [Fact]

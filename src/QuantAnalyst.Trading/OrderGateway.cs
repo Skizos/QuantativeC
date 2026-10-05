@@ -212,6 +212,30 @@ public sealed class OrderGateway : IDisposable
     public IReadOnlyList<OpenOrderView> OpenOrders => [.. _oms.Open.Select(o => o.View() with { FxToSek = FxOf(o.OrderbookId) })];
 
     /// <summary>
+    /// The earliest time an action on <paramref name="id"/> passes the pacing checks: R11 (actions per minute) and R12
+    /// (the interval on one share; cancels count). A hint for a session that paces its queue (plan 23: a manual order
+    /// right after the cancels it caused); the risk engine still decides.
+    /// </summary>
+    public DateTimeOffset NextActionAt(OrderbookId id)
+    {
+        DateTimeOffset now = _time.GetUtcNow();
+        RiskLimits limits = _risk.Limits;
+        lock (_lock)
+        {
+            DateTimeOffset ready = _lastAction.TryGetValue(id, out DateTimeOffset last) ? last + limits.MinIntervalSameInstrument : now;
+            DateTimeOffset[] lastMinute = [.. _actions.Where(t => now - t < TimeSpan.FromMinutes(1) && t <= now).Order()];
+            if (lastMinute.Length >= limits.MaxActionsPerMinute)
+            {
+                // The minute must drop to max - 1 actions: the oldest ones leave it one by one.
+                DateTimeOffset freed = lastMinute[lastMinute.Length - limits.MaxActionsPerMinute] + TimeSpan.FromMinutes(1);
+                ready = freed > ready ? freed : ready;
+            }
+
+            return ready > now ? ready : now;
+        }
+    }
+
+    /// <summary>
     /// Plan 19: at a market's close, one <c>close-mark</c> audit record per allowlisted share of that market: the last
     /// price and its time, bid, ask, the day's high and low, and SEK per unit. The end-of-day report reads from them what
     /// an unfilled order missed and whether the backtest would have filled it. Returns how many were recorded.

@@ -17,13 +17,16 @@ window, the daily loss stop and the kill switch all apply.
 - **Requests** are files in `state/paper/manual/` (one per request, written atomically). A running session takes due
   ones within a second; without a session they wait for the next one. Each outcome is appended to
   `state/paper/manual/done.jsonl` and the audit (`manual-order` records).
-- **When:** inside the market's trading window (09:05–17:20 Stockholm, R16). A request placed outside it waits for the
-  next window and **expires at that window's close** (it is never carried into a second day). A request is cancelled
-  with `qa paper orders --cancel <id>` while it waits.
+- **When:** inside the market's trading window (09:05–17:20 Stockholm, R16). A request is for the **first window that
+  ends after it is placed** (one placed after 17:20 is for the next trading day). Not sent by then, it **expires at that
+  day's close** (in that day's report), or at the next session's start if none ran; it is never carried into a second
+  day. A request is cancelled with `qa paper orders --cancel <id>` while it waits.
 - **Price:** the owner's `--limit`, or by default **marketable**: the ask for a buy, the bid for a sell (it fills at
   once up to the shown volume; the rest rests at that price until the close, like any day order). Without a fresh
   quote the request waits for one.
-- **Order of work:** a due manual order goes before queued strategy orders, paced like them (13 s, R11).
+- **Order of work:** a due manual order goes before queued strategy orders, paced like them (13 s, R11). After the
+  cancels it causes it waits until R12 allows an action on the share again (5 s): the session asks the gateway
+  (`NextActionAt`) before each order, so neither a manual nor a strategy order is sent only to be refused by R11/R12.
 - **The strategy leaves the share alone:** when a manual order is sent, the share is marked **manual** in the book; the
   strategy's queued orders for it are dropped and its working ones cancelled. Every later decision holds the share
   ("X: yours (manual) …"). `qa paper release <TICKER>` (or the app's Release) gives it back: from the next decision the
@@ -58,6 +61,21 @@ requests as the CLI, so it works whether or not a session is running.
 | The app | The Trading page's "Buy or sell by hand" card (`SessionViewModel` manual properties and commands; `SessionView.xaml`) | `ManualOrderCardTests`, the XAML resource and binding checks, `AppSafetyTests` (the app still names no order plumbing) |
 
 The WPF card itself can't be opened in the Linux CI: look at it on Windows.
+
+## Review (2026-10-05)
+
+A review of plans 21–23 found these holes; each is fixed with a test.
+
+| Hole | Fix | Test |
+|---|---|---|
+| The cancels a manual order causes count for R12 (5 s per share), and the manual order could go in the same second: R12 refused it after the strategy's orders were already cancelled | `OrderGateway.NextActionAt` (when R11 and R12 would pass); the session sends the first queued order that is ready | `ManualOrdersTests.AManualOrderRightAfterTheCancelsItCaused_…` (fails without the fix), `OrderGatewayTests.NextActionAt_…` |
+| A request placed between the window's end (17:20) and the close (17:30) expired the next morning without a chance | Expiry compares with the previous **window** end (`ManualWindow.PreviousWindowCloseUtc`) | `ManualOrdersTests.ARequestPlacedAfterTheWindowClosed_…` |
+| A request never sent (no live price) waited silently until the next session | `ManualOrderDesk.ExpireAtClose` at each market's close, before the day's report | `ManualOrdersTests.ARequestStillWaitingAtTheClose_…` |
+| A busy or locked `done.jsonl` (a CLI cancel at the same moment, on Windows) would have thrown inside the session | Retries, then a note in the session's output; the audit keeps the outcome | `ManualOrdersTests.AnOutcomeThatCannotBeWritten_…` |
+| `qa status` said nothing about waiting requests or manual shares | A **Manual** line for each | `CliTradingTests.PaperOrder_…` |
+| `qa status` crashed when `paper.json` named a cost file that is missing (found while testing the line above) | `BacktestConfigException` is a FAIL line like other broken files | `CliUsabilityTests.Status_ReportsABrokenFile_…` |
+| `qa status` still advised "Add names (up to 5)" after plan 22 raised the list to 10 | Says `Allowlist.MaxNames` | — |
+| The Desktop tests raced the Status page's first refresh for the history store ("(store busy)" now and then) | The tests await the shell's first refresh | `ForeignSharesAppTests`, `ManualOrderCardTests` (3 full runs green) |
 
 ## Not in this plan
 

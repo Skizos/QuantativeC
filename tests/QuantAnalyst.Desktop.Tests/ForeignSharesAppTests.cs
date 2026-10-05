@@ -41,7 +41,9 @@ public sealed class ForeignSharesAppTests : IDisposable
     [Fact]
     public async Task TheOverview_ShowsEachMarketsDecision_AndTheEnd()
     {
-        StatusViewModel status = Shell().Status;
+        ShellViewModel shell = Shell();
+        await shell.Refreshing; // the first page's refresh reads the store too: never overlap it
+        StatusViewModel status = shell.Status;
         await status.RefreshAsync();
         Assert.Equal("Mon 28 Sep · decides at 09:10 (XSTO), 15:40 (XNYS) · ends 22:02", status.NextSessionText); // Saturday 12:00 now
         Assert.Equal("in 1 d 21 h", status.NextSessionIn); // to the first decision
@@ -52,6 +54,7 @@ public sealed class ForeignSharesAppTests : IDisposable
     {
         _ws.Time.SetUtcNow(new DateTimeOffset(2026, 9, 28, 6, 30, 0, TimeSpan.Zero)); // Monday 08:30 Stockholm
         ShellViewModel shell = Shell();
+        await shell.Refreshing;
         await shell.Session.RefreshAsync();
         Assert.Equal(
             "Start today's session before 09:10: press Start. It decides per market (XSTO at 09:10, XNYS at 15:40), trades, and ends after the 22:00 close; keep its window open.",
@@ -62,6 +65,7 @@ public sealed class ForeignSharesAppTests : IDisposable
     public async Task TheInstrumentsList_SaysAUsSharesCurrencyAndMarket()
     {
         ShellViewModel shell = Shell();
+        await shell.Refreshing; // overlapping it, the list would read "(store busy)" (it did, now and then, in full runs)
         await shell.Instruments.RefreshAsync();
         Assert.Equal("none yet", shell.Instruments.Rows.Single(r => r.Ticker == "ERIC B").History);
         Assert.Equal("USD · US (NYSE, Nasdaq), paper only · none yet", shell.Instruments.Rows.Single(r => r.Ticker == "AAPL").History);
