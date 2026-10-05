@@ -76,8 +76,17 @@ internal static partial class AvanzaCommands
             }
 
             int failed = await CollectIntradayAsync(ctx.Connection.Gateway, storePath, names, chartPeriod, resolutions, services.Time, output, ctx.Ct, catchUp).ConfigureAwait(false);
+            if (failed > 0)
+            {
+                ctx.Alerts?.Raise(Trading.Alerts.AlertLevel.Warning, "import-failed", "Evening import incomplete", string.Create(CultureInfo.InvariantCulture,
+                    $"The intraday import missed {failed} of {names.Count} share(s) (see its output). Run 'qa intraday import' again before midnight: a missed day can't be fetched later."));
+            }
+
+            // Plan 25: the automatic backup (when set up); a running session makes its own when it ends.
+            BackupCommands.After("evening import", BackupPaths.Of(config, parse.GetValue(common.StateDir)!, TradingCommands.DefaultAuditDir, storePath, null, "promotion"),
+                output, ctx.Alerts, services.Time, ownLock: false);
             return failed == 0 ? 0 : 1;
-        }));
+        }, alertAs: AlertAs.Import));
         return command;
     }
 

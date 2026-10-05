@@ -151,6 +151,9 @@ internal static class StatusCommand
             CheckManual(r, universe, paths, time);
         }
 
+        CheckAlerts(r, paths);
+        CheckBackup(r, configDir, paths);
+
         if (calendar is not null)
         {
             CheckIntraday(r, paths.Store, calendar);
@@ -421,6 +424,72 @@ internal static class StatusCommand
                 r.Add(Mark.Ok, "Exiting", $"{e.Ticker}: sold; take it off with qa universe remove {e.Ticker.Replace(' ', '-')}");
                 r.Step(Priority.Advice, $"{e.Ticker} is sold: take it off the exiting list with qa universe remove {e.Ticker.Replace(' ', '-')}");
             }
+        }
+    }
+
+    /// <summary>Plan 25: the warnings and criticals of the last day, newest last. Silent without any.</summary>
+    private static void CheckAlerts(StatusReport r, StatusPaths paths)
+    {
+        Trading.Alerts.Alert[]? recent = Try(r, "Alerts", () => (IReadOnlyList<Trading.Alerts.Alert>)new Trading.Alerts.AlertLog(paths.StateDir).Since(r.Now.AddDays(-1))) is { } all
+            ? [.. all.Where(a => a.Level != Trading.Alerts.AlertLevel.Info)]
+            : null;
+        if (recent is not { Length: > 0 })
+        {
+            return;
+        }
+
+        bool critical = recent.Any(a => a.Level == Trading.Alerts.AlertLevel.Critical);
+        Trading.Alerts.Alert last = recent[^1];
+        r.Add(critical ? Mark.Fail : Mark.Warn, "Alerts", string.Create(CultureInfo.InvariantCulture,
+            $"{recent.Length} in the last day; the last: {Clock(last.AtUtc)} {last.Title}: {last.Text} (qa alerts)"));
+        if (critical)
+        {
+            r.Step(Priority.Session, $"Read today's alerts ('qa alerts'): {last.Title.ToLowerInvariant()} at {Clock(last.AtUtc)}. Then 'qa status' again.");
+        }
+    }
+
+    /// <summary>Plan 25: when the last backup was made and whether it was complete; a step when none is set up.</summary>
+    private static void CheckBackup(StatusReport r, string configDir, StatusPaths paths)
+    {
+        Trading.Backup.BackupSettings? settings;
+        try
+        {
+            settings = Trading.Backup.BackupSettings.Load(configDir);
+        }
+        catch (TradingConfigException ex)
+        {
+            // A broken backup setting never holds back a session: a warning, with advice.
+            r.Add(Mark.Warn, "Backup", ex.Message);
+            r.Step(Priority.Advice, $"Fix the backup setting: {ex.Message} (or set it again: qa backup setup --to <folder>)");
+            return;
+        }
+
+        if (settings is null)
+        {
+            r.Add(Mark.Todo, "Backup", "none set up: the audit log, the Paper book, the ledger and the price store are on this PC only");
+            r.Step(Priority.Advice, "Set up backups to OneDrive or another disk: qa backup setup --to <folder> (then qa backup). They are made after each session and evening import.");
+            return;
+        }
+
+        string? latest = Try(r, "Backup", () => Trading.Backup.Backups.Latest(settings.To));
+        Trading.Backup.BackupManifest? manifest = latest is null ? null : Trading.Backup.BackupManifest.Load(latest);
+        string where = $"to {settings.To} (keep {settings.Keep}, automatic {(settings.Automatic ? "on" : "off")})";
+        if (manifest is null)
+        {
+            r.Add(Mark.Warn, "Backup", $"none made yet {where}: qa backup");
+            r.Step(Priority.Advice, "Make the first backup: qa backup");
+            return;
+        }
+
+        bool old = r.Now - manifest.CreatedUtc > TimeSpan.FromDays(3);
+        string when = string.Create(CultureInfo.InvariantCulture, $"last {MarketTime.ToStockholm(manifest.CreatedUtc):yyyy-MM-dd HH:mm}");
+        if (!manifest.Complete)
+        {
+            r.Add(Mark.Warn, "Backup", $"{when} INCOMPLETE ({string.Join("; ", manifest.Items.Where(i => !i.Ok).Select(i => i.Name))}) {where}: qa backup verify");
+        }
+        else
+        {
+            r.Add(old ? Mark.Warn : Mark.Ok, "Backup", $"{when}, checked {where}{(old ? ": over 3 days old, run qa backup" : string.Empty)}");
         }
     }
 

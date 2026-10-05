@@ -3,6 +3,7 @@ using Microsoft.Extensions.Time.Testing;
 using QuantAnalyst.Avanza.Http;
 using QuantAnalyst.Cli;
 using QuantAnalyst.Cli.Commands;
+using QuantAnalyst.Trading.Alerts;
 using QuantAnalyst.Trading.Audit;
 using QuantAnalyst.Trading.Observation;
 using QuantAnalyst.Trading.Oms;
@@ -44,6 +45,9 @@ public sealed class PaperSpyTests : IDisposable
     /// <summary>The observer the next <c>qa paper run</c> reports to (the Windows app's seam); none by default, like the terminal.</summary>
     private ISessionObserver? _observer;
 
+    /// <summary>Plan 25: the alerts that would have been Windows notifications.</summary>
+    private readonly RecordingNotifier _notifier = new();
+
     private string State => Path.Combine(_root, "state");
 
     private string Audit => Path.Combine(_root, "audit");
@@ -68,7 +72,7 @@ public sealed class PaperSpyTests : IDisposable
                 new AvanzaOptions { StateDirectory = options.StateDirectory, LoginMethod = options.LoginMethod, RequestsPerSecond = 10, Burst = 20 },
                 secrets, logger, redactor, time, _server, prompt),
             _ => FakeSecrets.Store())
-        { Time = time, SessionObserver = _observer };
+        { Time = time, SessionObserver = _observer, Notifier = () => _notifier };
         var output = new StringWriter();
         var error = new StringWriter();
         int code = QaCli.Run(args, output, error, services);
@@ -232,6 +236,34 @@ public sealed class PaperSpyTests : IDisposable
         Assert.Equal(7, book.RootElement.GetProperty("positions")[0].GetProperty("quantity").GetInt64());
         Assert.True(AuditLog.Verify(Audit).Valid);
         Assert.False(File.Exists(Path.Combine(State, "session.lock"))); // released
+
+        // Plan 25: the day's summary is an info alert; nothing else went wrong.
+        Alert summary = Assert.Single(_notifier.Shown);
+        Assert.Equal((AlertLevel.Info, "day-summary", "Paper session"), (summary.Level, summary.Kind, summary.Source));
+        Assert.StartsWith("Paper day done: value ", summary.Text, StringComparison.Ordinal);
+        Assert.Contains("1 order(s), 1 with fills", summary.Text, StringComparison.Ordinal);
+        Assert.Equal([summary], new AlertLog(State).Since(DateTimeOffset.MinValue));
+    }
+
+    [Fact]
+    public async Task WithBackupsSetUp_ASessionEndsWithACheckedBackup()
+    {
+        // Plan 25: automatic backups after each session, while it still holds the session lock.
+        PrepareHistoryAndUniverse();
+        string backups = Path.Combine(_root, "backups");
+        Assert.Equal(0, Qa(TimeProvider.System, "backup", "setup", "--to", backups, "--config-dir", Config).Code);
+
+        (int code, string output, string error) = await RunPaper(seconds: 40);
+
+        Assert.True(code == 0, output + error);
+        Assert.Contains("Backup made and checked: ", output, StringComparison.Ordinal);
+        string folder = Assert.Single(Trading.Backup.Backups.List(backups));
+        Trading.Backup.BackupManifest manifest = Trading.Backup.BackupManifest.Load(folder)!;
+        Assert.True(manifest.Complete);
+        Assert.Contains(manifest.Items, i => i.Name == "audit" && i.Check.Contains("audit chain intact", StringComparison.Ordinal));
+        Assert.Contains(manifest.Items, i => i.Name == "paper" && i.Files.Any(f => f.Path == "paper/book.json"));
+        Assert.Contains(manifest.Items, i => i.Name == "store" && i.Rows!["daily_bars"] > 0);
+        Assert.True(Trading.Backup.Backups.Verify(folder).Ok);
     }
 
     [Fact]
@@ -492,6 +524,9 @@ public sealed class PaperSpyTests : IDisposable
         Assert.Contains("WARNING: the history could not be brought up to date", output, StringComparison.Ordinal);
         Assert.Contains("decision failed: the history ends 2026-09-24, not on the last trading day 2026-09-25", output, StringComparison.Ordinal);
         Assert.DoesNotContain("Accepted", output, StringComparison.Ordinal);
+        Alert failed = Assert.Single(_notifier.Shown, a => a.Kind == "decision-failed"); // plan 25
+        Assert.Equal(AlertLevel.Warning, failed.Level);
+        Assert.Contains("No orders from it today.", failed.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -512,6 +547,30 @@ public sealed class PaperSpyTests : IDisposable
         Assert.Contains("ALERT: KILL SWITCH", output, StringComparison.Ordinal);
         Assert.Contains("decision skipped: trading is halted", output, StringComparison.Ordinal);
         Assert.DoesNotContain("Accepted", output, StringComparison.Ordinal);
+        Alert kill = Assert.Single(_notifier.Shown); // plan 25: the kill alerts once (its halt is the kill's own); no day summary
+        Assert.Equal((AlertLevel.Critical, "kill", "Trading stopped"), (kill.Level, kill.Kind, kill.Title));
+        Assert.StartsWith("KILL SWITCH (file", kill.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASessionThatCannotStart_IsACriticalAlert_ButNoSessionTodayIsNot()
+    {
+        // Plan 25: a scheduled morning run whose login fails reaches the owner; a holiday's or an evening's run does not.
+        PrepareHistoryAndUniverse();
+        string[] args = [.. PaperArgs(30).Where((a, i) => a != "--duration" && (i == 0 || PaperArgs(30)[i - 1] != "--duration"))];
+
+        (int code, _, string error) = Qa(new FakeTimeProvider(new DateTimeOffset(2026, 9, 28, 16, 0, 0, TimeSpan.Zero)), args); // 18:00: after the close
+        Assert.Equal(1, code);
+        Assert.Contains("No session left today.", error, StringComparison.Ordinal);
+        Assert.Empty(_notifier.Shown);
+
+        _server.On(AvanzaRoutes.UserCredentials, _ => FakeAvanza.Status(System.Net.HttpStatusCode.Unauthorized));
+        (code, _, error) = Qa(_time, args);
+        Assert.NotEqual(0, code);
+        Alert failed = Assert.Single(_notifier.Shown);
+        Assert.Equal((AlertLevel.Critical, "session-failed", "Paper session stopped"), (failed.Level, failed.Kind, failed.Title));
+        Assert.StartsWith("Paper session stopped: ", failed.Text, StringComparison.Ordinal);
+        Assert.Equal([failed], new AlertLog(State).Since(DateTimeOffset.MinValue));
     }
 
     [Fact]
@@ -523,6 +582,7 @@ public sealed class PaperSpyTests : IDisposable
         Assert.Equal(AvanzaCommands.ExitHalt, code);
         Assert.Contains("The kill switch is active (file KILL", output, StringComparison.Ordinal);
         Assert.DoesNotContain("decision", output, StringComparison.Ordinal);
+        Assert.Equal(("session-failed", "Paper did not start"), (Assert.Single(_notifier.Shown).Kind, _notifier.Shown.Single().Title)); // plan 25
         Assert.False(File.Exists(Path.Combine(State, "session.lock")));
     }
 
@@ -553,5 +613,15 @@ public sealed class PaperSpyTests : IDisposable
         }
 
         throw new InvalidOperationException("Repository root not found.");
+    }
+
+    /// <summary>Plan 25: keeps what would have been shown as Windows notifications.</summary>
+    private sealed class RecordingNotifier : IAlertNotifier
+    {
+        private readonly System.Collections.Concurrent.ConcurrentQueue<Alert> _shown = new();
+
+        public IReadOnlyList<Alert> Shown => [.. _shown];
+
+        public void Show(Alert alert) => _shown.Enqueue(alert);
     }
 }

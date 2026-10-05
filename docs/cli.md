@@ -307,6 +307,20 @@ Exit codes of `qa paper run`: 0 ok, 1 error, 3 halted (the kill switch fired, or
 - **Events** are the rules working: risk rejections, a manual kill, the daily loss stop, a stale-data halt.
 - **Clean day:** complete (it reached the close), no violations, every reconciliation matched, and every fill within ±200 bps of its reference (the R5 collar).
 
+## Alerts and backups (plan 25)
+
+| Command | What it does |
+|---|---|
+| `qa alerts [--days 7]` | The alerts of the last days (`state/alerts.jsonl`), newest last: the kill switch, halts (once per reason in 30 minutes), a session that could not start or stopped on an error, a failed decision, an incomplete evening import, a failed backup, and each Paper day's summary. Every alert is also an `ALERT: …` line on the console and, on Windows, a **Windows notification** (started through Windows PowerShell 5.1, nothing to install). Texts go through the redactor: no secret, cookie, token or full account id. "No session left today" and your own stop (Ctrl+C, the app's Stop) are not alerts. |
+| `qa alerts test` | Raises a test alert: a notification should show (none? Windows' Do not disturb hides them). |
+| `qa alerts set [--notifications on\|off] [--day-summary on\|off]` | The settings, `config/alerts.json` (both on without the file). Off still logs every alert. |
+| `qa backup [--to <folder>]` | Makes a backup now into a new folder `qa-backup-yyyy-MM-dd_HHmmss` under the backup folder: `audit/`, `state/paper/`, `config/`, `promotion/`, the trial ledger and the price store. **Never** the login state (`state/auth.json`), secrets (they are in Windows Credential Manager, not in files), recordings or reports. Each copy is checked: every file read back against its SHA-256, the audit's and the ledger's hash chains verified, the store copied by DuckDB (`COPY FROM DATABASE`, a consistent copy) and its row count per table compared. A `manifest.json` lists it all. The newest `keep` stay; only this program's backup folders are ever removed. Refused while a session runs (the session makes its own when it ends). Exit 1 when a part could not be copied. |
+| `qa backup setup --to <folder> [--keep 7] [--automatic on\|off]` | Sets the backup folder (`config/backup.json`); OneDrive or another disk is best. With `automatic` on (the default) every `qa paper run` (at its end, while it still holds the session lock) and every `qa intraday import` makes a backup; a failure is a warning alert, never a failed session. |
+| `qa backup verify [--path <backup>]` | Checks the newest (or a given) backup again: every file against the manifest, the chains, the store's rows. |
+
+`qa status` shows the last day's warning and critical alerts (a critical one is a FAIL with a next step) and the last
+backup (none set up, none made, incomplete, or over 3 days old are warnings).
+
 ## Promotion (your command, ADR 0003 §3)
 
 `qa promote` raises (or lowers) the highest mode the program may run in. It is **yours**: Claude's hook and settings block it, and block any write to `promotion/state.json`.

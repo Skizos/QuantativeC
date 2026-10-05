@@ -12,6 +12,7 @@ using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Live;
 using QuantAnalyst.Data.Store;
 using QuantAnalyst.Trading;
+using QuantAnalyst.Trading.Alerts;
 using QuantAnalyst.Trading.Audit;
 using QuantAnalyst.Trading.Halts;
 using QuantAnalyst.Trading.Kill;
@@ -242,6 +243,8 @@ internal static partial class AvanzaCommands
             using SessionLock sessionLock = SessionLock.Acquire(stateDir, time);
             var audit = new AuditLog(parse.GetValue(auditDir)!, time);
             var halts = new HaltController(audit, time);
+            Alerter alerts = ctx.Alerts!;
+            halts.Raised += h => AlertHalt(alerts, h);
 
             await ctx.Connection.Authenticator.LoginAsync(ctx.Ct).ConfigureAwait(false);
             var specs = new List<InstrumentSpec>();
@@ -320,10 +323,12 @@ internal static partial class AvanzaCommands
             };
             using var gateway = new OrderGateway(channel, env, risk, oms, halts, audit, time);
             using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(killFile)!, stateDir, book, setup.Limits);
-            kill.Alerted += message => output.WriteLine("ALERT: " + message);
+            kill.Alerted += message => alerts.Raise(AlertLevel.Critical, "kill", "Trading stopped", message);
             if (kill.IsKilled)
             {
                 output.WriteLine($"The kill switch is active ({kill.Record!.Source}: {kill.Record.Reason}). Check with 'qa kill --status', clear with 'qa kill --reset'.");
+                alerts.Raise(AlertLevel.Warning, "session-failed", "Paper did not start",
+                    $"Paper session did not start: the kill switch is active ({kill.Record.Source}: {kill.Record.Reason}). Clear it with 'qa kill --reset' when it is safe.");
                 return ExitHalt;
             }
 
@@ -396,7 +401,7 @@ internal static partial class AvanzaCommands
                 ? (seconds is > 0 and <= 16 * 3600 ? start.AddSeconds(seconds) : throw new ArgumentException("--duration must be in (0, 57600] seconds."))
                 : todays.Length > 0 && todays.Max(p => p.CloseUtc) is var lastClose && start < lastClose.AddMinutes(2)
                     ? lastClose.AddMinutes(2)
-                    : throw new ArgumentException(
+                    : throw new NoSessionTodayException(
                         $"No session left today. The next one is {MarketTime.ToStockholm(NextDecision(markets, start)):dddd yyyy-MM-dd}: start 'qa paper run' that morning before {MarketTime.ToStockholm(NextDecision(markets, start)):HH\\:mm}. (--duration <seconds> runs a session now, outside market hours nothing trades.)");
 
             output.WriteLine($"Running until {MarketTime.ToStockholm(stopAt):yyyy-MM-dd HH:mm} (Stockholm). Stop early with Ctrl+C or 'qa kill'.");
@@ -444,6 +449,7 @@ internal static partial class AvanzaCommands
             {
                 // Plan 23: the owner's buys and sells by hand ('qa paper manual', the app), through the same gateway.
                 Manual = new ManualOrderDesk(new ManualOrderInbox(Path.Combine(stateDir, TradingCommands.PaperDirName), time), book, quotes, catalog, risk, audit, output),
+                Alerts = alerts, // plan 25: a failed decision
             };
             PaperSessionSummary summary;
             try
@@ -486,9 +492,20 @@ internal static partial class AvanzaCommands
             }
 
             output.WriteLine($"Reconciliation: {(summary.ReconciliationClean ? "clean" : "MISMATCH (see the audit log)")}. Audit: {audit.Directory} (check with 'qa audit verify').");
+            if (alerts.Settings.DaySummary && !summary.Killed)
+            {
+                decimal change = summary.StartOfDayValue > 0 ? (summary.AccountValue - summary.StartOfDayValue) / summary.StartOfDayValue : 0m;
+                alerts.Raise(AlertLevel.Info, "day-summary", "Paper day done", string.Create(CultureInfo.InvariantCulture,
+                    $"Paper day done: value {summary.AccountValue:N2} SEK ({change:+0.00%;-0.00%;0.00%} today), {summary.Submitted} order(s), {summary.Filled} with fills, fees {summary.FeesPaid:N2} SEK; reconciliation {(summary.ReconciliationClean ? "clean" : "MISMATCH")}."));
+            }
+
             await KeepIntradayResearchAsync(ctx, storePath, setup, spreads, time, output).ConfigureAwait(false);
+
+            // Plan 25: the automatic backup (when set up), while this session still holds the lock; a killed day too.
+            BackupCommands.After("Paper session", BackupPaths.Of(setup.ConfigDir, stateDir, parse.GetValue(auditDir)!, storePath, null, parse.GetValue(promotionDir)!),
+                output, alerts, time, ownLock: true);
             return summary.Killed ? ExitHalt : 0;
-        }, live: true));
+        }, live: true, alertAs: AlertAs.Session("Paper session")));
         return command;
     }
 
@@ -908,6 +925,18 @@ internal static partial class AvanzaCommands
         catch (Exception ex) when (ex is BrokerException or ArgumentException or HistoryStoreException or IOException || DataCommands.IsStoreFailure(ex))
         {
             output.WriteLine($"WARNING: intraday research data not kept ({ex.Message}); run 'qa intraday import' this evening.");
+            ctx.Alerts?.Raise(AlertLevel.Warning, "import-failed", "Intraday bars not kept",
+                $"The intraday bars after the session were not kept ({ex.Message}). Run 'qa intraday import' this evening: a missed day can't be fetched later.");
+        }
+    }
+
+    /// <summary>Plan 25: a halt other than the kill switch's (that one alerts itself), at most once per reason in 30 minutes.</summary>
+    private static void AlertHalt(Alerter alerts, Trading.Halts.HaltState halt)
+    {
+        if (halt.Reason != Trading.Halts.HaltReason.KillSwitch)
+        {
+            alerts.Raise(AlertLevel.Warning, "halt", $"Trading halted: {halt.Reason}",
+                $"Trading halted ({halt.Reason}): {halt.Detail}. New orders wait until it clears.", key: halt.Reason.ToString());
         }
     }
 
@@ -1090,3 +1119,6 @@ internal static partial class AvanzaCommands
         }
     }
 }
+
+/// <summary>Plan 25: a Paper run started after the day's last close (a holiday, the evening): said, but not alerted.</summary>
+public sealed class NoSessionTodayException(string message) : ArgumentException(message);

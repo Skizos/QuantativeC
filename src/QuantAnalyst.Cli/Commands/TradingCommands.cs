@@ -33,6 +33,8 @@ internal static partial class TradingCommands
         yield return KillCommand();
         yield return ReportCommand(services.Time);
         yield return PromoteCommand(services);
+        yield return AlertCommands.Create(services);
+        yield return BackupCommands.Create(services);
     }
 
     public static Option<string?> ConfigDirOption() =>

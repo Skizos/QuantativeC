@@ -104,6 +104,9 @@ public sealed class PaperSession(
     /// </summary>
     public ManualOrderDesk? Manual { get; init; }
 
+    /// <summary>Gets where a failed decision is alerted (plan 25); null: the console line only.</summary>
+    public Alerts.Alerter? Alerts { get; init; }
+
     /// <summary>A session on Nasdaq Stockholm alone (a Swedish-only list): one decision, one close.</summary>
     public PaperSession(
         OrderGateway gateway,
@@ -306,6 +309,8 @@ public sealed class PaperSession(
         {
             output.WriteLine($"{Local(time.GetUtcNow())} {Where(m)}decision failed: {ex.Message}");
             audit.Append("decision-failed", new { market = m.Mic, reason = ex.Message });
+            Alerts?.Raise(Trading.Alerts.AlertLevel.Warning, "decision-failed", "Decision failed",
+                $"Paper {Where(m)}decision failed: {ex.Message} No orders from it today.");
             _observer?.Decision(new DecisionTick(time.GetUtcNow(), 0, ["failed: " + ex.Message]));
             return;
         }

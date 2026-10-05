@@ -18,6 +18,7 @@ using QuantAnalyst.Data.Calendar;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Store;
 using QuantAnalyst.Trading.Accounts;
+using QuantAnalyst.Trading.Alerts;
 
 namespace QuantAnalyst.Cli.Commands;
 
@@ -65,12 +66,22 @@ internal sealed record AvanzaCliServices(
     /// </summary>
     internal Func<AvanzaConnection, IBrokerOrderChannel> OrderChannel { get; init; } = connection => connection.CreateOrderChannel();
 
+    /// <summary>
+    /// Gets who shows an alert on the screen (plan 25): nobody, except in <see cref="Default"/> (the program and the app),
+    /// where it is a Windows notification on Windows. So a test run never pops notifications; tests that check them pass
+    /// their own.
+    /// </summary>
+    public Func<Trading.Alerts.IAlertNotifier?> Notifier { get; init; } = () => null;
+
     /// <summary>Gets where FX rates come from (ADR 0005): the Riksbank's daily fixing. Tests pass a fake.</summary>
     public Func<IFxRateSource> FxRates { get; init; } = () => Data.Fx.RiksbankFxSource.Shared;
 
     public static AvanzaCliServices Default { get; } = new(
         (options, secrets, prompt, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor, prompt),
-        CreateSecretStore);
+        CreateSecretStore)
+    {
+        Notifier = () => OperatingSystem.IsWindows() ? new WindowsToastNotifier() : null,
+    };
 
     private static ISecretStore CreateSecretStore(string kind) => kind switch
     {
@@ -598,22 +609,38 @@ internal static partial class AvanzaCommands
     // ---- shared plumbing ------------------------------------------------------------------------------
 
     /// <param name="Interactive">True when stderr is the real console (Ctrl+C handling, in-place QR redraw).</param>
-    private sealed record Ctx(AvanzaConnection Connection, ILogger Logger, bool Interactive, CancellationToken Ct);
+    /// <param name="Redactor">The command's redactor: it knows the secrets the connection registered.</param>
+    /// <param name="Alerts">Plan 25: the command's alerts; null for a command that raises none.</param>
+    private sealed record Ctx(AvanzaConnection Connection, ILogger Logger, bool Interactive, Redactor Redactor, Alerter? Alerts, CancellationToken Ct);
+
+    /// <summary>Plan 25: how a command's failure is alerted: what it is called, the alert's kind and level.</summary>
+    private sealed record AlertAs(string What, string Kind, AlertLevel Level)
+    {
+        public static AlertAs Import { get; } = new("Evening import", "import-failed", AlertLevel.Warning);
+
+        public static AlertAs Session(string what) => new(what, "session-failed", AlertLevel.Critical);
+    }
 
     /// <param name="live">
     /// False: output is buffered and redacted as a whole at the end. True (long-running verbs): every line is redacted
     /// and written as soon as it is complete.
     /// </param>
+    /// <param name="alertAs">
+    /// Plan 25: how an alert names this command when it fails or stops on an error; null raises none. The owner's own
+    /// stop (Ctrl+C, the app's Stop) and "no session today" are not failures.
+    /// </param>
     private static int Run(
-        ParseResult parse, AvanzaCliServices services, Common common, string? record, Func<Ctx, TextWriter, Task<int>> body, bool live = false)
+        ParseResult parse, AvanzaCliServices services, Common common, string? record, Func<Ctx, TextWriter, Task<int>> body, bool live = false, AlertAs? alertAs = null)
     {
         TextWriter output = parse.InvocationConfiguration.Output;
         TextWriter error = parse.InvocationConfiguration.Error;
         var redactor = new Redactor();
         var logger = new RedactingLogger(error, redactor, parse.GetValue(common.Verbose) ? LogLevel.Debug : LogLevel.Warning);
         TextWriter buffer = live ? new RedactingLineWriter(output, redactor) : new StringWriter(CultureInfo.InvariantCulture);
+        Alerter? alerts = null;
         try
         {
+            alerts = alertAs is null ? null : Alerting.Create(services, ConfigDirOf(parse), parse.GetValue(common.StateDir)!, buffer, redactor.Redact, alertAs.What);
             ISecretStore secrets = services.SecretStoreFactory(parse.GetValue(common.SecretStore)!);
             var options = new AvanzaOptions
             {
@@ -624,7 +651,7 @@ internal static partial class AvanzaCommands
             bool interactive = ReferenceEquals(error, Console.Error) && !Console.IsErrorRedirected;
             IBankIdPrompt prompt = services.BankIdPrompt?.Invoke(error, interactive) ?? new ConsoleBankIdPrompt(error, interactive);
             using AvanzaConnection connection = services.ConnectionFactory(options, secrets, prompt, logger, redactor);
-            int code = body(new Ctx(connection, logger, interactive, services.Cancellation), buffer).GetAwaiter().GetResult();
+            int code = body(new Ctx(connection, logger, interactive, redactor, alerts, services.Cancellation), buffer).GetAwaiter().GetResult();
             Flush(buffer, output, redactor);
             return code;
         }
@@ -632,6 +659,12 @@ internal static partial class AvanzaCommands
                                        or HistoryImportException or HistoryStoreException or CalendarConfigException
                                    || DataCommands.IsStoreFailure(ex))
         {
+            if (alerts is not null && alertAs is not null && ex is not NoSessionTodayException)
+            {
+                string why = DataCommands.IsStoreFailure(ex) ? DataCommands.StoreFailureMessage(ex) : ex.Message;
+                alerts.Raise(alertAs.Level, alertAs.Kind, $"{alertAs.What} stopped", $"{alertAs.What} stopped: {why}");
+            }
+
             Flush(buffer, output, redactor);
             if (DataCommands.IsStoreFailure(ex))
             {
@@ -649,7 +682,22 @@ internal static partial class AvanzaCommands
             error.WriteLine(redactor.Redact($"{prefix}: {ex.Message}"));
             return code;
         }
+        catch (Exception ex) when (alerts is not null && alertAs is not null && ex is not OperationCanceledException && AlertCrash(alerts, alertAs, ex))
+        {
+            throw; // not reached: AlertCrash returns false, so the exception goes on unchanged after its alert
+        }
     }
+
+    /// <summary>Plan 25: an unexpected exception stops the command too; alerted, then left to propagate.</summary>
+    private static bool AlertCrash(Alerter alerts, AlertAs alertAs, Exception ex)
+    {
+        alerts.Raise(alertAs.Level, alertAs.Kind, $"{alertAs.What} stopped", $"{alertAs.What} stopped on an unexpected error: {ex.GetType().Name}: {ex.Message}");
+        return false;
+    }
+
+    /// <summary>The command's --config-dir, when it has one and it was given.</summary>
+    private static string? ConfigDirOf(ParseResult parse) =>
+        parse.CommandResult.Command.Options.OfType<Option<string?>>().FirstOrDefault(o => o.Name == "--config-dir") is { } option ? parse.GetValue(option) : null;
 
     /// <summary>
     /// One read-only query for the Windows app, with a command's plumbing: the secret store, the login method, the app's

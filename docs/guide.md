@@ -39,7 +39,8 @@ Everything in sections 2–3 can also be done with the mouse in the QuantAnalyst
   - the paper account's value at the last close, the change since Paper started, and a chart of every day's close
     (the same numbers as `qa report eod`)
   - the same checklist as `qa status`, the next steps, and one button for the most useful next thing (e.g. **Add
-    instruments**, **Choose a strategy**, **Start the Paper session**)
+    instruments**, **Choose a strategy**, **Start the Paper session**); the checklist includes the day's alerts and the
+    last backup (plan 25)
 - **Trading** (today's Paper session):
   - **Start** logs in (the BankID QR code appears in the window), updates the history, waits for 09:10 and trades on
     paper until the close. **Stop** ends it early, cancelling orders and writing the partial report.
@@ -254,6 +255,36 @@ A day is **clean** when it ran to the close with:
    ```
 On an exchange holiday the command simply says there is no session today.
 
+### Alerts and backups (plan 25)
+
+**Alerts** reach you when you are not watching the console: a Windows notification, an `ALERT: …` line, and an entry
+in `.\qa alerts`. You get one when:
+- the kill switch fires (your KILL, the loss stop, three rejects in a row): **critical**;
+- a session could not start (the login failed, the kill switch was still on) or stopped on an error: **critical**;
+- trading halts for another reason (prices stale, a reconciliation mismatch): a warning, once per reason in 30 minutes;
+- a decision failed (no orders that day), the evening import missed shares, or a backup failed: a warning;
+- a Paper day ended: an info summary (value, change, orders). Turn it off with `.\qa alerts set --day-summary off`.
+
+Try it once: `.\qa alerts test` should show a notification (from "Windows PowerShell"). None? Check Windows'
+notification settings; Do not disturb hides them. `.\qa status` lists the day's warnings, and a critical one comes
+first in its next steps.
+
+**Backups.** Your audit log is the Confirm gate's evidence; the Paper book, the trial ledger and the price store took
+weeks to build. Set a backup folder once, on OneDrive or another disk:
+```powershell
+.\qa backup setup --to "$env:OneDrive\QuantAnalyst-backup"
+.\qa backup
+```
+From then on every Paper session and every evening import makes a backup when it ends (keeping the newest 7), each
+copy checked. `.\qa status` says when the last one was made; `.\qa backup verify` checks one again.
+
+**Restoring** (by hand, on purpose):
+1. Stop everything: no session, no scheduled task running, the app closed.
+2. `.\qa backup verify --path <the backup folder>`: it must say "intact".
+3. Copy its `audit`, `config` and `promotion` folders back into the workspace, its `paper` folder to `state\paper`, its
+   `ledger\trial-ledger.jsonl` to `research\`, and its `store\quant.duckdb` to `data\`. Keep the old files aside
+   until `.\qa audit verify` and `.\qa status` look right.
+
 ### Buying and selling by hand (Paper, plan 23)
 
 You can trade a share on your list yourself, in Paper only:
@@ -369,6 +400,10 @@ says whether an intraday strategy is worth trying on paper. What you do:
 |---|---|---|
 | `ALERT: KILL SWITCH …`, exit code 3 | Trading stopped: your `qa kill`, the loss stop, three rejects in a row, an order in an unknown state, or a reconciliation mismatch | Read `.\qa report eod` and `.\qa kill --status`. When you understand why: `.\qa kill --reset` |
 | `The kill switch is active` at start | A kill from earlier is still on | As above |
+| A notification "QuantAnalyst: Paper session stopped" | The session could not start (often the login) or stopped on an error; the text says which | Read `.\qa alerts` and the session's output; start it again with `.\qa paper run` when the cause is fixed |
+| `qa alerts test` shows no notification | Windows' notification settings (Do not disturb), or no Windows PowerShell | The alert is still in `.\qa alerts` and `.\qa status`. Check Settings › System › Notifications |
+| `Backup INCOMPLETE` with `store: NOT COPIED: the store could not be copied …` | Something held the price store (the app, a running import) | Close the app's pages that read prices, or run `.\qa backup` later; the other parts were copied and checked |
+| `warn  Backup … over 3 days old` in `qa status` | No session or import made one lately (or automatic is off) | `.\qa backup` |
 | `order-depth-stream dropped (HTTP 429)` | Avanza refuses the live order-book stream (seen 2026-09-30). Paper doesn't use it any more: it runs on the 5-second price polls. Only `qa stream` and the live modes (Confirm) still open it | Nothing for Paper. Before Confirm, this must be solved (asking Avanza is the clean way) |
 | `R15 market data is stale` | No price poll arrived for 10 s (Avanza slow or down), or in Confirm the order-book stream is down | Paper retries the next day; look for `poll failed` lines in the log |
 | `skipped, no fresh live price` in the decision | No quote for that share when it decided: no trade in it, the market data failed, or (before 2026-09-30) a session started after 09:10 that decided before its first quote | Look in the session log for stream or market-data errors. There is one decision a day, so the share waits for the next day |

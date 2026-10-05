@@ -51,7 +51,7 @@ internal static partial class AvanzaCommands
         {
             RequireConfirm(parse.GetValue(options.Mode), "qa trade run");
             return ConfirmSessionAsync(services, parse, options, ctx, output, decideAtStart: false);
-        }, live: true));
+        }, live: true, alertAs: AlertAs.Session("Confirm session")));
         command.Subcommands.Add(run);
         return command;
     }
@@ -72,7 +72,7 @@ internal static partial class AvanzaCommands
 
             RequireConfirm(parse.GetValue(options.Mode), "qa rebalance --execute");
             return ConfirmSessionAsync(services, parse, options, ctx, output, decideAtStart: true);
-        }, live: true));
+        }, live: true, alertAs: parse.GetValue(options.Execute!) ? AlertAs.Session("Confirm session") : null));
         return command;
     }
 
@@ -197,6 +197,11 @@ internal static partial class AvanzaCommands
 
         WriteChecks(output, startup, "Confirm startup checks: all passed.");
         var halts = new HaltController(audit, time);
+        if (ctx.Alerts is { } alerts)
+        {
+            halts.Raised += h => AlertHalt(alerts, h); // plan 25
+        }
+
         List<InstrumentSpec> specs = await LiveSpecsAsync(ctx, setup).ConfigureAwait(false);
         await RefreshHistoryForLiveAsync(ctx, storePath, setup, specs, time, output).ConfigureAwait(false);
 
@@ -222,7 +227,17 @@ internal static partial class AvanzaCommands
         };
         using var gateway = new OrderGateway(channel, env, risk, oms, halts, audit, time);
         using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(o.KillFile)!, stateDir, account, setup.Limits);
-        kill.Alerted += message => output.WriteLine("ALERT: " + message);
+        kill.Alerted += message =>
+        {
+            if (ctx.Alerts is { } a)
+            {
+                a.Raise(Trading.Alerts.AlertLevel.Critical, "kill", "Trading stopped", message); // plan 25: also "ALERT: …" on the console
+            }
+            else
+            {
+                output.WriteLine("ALERT: " + message);
+            }
+        };
         var reconciler = new Reconciler(oms, halts, audit, time, live.Account);
         async Task<PlanResult> Plan(CancellationToken ct)
         {
