@@ -159,6 +159,7 @@ internal static partial class AvanzaCommands
         yield return History(services);
         yield return Probe(services);
         yield return Intraday(services);
+        yield return Benchmark(services);
         yield return Recordings(services);
         yield return Secrets();
     }

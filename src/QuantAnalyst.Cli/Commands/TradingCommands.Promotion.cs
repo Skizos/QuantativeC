@@ -186,10 +186,25 @@ internal static partial class TradingCommands
         string? unavailable = null;
         IReadOnlyDictionary<string, IReadOnlyList<DividendEvent>>? dividends = null;
         string? dividendsMissing = null;
+        BenchmarkSettings? index;
+        Dictionary<DateOnly, decimal> indexCloses = [];
+        string? indexMissing = null;
+        try
+        {
+            index = BenchmarkSettings.Load(paths.ConfigDir);
+        }
+        catch (TradingConfigException ex)
+        {
+            // A broken benchmark setting costs only its own line.
+            index = new BenchmarkSettings(new Core.OrderbookId("0"), "benchmark");
+            indexMissing = ex.Message;
+        }
+
         if (!readStore)
         {
             unavailable = "shown when nothing else runs (the price store is in use)";
             dividendsMissing = "the price store is in use";
+            indexMissing = "shown when nothing else runs (the price store is in use)";
         }
         else
         {
@@ -197,19 +212,30 @@ internal static partial class TradingCommands
             {
                 intraday = IntradayWeek(paths.Store, paths.ConfigDir, [.. trading.Where(d => d < today)], out needed);
                 dividends = ListDividends(paths.Store, reports, out dividendsMissing);
+                if (index is not null && indexMissing is null && File.Exists(paths.Store))
+                {
+                    using HistoryStore history = HistoryStore.Open(paths.Store);
+                    foreach (StoredBar b in history.GetDailyBars(index.OrderbookId, AvanzaChartImporter.AvanzaPriceChart.Name))
+                    {
+                        indexCloses[b.Bar.Date] = b.Bar.Close;
+                    }
+                }
             }
             catch (Exception ex) when (ex is HistoryStoreException or IOException || DataCommands.IsStoreFailure(ex))
             {
                 unavailable = "the price store is busy; they show again next time";
                 dividendsMissing = "the price store is busy";
+                indexMissing = "the price store is busy; it shows again next time";
             }
         }
 
-        WeeklyReport week = WeeklyReport.Build(chosen, trading, reports, gate, Expectation(paths.ConfigDir, paths.Ledger), intraday, needed, now, dividends);
+        WeeklyReport week = WeeklyReport.Build(chosen, trading, reports, gate, Expectation(paths.ConfigDir, paths.Ledger), intraday, needed, now, dividends,
+            index is null ? null : (index.Name, indexCloses));
         return week with
         {
             IntradayUnavailable = unavailable,
             HoldDividendsMissing = dividends is null ? dividendsMissing ?? week.HoldDividendsMissing : null,
+            BenchmarkMissing = indexMissing ?? week.BenchmarkMissing,
         };
     }
 

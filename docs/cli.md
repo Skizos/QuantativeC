@@ -325,6 +325,14 @@ Exit codes of `qa paper run`: 0 ok, 1 error, 3 halted (the kill switch fired, or
 `qa status` shows the last day's warning and critical alerts (a critical one is a FAIL with a next step) and the last
 backup (none set up, none made, incomplete, or over 3 days old are warnings).
 
+## The market index (plan 24 B)
+
+| Command | What it does |
+|---|---|
+| `qa benchmark` | Shows the market index the weekly summary compares with and the closes stored for it; without one, how to set it. |
+| `qa benchmark set --orderbook-id <number> --name "OMX Stockholm 30"` | Sets it (`config/benchmark.json`). The number is in the index's page address on avanza.se. It is never traded (no instrument record; `qa universe add` refuses it). |
+| `qa benchmark import [--from yyyy-MM-dd]` | Imports its daily closes from Avanza's public price chart (no login; the same route and strict checks as a share's chart; **unverified for an index until your first import**, see `docs/research/avanza-endpoints.md`). Default: from a week before the last stored close, or a year back. Every `qa paper run` and `qa intraday import` refreshes it too (a failure is a warning line). `qa report week` then adds "the market (…) over the same days". |
+
 ## The morning start (plan 26)
 
 | Command | What it does |

@@ -183,6 +183,18 @@ public sealed record WeeklyReport
     /// <summary>Gets the listed shares left out of this week's days, e.g. "Tue ERIC B (split-like move)".</summary>
     public IReadOnlyList<string> HoldLeftOut { get; init; } = [];
 
+    /// <summary>Gets the market index compared with (plan 24 B), e.g. "OMX Stockholm 30"; null when none is set.</summary>
+    public string? BenchmarkName { get; init; }
+
+    /// <summary>Gets the index over this week's Paper days.</summary>
+    public BenchmarkReturn? BenchmarkThisWeek { get; init; }
+
+    /// <summary>Gets the index over the Paper days since the first comparable one.</summary>
+    public BenchmarkReturn? BenchmarkSinceStart { get; init; }
+
+    /// <summary>Gets why the index is not shown although one is set (no closes stored yet, the store busy).</summary>
+    public string? BenchmarkMissing { get; init; }
+
     public required DateTimeOffset GeneratedUtc { get; init; }
 
     private static readonly JsonSerializerOptions Json = new()
@@ -218,9 +230,11 @@ public sealed record WeeklyReport
     /// <param name="tradingDays">The Stockholm trading days of that week.</param>
     /// <param name="reports">Every day's end-of-day report (for the weeks before, too: "since the start").</param>
     /// <param name="dividends">The listed shares' dividends by orderbook id, for holding the list (plan 24); null leaves them out.</param>
+    /// <param name="benchmark">The market index's name and its closes by date (plan 24 B); null when none is set.</param>
     public static WeeklyReport Build(
         DateOnly day, IReadOnlyList<DateOnly> tradingDays, IReadOnlyList<EodReport> reports, GateResult gate, BacktestExpectation? backtest,
-        IntradayCoverage? intraday, int? intradayNeeded, DateTimeOffset now, IReadOnlyDictionary<string, IReadOnlyList<DividendEvent>>? dividends = null)
+        IntradayCoverage? intraday, int? intradayNeeded, DateTimeOffset now, IReadOnlyDictionary<string, IReadOnlyList<DividendEvent>>? dividends = null,
+        (string Name, IReadOnlyDictionary<DateOnly, decimal> Closes)? benchmark = null)
     {
         ArgumentNullException.ThrowIfNull(tradingDays);
         ArgumentNullException.ThrowIfNull(reports);
@@ -262,6 +276,9 @@ public sealed record WeeklyReport
             HoldSinceStart = HoldTheList.Compare(held),
             HoldDividendsMissing = dividends is null ? "not read" : null,
             HoldLeftOut = [.. heldThisWeek.SelectMany(d => d.LeftOut.Select(x => d.Date.ToString("ddd", CultureInfo.InvariantCulture) + " " + x))],
+            BenchmarkName = benchmark?.Name,
+            BenchmarkThisWeek = benchmark is { } b1 ? MarketBenchmark.Over(heldThisWeek, b1.Closes) : null,
+            BenchmarkSinceStart = benchmark is { } b2 ? MarketBenchmark.Over(held, b2.Closes) : null,
             GeneratedUtc = now,
         };
     }
@@ -319,6 +336,13 @@ public sealed record WeeklyReport
             {
                 lines.Add("  left out this week: " + string.Join("; ", HoldLeftOut));
             }
+
+            if (BenchmarkName is { } index)
+            {
+                lines.Add(BenchmarkSinceStart is { } market
+                    ? string.Create(c, $"  the market ({index}) over the same days: this week {Describe(BenchmarkThisWeek)}, since {holdFirst:yyyy-MM-dd} {Describe(market)}")
+                    : $"  the market ({index}): {BenchmarkMissing ?? "no closes stored for these days yet ('qa benchmark import')"}");
+            }
         }
         else
         {
@@ -353,6 +377,10 @@ public sealed record WeeklyReport
 
     public static WeeklyReport Load(string path) =>
         JsonSerializer.Deserialize<WeeklyReport>(File.ReadAllText(path), Json) ?? throw new JsonException($"{path} is empty.");
+
+    private static string Describe(BenchmarkReturn? r) => r is null
+        ? "no closes"
+        : string.Create(CultureInfo.InvariantCulture, $"{r.Return:+0.00%;-0.00%;0.00%} ({r.Days} day(s){(r.Missing > 0 ? $", {r.Missing} without closes" : string.Empty)})");
 
     private static WeekDay Row(EodReport r)
     {

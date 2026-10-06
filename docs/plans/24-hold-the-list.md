@@ -49,14 +49,31 @@ Against holding the list (equal weights, dividends included, no costs; the same 
 | The weekly summary | `WeeklyReport.HoldThisWeek`, `HoldSinceStart`, `HoldDividendsMissing`, `HoldLeftOut`; the CLI reads the dividends from the store (`ListDividends`) | `HoldTheListTests.TheWeek_ComparesPaperWithHoldingTheList_…`, `CliUsabilityTests.ReportWeek_…` (a stored dividend counted) |
 | The app | The week card's **Against holding the list** chip (`WeekCard.Hold`/`HoldMark`: coloured once \|t\| ≥ 2) and the summary's lines | `ViewModelTests.Reports_…`, the XAML binding checks |
 
-## B — OMXS30 (not started)
+## B — the market index (built 2026-10-06; unverified until the first import)
 
-The market itself (OMX Stockholm 30) as a second line. It needs the index's daily history, which the program can't
-import yet: the instrument search asks Avanza for shares only, and the chart import has only been checked for shares.
-Before it is built: check a maintained open-source client for the index search type and the chart endpoint's use with
-an index (CLAUDE.md: never from memory), note it in `docs/research/avanza-endpoints.md`, and the owner imports the index
-once. The list (A) is the fairer benchmark anyway: same shares, same days; OMXS30 says how the list itself did against
-the market.
+The market itself (e.g. OMX Stockholm 30) as one more line under "Against holding the list":
+
+```
+  the market (OMX Stockholm 30) over the same days: this week +0.80% (4 day(s)), since 2026-09-28 +1.10% (12 day(s))
+```
+
+- **The index is set by its number**, `qa benchmark set --orderbook-id <number> --name "OMX Stockholm 30"`
+  (`config/benchmark.json`): the owner copies it from the index's page address on avanza.se. The program does not search
+  for indices (one route fewer to trust) and never trades it (no instrument record: `qa universe add` refuses it).
+- **Its daily closes** come from the same public price chart as the shares' (no login): `qa benchmark import`, and after
+  every Paper session and evening import. The research (`docs/research/avanza-endpoints.md`, 2026-10-06): neither
+  reference client documents the chart for an index; one reads index info through the stock route, the other compares a
+  stock's chart with another orderbook's. So it is **unverified until the owner's first import**: an answer of another
+  shape fails the strict DTO check, is reported, and nothing is stored.
+- **Same intervals as Paper**: each Paper day from the previous Paper close to this one; a day without the index's close
+  on both ends is counted as "without closes".
+- The list (A) stays the fairer benchmark: same shares, same days. The index says how the list itself did against the
+  market.
+
+| Part | Code | Tests |
+|---|---|---|
+| Setting and comparison | `BenchmarkSettings`, `MarketBenchmark.Over`, `WeeklyReport.Benchmark*` | `HoldTheListTests.TheWeek_…` (the index's line; a missing close; no closes yet) |
+| Commands | `qa benchmark`, `qa benchmark set`, `qa benchmark import` (`AvanzaCommands.Benchmark.cs`); the refresh after `qa paper run` and `qa intraday import` | `CliUsabilityTests.Benchmark_…` (set by number, imported without login from the chart route, shown, never on the list), `CliUsabilityTests.ReportWeek_…` (the line end to end) |
 
 ## Not in this plan
 

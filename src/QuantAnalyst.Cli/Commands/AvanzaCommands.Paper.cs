@@ -500,6 +500,7 @@ internal static partial class AvanzaCommands
             }
 
             await KeepIntradayResearchAsync(ctx, storePath, setup, spreads, time, output).ConfigureAwait(false);
+            await RefreshBenchmarkAsync(ctx.Connection.Gateway, storePath, setup.ConfigDir, time, output, ctx.Ct).ConfigureAwait(false); // plan 24 B
 
             // Plan 25: the automatic backup (when set up), while this session still holds the lock; a killed day too.
             BackupCommands.After("Paper session", BackupPaths.Of(setup.ConfigDir, stateDir, parse.GetValue(auditDir)!, storePath, null, parse.GetValue(promotionDir)!),

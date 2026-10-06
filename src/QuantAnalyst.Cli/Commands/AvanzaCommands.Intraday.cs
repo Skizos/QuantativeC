@@ -82,6 +82,8 @@ internal static partial class AvanzaCommands
                     $"The intraday import missed {failed} of {names.Count} share(s) (see its output). Run 'qa intraday import' again before midnight: a missed day can't be fetched later."));
             }
 
+            await RefreshBenchmarkAsync(ctx.Connection.Gateway, storePath, config, services.Time, output, ctx.Ct).ConfigureAwait(false); // plan 24 B
+
             // Plan 25: the automatic backup (when set up); a running session makes its own when it ends.
             BackupCommands.After("evening import", BackupPaths.Of(config, parse.GetValue(common.StateDir)!, TradingCommands.DefaultAuditDir, storePath, null, "promotion"),
                 output, ctx.Alerts, services.Time, ownLock: false);

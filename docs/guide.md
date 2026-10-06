@@ -244,6 +244,10 @@ equal weights (the same close prices Paper used, their dividends included, no co
   strategy loses to holding the same shares: a simpler strategy (`buy-and-hold` in the backtest) would have earned more.
 - If Paper is far behind fully invested but close at its own exposure, the cash is the cost: with few names R7's 20 %
   per name keeps much of the account in cash. More names (up to 10) let more of it work.
+- **The market (plan 24 B), once set up:** open OMX Stockholm 30 on avanza.se, copy the number from the page address,
+  then `.\qa benchmark set --orderbook-id <number> --name "OMX Stockholm 30"` and `.\qa benchmark import`. The summary
+  then also says how the market did over the same days. This uses the price chart for an index, which no reference
+  client documents: if the import reports a schema problem, it doesn't work that way, and nothing was stored.
 
 A day is **clean** when it ran to the close with:
 - no violations

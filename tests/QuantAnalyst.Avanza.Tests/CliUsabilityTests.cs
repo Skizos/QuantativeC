@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Time.Testing;
+using QuantAnalyst.Avanza.Http;
 using QuantAnalyst.Cli;
 using QuantAnalyst.Cli.Commands;
 using QuantAnalyst.Core;
@@ -211,7 +212,13 @@ public sealed class CliUsabilityTests : IDisposable
             store.UpsertIntradayBars(new OrderbookId("5240"), ChartResolution.TenMinutes, [Nine(29)], AvanzaChartImporter.AvanzaPriceChart, "test", Saturday);
             store.RegisterSource(CorporateDataImporter.AvanzaStockDetails);
             store.UpsertDividends(new OrderbookId("5240"), [new DividendEvent(new DateOnly(2026, 9, 29), null, 0.35m, "SEK", "ORDINARY")], CorporateDataImporter.AvanzaStockDetails, "test", Saturday);
+
+            // Plan 24 B: the market index's closes (as 'qa benchmark import' stores them), Monday 2,000 and Tuesday 2,010.
+            store.UpsertDailyBars(new OrderbookId("19002"), [new DailyBar(new DateOnly(2026, 9, 28), 2000m, 2000m, 2000m, 2000m, 0), new DailyBar(new DateOnly(2026, 9, 29), 2010m, 2010m, 2010m, 2010m, 0)],
+                AvanzaChartImporter.AvanzaPriceChart, "test", Saturday);
         }
+
+        Assert.Equal(0, Qa("benchmark", "set", "--orderbook-id", "19002", "--name", "OMX Stockholm 30", "--config-dir", Config).Code);
 
         string policy = Path.Combine(Config, Analytics.Backtesting.IntradayHoldout.FileName);
         File.Copy(Path.Combine(RepoRoot(), "config", Analytics.Backtesting.IntradayHoldout.FileName), policy);
@@ -228,6 +235,7 @@ public sealed class CliUsabilityTests : IDisposable
         Assert.Contains("  this week: 2 day(s) at 50 % invested: Paper -0.20%; the backtest expects +0.05% (95 % range -1.35% to +1.45%): within the range", output, StringComparison.Ordinal);
         Assert.Contains("Against holding the list (equal weights, dividends included, no costs; the same close prices as Paper):", output, StringComparison.Ordinal);
         Assert.Contains("  this week: 1 day(s): Paper -0.40%; the list +1.50% (at Paper's 50 % invested +0.75%): Paper 1.15 points behind at the same exposure", output, StringComparison.Ordinal);
+        Assert.Contains("  the market (OMX Stockholm 30) over the same days: this week +0.50% (1 day(s)), since 2026-09-29 +0.50% (1 day(s))", output, StringComparison.Ordinal);
         Assert.Contains(string.Create(System.Globalization.CultureInfo.InvariantCulture,
             $"Intraday bars, 5 trading day(s): ERIC B 2 (1 at 10 minutes) (missing 09-30, 10-01, 10-02); 2 day(s) collected so far of the {needed} the go/no-go needs."), output, StringComparison.Ordinal);
         Assert.True(File.Exists(Path.Combine(weeks, "2026-W40.json")));
@@ -235,6 +243,25 @@ public sealed class CliUsabilityTests : IDisposable
         Assert.Contains("Week 2026-W40", Qa(["report", "week", "--week", "2026-w40", .. common]).Output, StringComparison.Ordinal);
         Assert.Contains("\"week\": \"2026-W40\"", Qa(["report", "week", "--date", "2026-10-01", "--json", .. common]).Output, StringComparison.Ordinal);
         Assert.Contains("not both", Qa(["report", "week", "--week", "2026-W40", "--date", "2026-10-01", .. common]).Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Benchmark_IsSetByItsNumber_ImportedFromThePublicChart_AndShown()
+    {
+        // Plan 24 B: no login; the index's chart answer is checked like a share's (here the share fixture stands in).
+        Assert.Contains("No benchmark set. Open the index on avanza.se", Qa("benchmark", "--config-dir", Config, "--store", Store).Output, StringComparison.Ordinal);
+        Assert.Contains("--orderbook-id must be the number", Qa("benchmark", "set", "--orderbook-id", "omxs30", "--name", "x", "--config-dir", Config).Error, StringComparison.Ordinal);
+        Assert.Equal(0, Qa("benchmark", "set", "--orderbook-id", "19002", "--name", "OMX Stockholm 30", "--config-dir", Config).Code);
+        _server.Always(AvanzaRoutes.PriceChart, _ => FakeAvanza.Json(Fixtures.Bytes("price-chart-5240.json")));
+
+        (int code, string output, string error) = Qa("benchmark", "import", "--from", "2026-09-20", "--config-dir", Config, "--store", Store);
+
+        Assert.True(code == 0, output + error);
+        Assert.StartsWith("Benchmark OMX Stockholm 30: closes to 2026-09-25 (2 new, 0 restated)", output, StringComparison.Ordinal);
+        Assert.Contains(_server.Requests, r => r.PathAndQuery.StartsWith(AvanzaRoutes.PriceChart.Path("19002"), StringComparison.Ordinal));
+        Assert.DoesNotContain(_server.Requests, r => r.Method != "GET"); // no login
+        Assert.Contains("Benchmark: OMX Stockholm 30 (Avanza orderbook 19002): 2 closes, 2026-09-24 to 2026-09-25.", Qa("benchmark", "--config-dir", Config, "--store", Store).Output, StringComparison.Ordinal);
+        Assert.NotEqual(0, Qa("universe", "add", "19002", "--config-dir", Config, "--store", Store).Code); // never tradeable: no instrument record
     }
 
     [Fact]

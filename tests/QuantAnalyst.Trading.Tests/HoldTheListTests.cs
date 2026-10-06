@@ -110,6 +110,16 @@ public sealed class HoldTheListTests
         WeeklyReport noDividends = WeeklyReport.Build(monday, trading, Reports(), gate, null, null, null, Now);
         Assert.Contains("(equal weights, dividends left out (not read), no costs;", noDividends.Lines().Single(l => l.StartsWith("Against holding", StringComparison.Ordinal)), StringComparison.Ordinal);
 
+        // Plan 24 B: the market index over the same intervals (Thu→Fri, Fri→Mon, Mon→Wed; Wednesday's close is missing).
+        var closes = new Dictionary<DateOnly, decimal> { [new DateOnly(2026, 9, 24)] = 2000m, [new DateOnly(2026, 9, 25)] = 2010m, [new DateOnly(2026, 9, 28)] = 2030.1m };
+        WeeklyReport withIndex = WeeklyReport.Build(monday, trading, Reports(), gate, null, null, null, Now, Dividends, ("OMX Stockholm 30", closes));
+        Assert.Equal(new BenchmarkReturn(1, 0.01m, 1), withIndex.BenchmarkThisWeek); // Fri→Mon +1 %; Mon→Wed has no Wednesday close
+        Assert.Equal(new BenchmarkReturn(2, 0.01505m, 1), withIndex.BenchmarkSinceStart); // 1.005 × 1.01
+        Assert.Contains("  the market (OMX Stockholm 30) over the same days: this week +1.00% (1 day(s), 1 without closes), since 2026-09-25 +1.51% (2 day(s), 1 without closes)",
+            withIndex.Lines());
+        Assert.Contains("  the market (OMX Stockholm 30): no closes stored for these days yet ('qa benchmark import')",
+            WeeklyReport.Build(monday, trading, Reports(), gate, null, null, null, Now, Dividends, ("OMX Stockholm 30", new Dictionary<DateOnly, decimal>())).Lines());
+
         WeeklyReport firstWeek = WeeklyReport.Build(monday, trading, [Reports()[0]], gate, null, null, null, Now, Dividends);
         Assert.Null(firstWeek.HoldSinceStart);
         Assert.Contains("Against holding the list: from the second Paper day with close prices (each day runs from the Paper close before it).", firstWeek.Lines());
