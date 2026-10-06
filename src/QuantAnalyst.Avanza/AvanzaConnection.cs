@@ -119,6 +119,9 @@ public sealed class AvanzaConnection : IDisposable
     /// <summary>Stored with instrument-master rows built from the orderbook response.</summary>
     public static string OrderbookSourceVersion => $"{Dto.OrderbookDto.Version}; routes {AvanzaRoutes.RoutesVersion}";
 
+    /// <summary>Stamped on stored dividends and share counts (plan 21).</summary>
+    public static string StockDetailsSourceVersion => $"{Dto.StockDetailsDto.Version}; routes {AvanzaRoutes.RoutesVersion}";
+
     public AvanzaAuthenticator Authenticator { get; }
 
     public IBrokerGateway Gateway => _gateway;

@@ -45,6 +45,9 @@ check 2 'python3 -c "import json" config/holdout.json'
 check 2 'git checkout -- config/holdout.json'
 check 2 'rm config/holdout.json'
 check 2 'Set-Content config/holdout.json x'
+check 2 "sed -i 's/true/false/' config/holdout.intraday.json"
+check 2 'echo "{}" > config/holdout.intraday.json'
+check 2 'rm config/holdout.intraday.json'
 
 # Must be allowed
 check 0 'dotnet build QuantAnalyst.sln'
@@ -61,6 +64,7 @@ check 0 'git log --oneline -- docs/adr/0004-authorization-to-automate.md'
 check 0 'cat config/holdout.json'
 check 0 'git diff -- config/holdout.json'
 check 0 'grep -n locked config/holdout.json'
+check 0 'cat config/holdout.intraday.json'
 
 # Promotion is the owner's (ADR 0003 §3)
 check 2 'qa promote --to Confirm'

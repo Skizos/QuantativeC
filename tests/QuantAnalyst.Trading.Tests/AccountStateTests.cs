@@ -56,6 +56,8 @@ internal sealed class FakeAccountGateway : IBrokerGateway
 
     public Task<PriceHistory> GetPriceHistoryAsync(OrderbookId id, ChartPeriod period, ChartResolution? resolution, CancellationToken ct) => throw new NotSupportedException();
 
+    public Task<CorporateData> GetCorporateDataAsync(OrderbookId id, CancellationToken ct) => throw new NotSupportedException();
+
     public IAsyncEnumerable<MarketStreamEvent> StreamOrderDepthAsync(OrderbookId id, CancellationToken ct) => throw new NotSupportedException();
 }
 

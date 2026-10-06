@@ -70,7 +70,6 @@ public sealed class OrderPreparationTests
 
     public static TheoryData<string, long, decimal?, string, string> Refusals => new()
     {
-        { "USD", 10, 100m, "SEK", "trades in USD" },
         { "SEK", 5, 100m, "SEK lot 10", "less than one lot of 10" },
         { "SEK", 10, 0m, "SEK", "must be positive" },
         { "SEK", 10, -1m, "SEK", "must be positive" },
@@ -210,6 +209,24 @@ public sealed class OrderManagerTests : IDisposable
         // Terminal states are final, and nothing goes back to New.
         Assert.All([OmsState.Filled, OmsState.Cancelled, OmsState.Rejected], s => Assert.DoesNotContain(Legal, t => t.Item1 == s));
         Assert.DoesNotContain(Legal, t => t.Item2 == OmsState.New);
+    }
+
+    [Fact]
+    public void EveryChange_IsTold_AndAnObserverThatThrows_ChangesNothing()
+    {
+        var seen = new List<(OmsState State, long Filled)>();
+        _oms.Changed += o => seen.Add((o.State, o.FilledVolume));
+        _oms.Changed += _ => throw new InvalidOperationException("a broken observer");
+
+        OmsOrder o = Working(volume: 10);
+        _oms.ApplyFill(o.ClientOrderId, 4, 100m, 0m, "test");
+        _oms.ApplyFill(o.ClientOrderId, 6, 101m, 0m, "test");
+
+        Assert.Equal([(OmsState.New, 0L), (OmsState.Sent, 0L), (OmsState.Working, 0L), (OmsState.PartiallyFilled, 4L), (OmsState.Filled, 10L)], seen);
+        Assert.Equal((OmsState.Filled, 10L), (o.State, o.FilledVolume)); // the throwing handler stopped nothing
+        Assert.False(_halts.IsHalted);
+        Assert.True(_oms.TryTransition(NewOrder().ClientOrderId, OmsState.Sent, "test", null, OmsState.New));
+        Assert.Equal(OmsState.Sent, seen[^1].State);
     }
 
     private OmsOrder NewOrder(long volume = 10) =>

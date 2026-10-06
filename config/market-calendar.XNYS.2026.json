@@ -1,0 +1,69 @@
+{
+  "format": "qa-market-calendar/1",
+  "mic": "XNYS",
+  "year": 2026,
+  "timeZone": "America/New_York",
+  "regularSession": {
+    "open": "09:30",
+    "close": "16:00"
+  },
+  "halfDaySession": {
+    "open": "09:30",
+    "close": "13:00"
+  },
+  "source_url": "https://www.nyse.com/markets/hours-calendars",
+  "verified_on": null,
+  "draft_basis": "UNVERIFIED DRAFT (2026-09-28, ADR 0005): NYSE; Nasdaq keeps the same holidays and early closes. Weekday closures and early closes computed with the open-source exchange_calendars 4.13.2 package (XNYS calendar, https://github.com/gerrymanoim/exchange_calendars/blob/main/exchange_calendars/exchange_calendar_xnys.py, Apache-2.0), the library the XSTO draft was checked against; the exchange's own page was not reachable from the development container. Session times are America/New_York local time. Check every date against the exchange's page at source_url, then set verified_on.",
+  "closed": [
+    {
+      "date": "2026-01-01",
+      "name": "New Year's Day"
+    },
+    {
+      "date": "2026-01-19",
+      "name": "Martin Luther King Jr. Day"
+    },
+    {
+      "date": "2026-02-16",
+      "name": "Washington's Birthday"
+    },
+    {
+      "date": "2026-04-03",
+      "name": "Good Friday"
+    },
+    {
+      "date": "2026-05-25",
+      "name": "Memorial Day"
+    },
+    {
+      "date": "2026-06-19",
+      "name": "Juneteenth"
+    },
+    {
+      "date": "2026-07-03",
+      "name": "Independence Day (observed)"
+    },
+    {
+      "date": "2026-09-07",
+      "name": "Labor Day"
+    },
+    {
+      "date": "2026-11-26",
+      "name": "Thanksgiving Day"
+    },
+    {
+      "date": "2026-12-25",
+      "name": "Christmas Day"
+    }
+  ],
+  "halfDays": [
+    {
+      "date": "2026-11-27",
+      "name": "Day after Thanksgiving"
+    },
+    {
+      "date": "2026-12-24",
+      "name": "Christmas Eve"
+    }
+  ]
+}

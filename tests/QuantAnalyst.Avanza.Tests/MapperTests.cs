@@ -196,9 +196,51 @@ public sealed class MapperTests
         Assert.Equal("SE0000108656", t.Isin);
     }
 
+    [Fact]
+    public void StockDetails_MapDividendsPerCurrentShare_AndTheShareCount()
+    {
+        // The Go SDK's recorded Nvidia sample: past amounts are adjusted for the 2024 10:1 split (0.004, then 0.01).
+        CorporateData nvda = AvanzaMapper.ToCorporateData(new OrderbookId("4478"), B("stock-details-nvidia.json", AvanzaTierBContext.Default.StockDetailsDto), Now);
+        Assert.Equal(24_200_000_000m, nvda.SharesOutstanding);
+        Assert.Equal(Now, nvda.RetrievedAtUtc);
+        Assert.True(nvda.Dividends.Zip(nvda.Dividends.Skip(1)).All(p => p.First.ExDate < p.Second.ExDate), "ordered by ex-date");
+        DividendEvent beforeSplit = nvda.Dividends.Single(d => d.ExDate == new DateOnly(2024, 3, 5));
+        DividendEvent afterSplit = nvda.Dividends.Single(d => d.ExDate == new DateOnly(2024, 6, 11));
+        Assert.Equal((0.004m, "USD", "ORDINARY", new DateOnly(2024, 3, 27)), (beforeSplit.Amount, beforeSplit.Currency, beforeSplit.Type, beforeSplit.PaymentDate!.Value));
+        Assert.Equal(0.01m, afterSplit.Amount);
+
+        // Announced and past events together, the announced one without a payment date yet.
+        CorporateData eric = AvanzaMapper.ToCorporateData(new OrderbookId("5240"), B("stock-details-5240.json", AvanzaTierBContext.Default.StockDetailsDto, n =>
+            n["dividends"]!["events"]![0]!.AsObject().Remove("paymentDate")), Now);
+        Assert.Equal(3_334_151_735m, eric.SharesOutstanding);
+        Assert.Equal([new DateOnly(2025, 3, 27), new DateOnly(2025, 9, 26), new DateOnly(2026, 3, 26), new DateOnly(2026, 10, 22)], eric.Dividends.Select(d => d.ExDate));
+        Assert.Equal((1.45m, "SEK", (DateOnly?)null), (eric.Dividends[^1].Amount, eric.Dividends[^1].Currency, eric.Dividends[^1].PaymentDate));
+    }
+
+    [Theory]
+    [InlineData("exDate", "\"26/10/2026\"", "$.dividends.events[0].exDate")]
+    [InlineData("paymentDate", "\"soon\"", "$.dividends.events[0].paymentDate")]
+    [InlineData("amount", "-1.45", "$.dividends.events[0].amount")]
+    public void StockDetails_ABadDateOrANegativeAmount_IsTierBDrift(string field, string value, string path)
+    {
+        StockDetailsDto dto = B("stock-details-5240.json", AvanzaTierBContext.Default.StockDetailsDto, n => n["dividends"]!["events"]![0]![field] = JsonNode.Parse(value));
+        var ex = Assert.Throws<SchemaDriftException>(() => AvanzaMapper.ToCorporateData(new OrderbookId("5240"), dto, Now));
+        Assert.False(ex.HaltsTrading);
+        Assert.Equal(path, Assert.Single(ex.Paths));
+    }
+
+    [Fact]
+    public void StockDetails_WithoutAShareCount_HasNone()
+    {
+        CorporateData data = AvanzaMapper.ToCorporateData(new OrderbookId("5240"), B("stock-details-5240.json", AvanzaTierBContext.Default.StockDetailsDto, n =>
+            n["stock"]!["numberOfShares"] = 0), Now);
+        Assert.Null(data.SharesOutstanding);
+        Assert.Equal(4, data.Dividends.Count);
+    }
+
     private T A<T>(string fixture, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> info, Action<JsonNode>? mutate = null) =>
         _json.Deserialize(mutate is null ? Fixtures.Bytes(fixture) : Fixtures.Mutate(fixture, mutate), info, fixture, "test", DtoTier.A);
 
-    private T B<T>(string fixture, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> info) =>
-        _json.Deserialize(Fixtures.Bytes(fixture), info, fixture, "test", DtoTier.B);
+    private T B<T>(string fixture, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> info, Action<JsonNode>? mutate = null) =>
+        _json.Deserialize(mutate is null ? Fixtures.Bytes(fixture) : Fixtures.Mutate(fixture, mutate), info, fixture, "test", DtoTier.B);
 }

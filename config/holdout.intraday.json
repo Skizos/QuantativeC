@@ -1,0 +1,9 @@
+{
+  "format": "qa-intraday-holdout/1",
+  "locked": true,
+  "days": 20,
+  "note": "Final holdout of the intraday research (ADR 0006, plan 17): while 'locked' is true, intraday backtests never read the last 'days' trading days with collected intraday bars. The window rolls with the collection, so the newest days are always unseen. Only the owner changes this file; Claude is blocked from editing it. To unlock, set locked=false and fill unlocked_by, unlocked_on and reason. Every run that touches the holdout is marked in the TrialLedger. The daily holdout (holdout.json) is separate and still guards the daily bars.",
+  "unlocked_by": null,
+  "unlocked_on": null,
+  "reason": null
+}

@@ -88,6 +88,43 @@ QE_API qe_status QE_CALL qe_bt_create(const qe_bt_config* config,
     });
 }
 
+QE_API qe_status QE_CALL qe_bt_set_courtage(qe_backtest* backtest, std::int64_t instrument,
+                                            double courtage_min, double courtage_rate) noexcept {
+    return guarded([&]() -> qe_status {
+        require_backtest(backtest);
+        require(instrument >= 0 &&
+                    instrument < static_cast<std::int64_t>(backtest->engine.instrument_count()),
+                "instrument out of range");
+        backtest->engine.set_courtage(static_cast<std::size_t>(instrument), courtage_min,
+                                      courtage_rate); // validates; unchanged on failure
+        return QE_OK;
+    });
+}
+
+QE_API qe_status QE_CALL qe_bt_set_fill_mode(qe_backtest* backtest, std::int32_t mode) noexcept {
+    return guarded([&]() -> qe_status {
+        require_backtest(backtest);
+        require(mode == QE_BT_FILL_DAILY || mode == QE_BT_FILL_INTRADAY,
+                "mode must be QE_BT_FILL_DAILY or QE_BT_FILL_INTRADAY");
+        backtest->engine.set_fill_mode(
+            static_cast<qe::backtest::FillMode>(mode)); // before the first step
+        return QE_OK;
+    });
+}
+
+QE_API qe_status QE_CALL qe_bt_set_half_spread(qe_backtest* backtest, std::int64_t instrument,
+                                               double half_spread_bps) noexcept {
+    return guarded([&]() -> qe_status {
+        require_backtest(backtest);
+        require(instrument >= 0 &&
+                    instrument < static_cast<std::int64_t>(backtest->engine.instrument_count()),
+                "instrument out of range");
+        backtest->engine.set_half_spread(static_cast<std::size_t>(instrument),
+                                         half_spread_bps); // validates; unchanged on failure
+        return QE_OK;
+    });
+}
+
 QE_API qe_status QE_CALL qe_bt_destroy(qe_backtest* backtest) noexcept {
     return guarded([&]() -> qe_status {
         if (backtest == nullptr) {

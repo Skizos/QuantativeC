@@ -1,7 +1,14 @@
 namespace QuantAnalyst.Core.Market;
 
 /// <summary>A chart response: the bars and the resolution the broker actually used (it may differ from the one asked for).</summary>
-public sealed record PriceHistory(IReadOnlyList<Bar> Bars, ChartResolution Resolution, decimal? PreviousClose);
+public sealed record PriceHistory(IReadOnlyList<Bar> Bars, ChartResolution Resolution, decimal? PreviousClose)
+{
+    /// <summary>
+    /// Gets the resolutions the broker says it would return for the same period, as it names them (e.g. "minute",
+    /// "five_minutes"); empty when it doesn't say. Plan 17 reads it to learn how much intraday history there is.
+    /// </summary>
+    public IReadOnlyList<string> AvailableResolutions { get; init; } = [];
+}
 
 /// <summary>One daily bar keyed by its exchange trading date (Europe/Stockholm).</summary>
 public readonly record struct DailyBar(DateOnly Date, decimal Open, decimal High, decimal Low, decimal Close, long Volume);

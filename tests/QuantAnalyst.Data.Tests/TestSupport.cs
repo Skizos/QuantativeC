@@ -48,6 +48,11 @@ internal sealed class FakeGateway : IBrokerGateway
         return Task.FromResult(Chart(id, period, resolution));
     }
 
+    public Func<OrderbookId, CorporateData>? Corporate { get; set; }
+
+    public Task<CorporateData> GetCorporateDataAsync(OrderbookId id, CancellationToken ct) =>
+        Corporate is { } answer ? Task.FromResult(answer(id)) : throw new NotSupportedException();
+
     public Task<SessionHealth> GetSessionHealthAsync(CancellationToken ct) => throw new NotSupportedException();
 
     public Task<IReadOnlyList<Account>> GetAccountsAsync(CancellationToken ct) => throw new NotSupportedException();

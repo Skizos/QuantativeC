@@ -81,7 +81,7 @@ internal static class BacktestCommands
         new("--ledger") { Description = $"Ledger file (default: <repository>/{TrialLedger.DefaultPath})" };
 
     /// <summary>Everything a run needs except the strategy (shared by run and sweep).</summary>
-    private sealed record Setup(BacktestRequest Template, IReadOnlyList<string> Notes);
+    internal sealed record Setup(BacktestRequest Template, IReadOnlyList<string> Notes);
 
     private static Setup Prepare(ParseResult parse, Inputs o, StrategyDefinition strategy)
     {
@@ -134,6 +134,11 @@ internal static class BacktestCommands
             using HistoryStore store = DataCommands.OpenExisting(parse.GetValue(o.Store)!);
             data = LoadStorePanel(store, QaCli.SplitList(tickers), from, readTo);
             notes.Add("Universe: current names only (survivorship-biased: delisted companies are missing).");
+            if (data.Instruments.Where(i => i.ForeignCurrency).ToList() is { Count: > 0 } foreign)
+            {
+                notes.Add(string.Create(CultureInfo.InvariantCulture,
+                    $"Foreign shares (ADR 0005): {string.Join(", ", foreign.Select(i => $"{i.Symbol} ({i.Currency}, last fixing {i.LastSekPerUnit:0.0000} SEK)"))}. Their prices are in SEK at each day's Riksbank fixing, so FX moves count; their tick table and courtage minimum are converted at the last fixing (an approximation); they pay the class's foreign courtage (UNVERIFIED until checked) and FX fee."));
+            }
             if (readTo != to)
             {
                 notes.Add($"Data read up to {readTo:yyyy-MM-dd}: the final holdout from {holdout.Start:yyyy-MM-dd} is locked.");
@@ -253,33 +258,39 @@ internal static class BacktestCommands
                 return 0;
             }
 
-            WriteHeader(w, setup, sweep.Trials[0].Record);
-            var table = new TextTable(("id", false), ("parameters", false), ("status", false), ("SR/yr", true), ("PSR(0)", true), ("return", true), ("max DD", true));
-            foreach (BacktestResult r in sweep.Trials.OrderByDescending(t => t.Record.Metrics?.SharpePerPeriod ?? double.NegativeInfinity).Take(parse.GetValue(top)))
-            {
-                TrialMetrics? m = r.Record.Metrics;
-                table.Add(r.Record.Id, Describe(r.Record.Parameters), Status(r.Record.Status), F(m?.SharpeAnnualised, "0.00"), F(m?.Psr0, "0.000"),
-                    Pct(m?.TotalReturn), Pct(m?.MaxDrawdown));
-            }
-
-            table.Write(w);
-            int ok = sweep.Trials.Count(t => t.Ok);
-            w.WriteLine($"{sweep.Trials.Count} configurations run and logged ({ok} ok).");
-            if (sweep.Best is { } best)
-            {
-                w.WriteLine($"Best: {best.Record.Id} {Describe(best.Record.Parameters)}, SR/yr {best.Record.Metrics!.SharpeAnnualised:0.00}.");
-                w.WriteLine(sweep.BestDsr is { } dsr
-                    ? $"Deflated Sharpe Ratio of the best: {dsr:0.000} over {sweep.StudyTrials} trials in the study ({(dsr >= 0.95 ? "significant at 5 %" : "NOT significant at 5 %")})."
-                    : "Deflated Sharpe Ratio of the best: n/a (needs 2+ completed trials with different Sharpe ratios).");
-            }
-
-            w.WriteLine(sweep.Pbo is { } pbo
-                ? $"PBO (CSCV, S = {pbo.Blocks}, {pbo.Combinations} splits): {pbo.Probability:0.000}; P(best in-sample loses out-of-sample): {pbo.ProbabilityOfOosLoss:0.000}."
-                : $"PBO: n/a (needs 2+ completed configurations and at least {BacktestSweep.MinPeriodsForPbo} return periods).");
-            w.WriteLine($"Ledger: {setup.Template.Ledger!.Path}. Model output; not financial advice.");
+            WriteSweep(w, setup, sweep, parse.GetValue(top));
             return 0;
         }));
         return command;
+    }
+
+    /// <summary>The text report of a sweep: the top rows by Sharpe, the best's Deflated Sharpe Ratio and the PBO.</summary>
+    internal static void WriteSweep(TextWriter w, Setup setup, SweepResult sweep, int top)
+    {
+        WriteHeader(w, setup, sweep.Trials[0].Record);
+        var table = new TextTable(("id", false), ("parameters", false), ("status", false), ("SR/yr", true), ("PSR(0)", true), ("return", true), ("max DD", true));
+        foreach (BacktestResult r in sweep.Trials.OrderByDescending(t => t.Record.Metrics?.SharpePerPeriod ?? double.NegativeInfinity).Take(top))
+        {
+            TrialMetrics? m = r.Record.Metrics;
+            table.Add(r.Record.Id, Describe(r.Record.Parameters), Status(r.Record.Status), F(m?.SharpeAnnualised, "0.00"), F(m?.Psr0, "0.000"),
+                Pct(m?.TotalReturn), Pct(m?.MaxDrawdown));
+        }
+
+        table.Write(w);
+        int ok = sweep.Trials.Count(t => t.Ok);
+        w.WriteLine($"{sweep.Trials.Count} configurations run and logged ({ok} ok).");
+        if (sweep.Best is { } best)
+        {
+            w.WriteLine($"Best: {best.Record.Id} {Describe(best.Record.Parameters)}, SR/yr {best.Record.Metrics!.SharpeAnnualised:0.00}.");
+            w.WriteLine(sweep.BestDsr is { } dsr
+                ? $"Deflated Sharpe Ratio of the best: {dsr:0.000} over {sweep.StudyTrials} trials in the study ({(dsr >= 0.95 ? "significant at 5 %" : "NOT significant at 5 %")})."
+                : "Deflated Sharpe Ratio of the best: n/a (needs 2+ completed trials with different Sharpe ratios).");
+        }
+
+        w.WriteLine(sweep.Pbo is { } pbo
+            ? $"PBO (CSCV, S = {pbo.Blocks}, {pbo.Combinations} splits): {pbo.Probability:0.000}; P(best in-sample loses out-of-sample): {pbo.ProbabilityOfOosLoss:0.000}."
+            : $"PBO: n/a (needs 2+ completed configurations and at least {BacktestSweep.MinPeriodsForPbo} return periods).");
+        w.WriteLine($"Ledger: {setup.Template.Ledger!.Path}. Model output; not financial advice.");
     }
 
     // ---- qa trials list / verify ------------------------------------------------------------------------
@@ -437,7 +448,7 @@ internal static class BacktestCommands
     private static string Sek(decimal amount) => amount.ToString("N0", CultureInfo.InvariantCulture) + " SEK";
 
     /// <summary>A cost model by class name (config/costs.&lt;name&gt;.json) or by path.</summary>
-    private static CostModel LoadCosts(string configDir, string nameOrPath) =>
+    internal static CostModel LoadCosts(string configDir, string nameOrPath) =>
         CostModel.Load(nameOrPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase) || nameOrPath.Contains(Path.DirectorySeparatorChar) || nameOrPath.Contains('/')
             ? nameOrPath
             : Path.Combine(configDir, $"costs.{nameOrPath}.json"));
@@ -473,14 +484,76 @@ internal static class BacktestCommands
                 throw new ArgumentException($"{r.Ticker}: no bars from {sourceName} in the requested range.");
             }
 
-            var instrument = new PanelInstrument(r.Ticker, 1, !string.Equals(r.Currency, "SEK", StringComparison.Ordinal), ParseTickTable(r.TickTableJson));
-            series.Add((instrument, [.. bars.Select(b => b.Bar)]));
+            IReadOnlyList<DailyBar> daily = [.. bars.Select(b => b.Bar)];
+            PanelInstrument instrument;
+            if (Markets.IsForeign(r.Currency))
+            {
+                if (Markets.ForCurrency(r.Currency) is null)
+                {
+                    throw new ArgumentException($"{r.Ticker} trades in {r.Currency}; the program trades shares in {Markets.CurrencyList} (ADR 0005).");
+                }
+
+                (daily, decimal last) = InSek(store, r, daily);
+                instrument = new PanelInstrument(r.Ticker, 1, true, Scaled(ParseTickTable(r.TickTableJson), last)) { Currency = r.Currency, LastSekPerUnit = last };
+            }
+            else
+            {
+                instrument = new PanelInstrument(r.Ticker, 1, false, ParseTickTable(r.TickTableJson)) { MarketPlace = r.MarketPlace }; // plan 22: First North's courtage
+            }
+
+            series.Add((instrument, daily));
         }
 
         return MarketPanel.FromDailyBars(series, source);
     }
 
-    private static TickSizeTable ParseTickTable(string json)
+    /// <summary>A fixing older than this for a bar means the FX history has a hole: refused rather than bridged.</summary>
+    internal const int MaxFixingAgeDays = 7;
+
+    /// <summary>
+    /// A foreign share's bars in SEK (ADR 0005): each bar at the latest Riksbank fixing on or before its date (published
+    /// about 16:15 Stockholm, before the US and Canadian close, so known when the bar closes). Returns the last fixing used.
+    /// </summary>
+    internal static (IReadOnlyList<DailyBar> Bars, decimal LastSekPerUnit) InSek(HistoryStore store, InstrumentRecord r, IReadOnlyList<DailyBar> bars)
+    {
+        string ccy = r.Currency;
+        DateOnly first = bars[0].Date, last = bars[^1].Date;
+        StoredFxRate[] rates = [.. store.GetFxRates(ccy, Data.Fx.RiksbankFxSource.Riksbank.Name, first.AddDays(-MaxFixingAgeDays), last)];
+        string fix = $"run 'qa fx import {ccy} --from {first.AddDays(-14):yyyy-MM-dd}' (or import {r.Ticker} again, which brings its fixings)";
+        if (rates.Length == 0 || rates[0].Rate.Date > first)
+        {
+            throw new ArgumentException($"{r.Ticker} trades in {ccy}, but no {ccy}/SEK fixing is stored for its first bar {first:yyyy-MM-dd}: {fix}.");
+        }
+
+        var converted = new List<DailyBar>(bars.Count);
+        int k = 0;
+        foreach (DailyBar b in bars)
+        {
+            while (k + 1 < rates.Length && rates[k + 1].Rate.Date <= b.Date)
+            {
+                k++;
+            }
+
+            FxRate fx = rates[k].Rate;
+            if (b.Date.DayNumber - fx.Date.DayNumber > MaxFixingAgeDays)
+            {
+                throw new ArgumentException($"{r.Ticker}: the {ccy}/SEK fixing for {b.Date:yyyy-MM-dd} is from {fx.Date:yyyy-MM-dd}, more than {MaxFixingAgeDays} days old: {fix}.");
+            }
+
+            decimal m = fx.SekPerUnit;
+            converted.Add(new DailyBar(b.Date, Sek(b.Open * m), Sek(b.High * m), Sek(b.Low * m), Sek(b.Close * m), b.Volume));
+        }
+
+        return (converted, rates[k].Rate.SekPerUnit);
+
+        static decimal Sek(decimal v) => decimal.Round(v, 6, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>A foreign tick table in SEK at one rate: an approximation, stated in the report (ADR 0005).</summary>
+    internal static TickSizeTable Scaled(TickSizeTable table, decimal sekPerUnit) =>
+        new([.. table.Bands.Select(b => new TickSizeBand(b.Min * sekPerUnit, b.Max * sekPerUnit, b.Tick * sekPerUnit))]);
+
+    internal static TickSizeTable ParseTickTable(string json)
     {
         using JsonDocument doc = JsonDocument.Parse(json);
         return new TickSizeTable([.. doc.RootElement.EnumerateArray().Select(b =>
@@ -489,7 +562,7 @@ internal static class BacktestCommands
 
     // ---- output -----------------------------------------------------------------------------------------
 
-    private static void WriteHeader(TextWriter w, Setup setup, TrialRecord record)
+    internal static void WriteHeader(TextWriter w, Setup setup, TrialRecord record)
     {
         BacktestRequest t = setup.Template;
         MarketPanel d = t.Data;
@@ -503,7 +576,7 @@ internal static class BacktestCommands
         w.WriteLine($"Study: {record.Study}");
     }
 
-    private static void WriteResult(TextWriter w, BacktestResult r, BacktestRequest t)
+    internal static void WriteResult(TextWriter w, BacktestResult r, BacktestRequest t)
     {
         TrialRecord rec = r.Record;
         w.WriteLine($"Trial {rec.Id}: {rec.Strategy}{(rec.Parameters.Count == 0 ? string.Empty : " " + Describe(rec.Parameters))} → {Status(rec.Status)}{(rec.Note is null ? string.Empty : $" ({rec.Note})")}");
@@ -576,7 +649,7 @@ internal static class BacktestCommands
         return result;
     }
 
-    private static (string Key, string Value) SplitPair(string item, string option)
+    internal static (string Key, string Value) SplitPair(string item, string option)
     {
         int eq = item.IndexOf('=', StringComparison.Ordinal);
         return eq <= 0 || eq == item.Length - 1
@@ -652,7 +725,7 @@ internal static class BacktestCommands
         throw new ArgumentException($"Not inside the repository, so the default ledger ({TrialLedger.DefaultPath}) is unknown; pass --ledger.");
     }
 
-    private static int Execute(ParseResult parse, Func<TextWriter, int> body) => DataCommands.Execute(parse, w =>
+    internal static int Execute(ParseResult parse, Func<TextWriter, int> body) => DataCommands.Execute(parse, w =>
     {
         try
         {

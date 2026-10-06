@@ -45,4 +45,5 @@ internal sealed partial class AvanzaTierAContext : JsonSerializerContext;
 [JsonSerializable(typeof(SearchResponseDto))]
 [JsonSerializable(typeof(PriceChartDto))]
 [JsonSerializable(typeof(TransactionsDto))]
+[JsonSerializable(typeof(StockDetailsDto))]
 internal sealed partial class AvanzaTierBContext : JsonSerializerContext;

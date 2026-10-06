@@ -23,6 +23,13 @@ Primary sources to check:
 - The uncross is random within a short window.
 
 **First North:** Nasdaq has announced a First North Growth Market **auction model** with **three scheduled intraday auctions** for some instruments (<https://view.news.eu.nasdaq.com/view?id=b6011b00da7e9e3cc866517ad4adb111d&lang=en>, extract only). **Consequence:** some First North names do not trade continuously. The instrument master needs a `trading_model` field (continuous vs periodic auction), and the backtest fill model must respect it.
+- *Re-checked 2026-09-30 (plan 22):* the model is for shares whose spread was above 7 % over two quarters, offered
+  instead of a liquidity provider; the auctions are at the 09:00 open, 11:00, 13:00, 15:00 and the 17:30 close; 15
+  Swedish and Finnish shares used it in January 2024; extended to Copenhagen in July 2025
+  ([Biostock](https://biostock.se/en/2024/01/nasdaq-introduces-auction-trading-on-first-north/),
+  [Nasdaq](https://view.news.eu.nasdaq.com/view?id=b7a88413341a94c95dea2b6f3a527d1ae&lang=en); search extracts). Every
+  other First North share trades continuously. No current list was found, so the program measures each share on its
+  last week of 10-minute bars (`TradingModelCheck`).
 
 Volatility guards and trading halts are not modelled in v1. When a halt occurs, the stale-data rule blocks orders.
 
@@ -30,6 +37,12 @@ Volatility guards and trading halts are not modelled in v1. When a halt occurs, 
 
 - Holidays: closed on Swedish public holidays plus exchange-specific days such as Christmas Eve, Midsummer Eve and New Year's Eve. A search extract says 2026 has about 10 weekday closures and several half days (UNVERIFIED). Christmas Eve 2026 (Thu 24 Dec) is a closed day per the same extract.
 - **I did not transcribe a date list**, because no primary source could be read. Plan: Phase 4 adds `config/market-calendar.XSTO.2026.json` and `…2027.json`. You fill them from Nasdaq's official calendar (<https://www.nasdaq.com/european-market-activity/trading-hours>) or a vendor, and a test checks every weekday of the year is classified as full, half or closed.
+- **Cross-check 2026-10-06 (not a verification):** nasdaq.com, avanza.se and the calendar sites are blocked from the
+  development container, so only web-search summaries could be read. They agree with both drafts: 2026 closed
+  01-01, 01-06, 04-03, 04-06, 05-01, 05-14, 06-19, 12-24, 12-25, 12-31 and half days (13:00) 01-05, 04-02, 04-30,
+  05-13, 10-30; 2027 closed 03-26, 03-29, 05-06, 06-25 among the others and half days 03-25, 04-30, 05-05, 11-05. The
+  summaries cite markethoursnow.com and bellhour.com, not Nasdaq. `verified_on` stays empty: the owner checks the
+  dates against Nasdaq's page (it gates Confirm).
 
 ## 3. Tick sizes (MiFID II RTS 11)
 
@@ -60,6 +73,40 @@ Primary pages (blocked here; UNVERIFIED extracts):
 | Medium | 69 kr per order up to 100,000 kr; above that 0.069 % | UNVERIFIED |
 | Fast Pris | max 99 kr per order (flat) | UNVERIFIED |
 | Pro / Private Banking | separate classes. A Pro extract says a minimum of 49 kr or 0.034 %, plus a monthly minimum commission. | UNVERIFIED, out of scope for v1 |
+
+### Verified 2026-10-01: the price list for trading in Sweden (owner's screenshot)
+
+Source: Avanza, "Prislista för handel i Sverige"
+(<https://www.avanza.se/konton-lan-prislista/prislista/handel-sverige.html>), screenshot by the owner on 2026-10-01,
+saved as [`assets/avanza-prislista-handel-sverige-2026-10-01.png`](assets/avanza-prislista-handel-sverige-2026-10-01.png).
+Rörligt courtage (variable rate) / lägsta courtage (minimum) per order:
+
+| Marketplace | Order type | Start | Mini | Small | Medium | Fast Pris |
+|---|---|---|---|---|---|---|
+| **Stockholmsbörsen** | internet | 0 % / 0 SEK | 0.25 % / 1 SEK | 0.15 % / 39 SEK | 0.069 % / 69 SEK | 0 % / 99 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+| **First North** | internet | 0.25 % / 1 SEK | 0.25 % / 1 SEK | 0.15 % / 39 SEK | 0.069 % / 69 SEK | 0 % / 99 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+| **NGM, Nordic MTF, PepMarket** | internet | 0.25 % / 19 SEK | 0.25 % / 19 SEK | 0.15 % / 39 SEK | 0.069 % / 69 SEK | 0.045 % / 99 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+| **Spotlight Stock Market** | internet | 0.25 % / 19 SEK | 0.25 % / 19 SEK | 0.15 % / 59 SEK | 0.069 % / 69 SEK | 0.045 % / 99 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+| **Inofficiella (beQuoted)** | internet | 0.25 % / 119 SEK | 0.25 % / 119 SEK | 0.15 % / 119 SEK | 0.069 % / 119 SEK | 0.045 % / 119 SEK |
+| | phone (via broker) | 0.30 % / 238 SEK | 0.30 % / 238 SEK | 0.15 % / 198 SEK | 0.069 % / 198 SEK | 0.045 % / 198 SEK |
+
+- The courtage on an order is max(rate × order value, minimum). Fast Pris on Stockholmsbörsen and First North is a
+  flat 99 SEK.
+- **In the cost files** (`config/costs.avanza-*.json`): the Stockholmsbörsen internet row is each class's `courtage`
+  (verified 2026-09-26, re-confirmed by this screenshot); the First North internet row is `marketplace_courtage.FNSE`
+  (verified 2026-10-01, plan 22). The program places internet orders only, so the phone rows are not used.
+- **Not modelled yet:** NGM, Nordic MTF, PepMarket, Spotlight and beQuoted. Adding one needs Avanza's marketplace code
+  for it (as `FNSE` is First North's), which the program has not seen yet; until then such shares are refused.
+- **Not on the screenshot:** the Start footnote (the 50,000 SEK limit and the 500 free trades a year), and whether
+  First North trades count towards those 500 (the program assumes they don't and charges them First North's courtage).
+  A web search on 2026-10-06 (avanza.se blocked from the container; summaries of third-party pages such as
+  sparacash.se and enpassivinkomst.se) agrees: Start is free on the Stockholm exchange until the account has had
+  50,000 SEK or more than 500 free trades in 12 months, then it moves to Mini for good. Not a verification: the
+  footnote on Avanza's own price list decides.
 
 - **Currency exchange fee** for non-SEK instruments: **0.25 %** per a search extract (UNVERIFIED).
 - **Switching class:** free and immediate, per Avanza help pages (extract).

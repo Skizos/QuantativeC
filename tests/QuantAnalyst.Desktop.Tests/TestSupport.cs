@@ -72,6 +72,9 @@ internal sealed class ScriptedRunner
 
     public List<string[]> Calls { get; } = [];
 
+    /// <summary>Gets the services the last command ran with (e.g. the session observer the app passed).</summary>
+    public AvanzaCliServices? LastServices { get; private set; }
+
     public ScriptedRunner Answer(int code, string[]? output = null, string[]? errors = null)
     {
         _answers.Enqueue((code, output ?? [], errors ?? []));
@@ -83,6 +86,7 @@ internal sealed class ScriptedRunner
         lock (Calls)
         {
             Calls.Add(args);
+            LastServices = services;
         }
 
         (int code, string[] lines, string[] errors) = _answers.Count > 0 ? _answers.Dequeue() : (0, [], []);
@@ -98,4 +102,14 @@ internal sealed class ScriptedRunner
 
         return code;
     }
+}
+
+/// <summary>User environment variables in memory: tests never touch the real ones (the live-trading account lives there).</summary>
+internal sealed class FakeEnvironment : IUserEnvironment
+{
+    public Dictionary<string, string?> Values { get; } = new(StringComparer.Ordinal);
+
+    public string? Read(string name) => Values.GetValueOrDefault(name);
+
+    public void Write(string name, string? value) => Values[name] = value;
 }

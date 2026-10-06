@@ -52,9 +52,13 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
         Check("R1", "account allowlist", c.AllowedAccountIds.Contains(c.Account.Value), c.Account.Masked, $"{c.AllowedAccountIds.Count} allowed account(s)",
             "the account is not in the allowlist");
 
+    // Plan 21: a share taken off the list while held may be sold (R4 caps the sell at the position), never bought.
     private static RiskCheckResult R2(PreparedOrder o, RiskContext c) =>
-        Check("R2", "instrument allowlist", c.Universe.Contains(o.OrderbookId), $"{o.Intent.Ticker} ({o.OrderbookId})", $"{c.Universe.Entries.Count} instrument(s)",
-            "the instrument is not in config/universe.json");
+        c.Universe.IsExiting(o.OrderbookId)
+            ? Check("R2", "instrument allowlist", o.Side == OrderSide.Sell, $"{o.Intent.Ticker} ({o.OrderbookId}), exiting, {o.Side}", "exiting: sells only",
+                "the instrument is off the list and may only be sold")
+            : Check("R2", "instrument allowlist", c.Universe.Contains(o.OrderbookId), $"{o.Intent.Ticker} ({o.OrderbookId})", $"{c.Universe.Entries.Count} instrument(s)",
+                "the instrument is not in config/universe.json");
 
     private static RiskCheckResult R3(PreparedOrder o)
     {
@@ -92,8 +96,9 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
 
     private RiskCheckResult R6(PreparedOrder o, RiskContext c)
     {
-        decimal cap = Math.Min(Limits.MaxOrderValueSek, Limits.MaxOrderValuePctOfAccount * Limits.SizingValue(c.AccountValue));
-        return Check("R6", "max order value", o.Value <= cap, Sek(o.Value),
+        decimal cap = Limits.MaxOrderValue(c.AccountValue);
+        decimal value = ValueSek(o, c);
+        return Check("R6", "max order value", value <= cap, Sek(value) + InCurrency(o, c),
             $"{Sek(cap)} = min({Sek(Limits.MaxOrderValueSek)}, {Pct(Limits.MaxOrderValuePctOfAccount)} of {Sek(Limits.SizingValue(c.AccountValue))}){CapNote(c.AccountValue)}",
             "the order is too large");
     }
@@ -105,7 +110,7 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
             return Pass("R7", "max position per instrument", "sell (reduces the position)", $"{Pct(Limits.MaxPositionPctOfAccount)} of account value");
         }
 
-        decimal after = c.PositionValues.GetValueOrDefault(o.OrderbookId) + WorkingBuys(c, o.OrderbookId) + o.Value;
+        decimal after = c.PositionValues.GetValueOrDefault(o.OrderbookId) + WorkingBuys(c, o.OrderbookId) + ValueSek(o, c);
         decimal cap = Limits.MaxPositionPctOfAccount * Limits.SizingValue(c.AccountValue);
         return Check("R7", "max position per instrument", after <= cap, $"{Sek(after)} after the order (incl. working buys)", Sek(cap) + CapNote(c.AccountValue),
             "the position would be too large a share of the account");
@@ -113,8 +118,8 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
 
     private RiskCheckResult R8(PreparedOrder o, RiskContext c)
     {
-        decimal after = c.PositionValues.Values.Sum() + c.OpenOrders.Where(w => w.Side == OrderSide.Buy).Sum(w => w.RemainingVolume * w.LimitPrice)
-            + (o.Side == OrderSide.Buy ? o.Value : 0m);
+        decimal after = c.PositionValues.Values.Sum() + c.OpenOrders.Where(w => w.Side == OrderSide.Buy).Sum(w => w.RemainingValueSek)
+            + (o.Side == OrderSide.Buy ? ValueSek(o, c) : 0m);
         decimal cap = Limits.MaxGrossExposurePct * Limits.SizingValue(c.AccountValue);
         return Check("R8", "max gross exposure", after <= cap, $"{Sek(after)} after the order", Sek(cap) + CapNote(c.AccountValue),
             "gross exposure would exceed the limit (no leverage)");
@@ -127,7 +132,7 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
             return Pass("R9", "available cash", "sell", "buys only");
         }
 
-        decimal needed = o.Value + c.EstimatedFees;
+        decimal needed = ValueSek(o, c) + c.EstimatedFees;
         return Check("R9", "available cash", needed <= c.AvailableCash, $"{Sek(needed)} incl. fees {Sek(c.EstimatedFees)}", Sek(c.AvailableCash),
             "not enough cash for the order and its fees");
     }
@@ -186,6 +191,23 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
 
     private RiskCheckResult R16(RiskContext c)
     {
+        if (c.Market is { } m)
+        {
+            // ADR 0005: the order's own market, on its own clock and calendar.
+            TimeOnly there = TimeOnly.FromDateTime(MarketTime.ToZone(c.NowUtc, m.Zone).DateTime);
+            if (m.Today is not { IsTradingDay: true } marketDay || m.Plan is not { } plan)
+            {
+                return Fail("R16", "trading window", m.Today is null ? $"no {m.Mic} calendar for this date" : $"{m.Mic}: {m.Today.Kind} ({m.Today.Name ?? "no session"})",
+                    "a trading day", $"the {m.Mic} market is closed today");
+            }
+
+            string windowOpen = TimeOnly.FromDateTime(MarketTime.ToZone(plan.WindowOpenUtc, m.Zone).DateTime).ToString("HH\\:mm", CultureInfo.InvariantCulture);
+            string windowClose = TimeOnly.FromDateTime(MarketTime.ToZone(plan.WindowCloseUtc, m.Zone).DateTime).ToString("HH\\:mm", CultureInfo.InvariantCulture);
+            return Check("R16", "trading window", c.NowUtc >= plan.WindowOpenUtc && c.NowUtc < plan.WindowCloseUtc,
+                $"{there:HH\\:mm\\:ss} {m.Clock} ({marketDay.Kind} day, {m.Mic})", $"{windowOpen}–{windowClose} {m.Clock}",
+                "outside the continuous-trading window (auctions and the first minutes are avoided)");
+        }
+
         TimeOnly local = TimeOnly.FromDateTime(MarketTime.ToStockholm(c.NowUtc).DateTime);
         if (c.Today is not { IsTradingDay: true } day)
         {
@@ -254,7 +276,14 @@ public sealed class PreTradeRiskEngine(RiskLimits limits)
     }
 
     private static decimal WorkingBuys(RiskContext c, OrderbookId id) =>
-        c.OpenOrders.Where(w => w.OrderbookId == id && w.Side == OrderSide.Buy).Sum(w => w.RemainingVolume * w.LimitPrice);
+        c.OpenOrders.Where(w => w.OrderbookId == id && w.Side == OrderSide.Buy).Sum(w => w.RemainingValueSek);
+
+    /// <summary>The order's value in SEK (ADR 0005): volume × limit in the share's currency, at the context's rate.</summary>
+    private static decimal ValueSek(PreparedOrder o, RiskContext c) => o.Value * c.FxRate;
+
+    /// <summary>For a foreign share: " (1 234.00 USD at 9.4000)", so the card shows both; empty for SEK.</summary>
+    private static string InCurrency(PreparedOrder o, RiskContext c) =>
+        c.FxRate == 1m ? string.Empty : string.Create(CultureInfo.InvariantCulture, $" ({o.Value:N2} at {c.FxRate:0.0000} SEK per unit)");
 
     private static RiskCheckResult Check(string id, string name, bool passed, string observed, string limit, string failMessage) =>
         new(id, name, passed, observed, limit, passed ? "ok" : failMessage);

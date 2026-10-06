@@ -127,6 +127,13 @@ internal sealed class AvanzaGateway(AvanzaApiClient api, AvanzaStreamClient stre
         return AvanzaMapper.ToMarketSnapshot(id, dto, time.GetUtcNow());
     }
 
+    public async Task<CorporateData> GetCorporateDataAsync(OrderbookId id, CancellationToken ct)
+    {
+        StockDetailsDto dto = await api.GetAsync(
+            AvanzaRoutes.StockDetails, AvanzaRoutes.StockDetails.Path(id), AvanzaTierBContext.Default.StockDetailsDto, StockDetailsDto.Version, ct).ConfigureAwait(false);
+        return AvanzaMapper.ToCorporateData(id, dto, time.GetUtcNow());
+    }
+
     public async Task<PriceHistory> GetPriceHistoryAsync(OrderbookId id, ChartPeriod period, ChartResolution? resolution, CancellationToken ct)
     {
         string query = "?timePeriod=" + WireName(period.ToString()) + (resolution is { } r ? "&resolution=" + WireName(r.ToString()) : string.Empty);

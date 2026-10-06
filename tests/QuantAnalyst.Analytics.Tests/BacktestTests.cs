@@ -355,6 +355,8 @@ public sealed class BacktestRunnerTests : IDisposable
     [InlineData("buy-and-hold", "")]
     [InlineData("ma-cross", "fast=5,slow=20")]
     [InlineData("random-targets", "seed=3")]
+    [InlineData("inverse-vol", "")]
+    [InlineData("risk-parity", "")]
     public void HonestStrategies_PassTheLeakageCheck(string name, string parameters)
     {
         Dictionary<string, string> p = parameters.Length == 0

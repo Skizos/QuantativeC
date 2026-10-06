@@ -5,11 +5,24 @@
   "currency": "SEK",
   "courtage": { "min": 1.0, "rate": 0.0025 },
   "fx_fee_rate": 0.0025,
+  "foreign_courtage": {
+    "USD": { "min": 1.0, "rate": 0.0025 },
+    "CAD": { "min": 1.0, "rate": 0.0025 },
+    "source_url": "https://www.avanza.se/konton-lan-prislista/prislista/handel-utland.html",
+    "verified_on": null,
+    "basis": "UNVERIFIED (2026-09-28, ADR 0005): a search-engine extract of Avanza's price list for foreign trading (avanza.se is not reachable from the development container): 0.25 %, minimum 1 USD for US shares, and the same in CAD for Canadian shares (the CAD minimum is assumed equal). The FX fee is this file's fx_fee_rate. Check against Avanza's 'Prislista för utlandshandel' and set verified_on."
+  },
+  "marketplace_courtage": {
+    "FNSE": { "min": 1.0, "rate": 0.0025 },
+    "source_url": "https://www.avanza.se/konton-lan-prislista/prislista/handel-sverige.html",
+    "verified_on": "2026-10-01",
+    "basis": "Verified 2026-10-01 against the owner's screenshot of Avanza's price list for trading in Sweden (docs/research/assets/avanza-prislista-handel-sverige-2026-10-01.png, transcribed in docs/research/market-rules.md section 4): First North, Mini: rörligt courtage 0.25 %, lägsta courtage 1 SEK (internet orders; phone orders cost more and are not used)."
+  },
   "slippage_bps": 5.0,
   "half_spread_bps": 5.0,
   "participation_cap": 0.10,
   "suits_trades_sek": { "from": null, "to": 15600 },
   "source_url": "https://www.avanza.se/priser-och-avgifter.html",
   "verified_on": "2026-09-26",
-  "basis": "Nasdaq Stockholm (main market) courtage from the owner's screenshot of Avanza's price list, 2026-09-26: 'Mini. För dig som gör små affärer under 15 600 kr' - rörligt courtage 0,25 %, lägsta courtage 1 kr. Other marketplaces cost more (Spotlight Stock Market, NGM and Nordic MTF from 19 kr); backtests only accept main-market instruments. The FX fee is not on this table (0.25 % as checked earlier). Slippage, half-spread and participation cap are modelling choices."
+  "basis": "Nasdaq Stockholm (main market) courtage from the owner's screenshot of Avanza's price list, 2026-09-26: 'Mini. För dig som gör små affärer under 15 600 kr' - rörligt courtage 0,25 %, lägsta courtage 1 kr. Other marketplaces cost more (Spotlight Stock Market, NGM and Nordic MTF from 19 kr); backtests accept the main market and First North (marketplace_courtage, plan 22), nothing else. The FX fee is not on this table (0.25 % as checked earlier). Slippage, half-spread and participation cap are modelling choices. Re-confirmed 2026-10-01 by the owner's screenshot of the whole price list for trading in Sweden (docs/research/assets/avanza-prislista-handel-sverige-2026-10-01.png): the Stockholmsbörsen row matches."
 }

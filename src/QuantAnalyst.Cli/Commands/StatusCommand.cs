@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.Globalization;
 using System.Text.Json;
 using QuantAnalyst.Analytics.Backtesting;
+using QuantAnalyst.Core;
 using QuantAnalyst.Core.Market;
 using QuantAnalyst.Data.Calendar;
 using QuantAnalyst.Data.History;
@@ -139,9 +140,23 @@ internal static class StatusCommand
 
         MarketCalendar? calendar = Try(r, "Calendar", () => MarketCalendarLoader.LoadDirectory(configDir));
         Universe? universe = Try(r, "Allowlist", () => Universe.Load(Path.Combine(configDir, Universe.FileName)));
+        IReadOnlyList<MarketInfo> foreign = universe is null ? [] : CheckAllowlist(r, universe, paths.Store, calendar);
+        if (universe is { Exiting.Count: > 0 })
+        {
+            CheckExiting(r, universe, paths);
+        }
+
         if (universe is not null)
         {
-            CheckAllowlist(r, universe, paths.Store, calendar);
+            CheckManual(r, universe, paths, time);
+        }
+
+        CheckAlerts(r, paths);
+        CheckBackup(r, configDir, paths);
+
+        if (calendar is not null)
+        {
+            CheckIntraday(r, paths.Store, calendar);
         }
 
         if (universe is { Entries.Count: > 0 } && limits is not null && universe.Entries.Count * limits.MaxPositionPctOfAccount < 1m)
@@ -150,12 +165,37 @@ internal static class StatusCommand
             r.Add(Mark.Warn, "Invested", string.Create(CultureInfo.InvariantCulture,
                 $"at most {cap:P0} of the account: R7 allows {limits.MaxPositionPctOfAccount:P0} per name and the allowlist has {universe.Entries.Count}"));
             r.Step(Priority.Advice, string.Create(CultureInfo.InvariantCulture,
-                $"With {universe.Entries.Count} name(s) Paper can invest only {cap:P0} (R7: {limits.MaxPositionPctOfAccount:P0} per name), whatever the backtest held. Add names (up to 5) to use more of the account."));
+                $"With {universe.Entries.Count} name(s) Paper can invest only {cap:P0} (R7: {limits.MaxPositionPctOfAccount:P0} per name), whatever the backtest held. Add names (up to {Allowlist.MaxNames}) to use more of the account."));
         }
 
         if (calendar is not null)
         {
             CheckCalendar(r, calendar);
+        }
+
+        // ADR 0005: a US or Canadian share on the list adds its market's calendar and decision to the session.
+        var foreignSchedules = new List<TradingSchedule>();
+        foreach (MarketInfo market in foreign)
+        {
+            MarketCalendar other;
+            try
+            {
+                other = MarketCalendarLoader.LoadDirectory(configDir, market.Mic);
+            }
+            catch (CalendarConfigException ex)
+            {
+                // The session still runs; it skips this market's shares (a warning, not a blocker).
+                r.Add(Mark.Warn, $"Calendar {market.Mic}", $"not loaded ({ex.Message}): Paper skips the {market.Currency} shares");
+                continue;
+            }
+
+            r.Add(other.IsVerified ? Mark.Ok : Mark.Warn, $"Calendar {market.Mic}",
+                other.IsVerified ? "verified" : $"{string.Join(", ", other.UnverifiedYears)} not verified: Paper runs (foreign shares trade on paper only)");
+            if (calendar is not null && limits is not null && paper is not null
+                && Try(r, "Paper account", () => new TradingSchedule(other, limits, paper.DecisionTime, calendar)) is { } schedule)
+            {
+                foreignSchedules.Add(schedule);
+            }
         }
 
         CheckAuditAndGate(r, paths, promotion, time);
@@ -170,7 +210,7 @@ internal static class StatusCommand
         }
         else if (calendar is not null && limits is not null && paper is not null && !r.Blocked)
         {
-            r.Step(Priority.Session, NextSession(r.Now, Try(r, "Paper account", () => new TradingSchedule(calendar, limits, paper.DecisionTime))));
+            r.Step(Priority.Session, NextSession(r.Now, Try(r, "Paper account", () => new TradingSchedule(calendar, limits, paper.DecisionTime)), foreignSchedules));
         }
 
         return r;
@@ -303,26 +343,28 @@ internal static class StatusCommand
         }
     }
 
-    private static void CheckAllowlist(StatusReport r, Universe universe, string storePath, MarketCalendar? calendar)
+    /// <summary>The allowlist and its history; returns the foreign markets on it (ADR 0005), from the stored instruments.</summary>
+    private static List<MarketInfo> CheckAllowlist(StatusReport r, Universe universe, string storePath, MarketCalendar? calendar)
     {
+        var foreign = new List<MarketInfo>();
         if (universe.Entries.Count == 0)
         {
             r.Add(Mark.Todo, "Allowlist", "empty: every order would be rejected (R2)");
             r.Step(Priority.Allowlist, "Choose what may be traded (SEK shares): qa history import ERIC-B, then qa universe add ERIC-B. Repeat per name.");
-            return;
+            return foreign;
         }
 
         r.Add(Mark.Ok, "Allowlist", $"{universe.Entries.Count}: {string.Join(", ", universe.Entries.Select(e => e.Ticker))} (qa universe list)");
         if (!File.Exists(storePath))
         {
             r.Add(Mark.Todo, "History", $"no history store at {storePath}; 'qa paper run' imports a year per name when it starts");
-            return;
+            return foreign;
         }
 
         HistoryStore? history = Try(r, "History", () => HistoryStore.Open(storePath));
         if (history is null)
         {
-            return;
+            return foreign;
         }
 
         using (history)
@@ -341,8 +383,15 @@ internal static class StatusCommand
 
             var parts = new List<string>();
             bool behind = false;
+            foreign.AddRange(ForeignMarkets(history, universe));
             foreach (UniverseEntry e in universe.Entries)
             {
+                if (history.GetInstrument(e.OrderbookId)?.Instrument is { } record && Allowlist.NotContinuous(record) is { } why)
+                {
+                    r.Add(Mark.Fail, "Allowlist", why);
+                    r.Step(Priority.Allowlist, $"Take {e.Ticker} off the allowlist: qa universe remove {e.Ticker.Replace(' ', '-')}");
+                }
+
                 IReadOnlyList<StoredBar> bars = hasSource ? history.GetDailyBars(e.OrderbookId, source) : [];
                 DateOnly? last = bars.Count > 0 ? bars[^1].Bar.Date : null;
                 behind |= last is null || last < wanted;
@@ -351,6 +400,172 @@ internal static class StatusCommand
 
             r.Add(Mark.Ok, "History", string.Join("; ", parts) + (behind ? " ('qa paper run' tops it up when it starts)" : string.Empty));
         }
+
+        return foreign;
+    }
+
+    /// <summary>Plan 21: shares taken off the list while held are sold by the next session, then dropped by the owner.</summary>
+    private static void CheckExiting(StatusReport r, Universe universe, StatusPaths paths)
+    {
+        IReadOnlyDictionary<OrderbookId, long>? held = Try(r, "Exiting", () => PaperBook.HeldIn(Path.Combine(paths.StateDir, TradingCommands.PaperDirName)));
+        if (held is null)
+        {
+            return;
+        }
+
+        foreach (UniverseEntry e in universe.Exiting)
+        {
+            if (held.GetValueOrDefault(e.OrderbookId) is var left and > 0)
+            {
+                r.Add(Mark.Warn, "Exiting", string.Create(CultureInfo.InvariantCulture, $"{e.Ticker}: off the list, still held ({left}); the next session sells it (sells only)"));
+            }
+            else
+            {
+                r.Add(Mark.Ok, "Exiting", $"{e.Ticker}: sold; take it off with qa universe remove {e.Ticker.Replace(' ', '-')}");
+                r.Step(Priority.Advice, $"{e.Ticker} is sold: take it off the exiting list with qa universe remove {e.Ticker.Replace(' ', '-')}");
+            }
+        }
+    }
+
+    /// <summary>Plan 25: the warnings and criticals of the last day, newest last. Silent without any.</summary>
+    private static void CheckAlerts(StatusReport r, StatusPaths paths)
+    {
+        Trading.Alerts.Alert[]? recent = Try(r, "Alerts", () => (IReadOnlyList<Trading.Alerts.Alert>)new Trading.Alerts.AlertLog(paths.StateDir).Since(r.Now.AddDays(-1))) is { } all
+            ? [.. all.Where(a => a.Level != Trading.Alerts.AlertLevel.Info)]
+            : null;
+        if (recent is not { Length: > 0 })
+        {
+            return;
+        }
+
+        bool critical = recent.Any(a => a.Level == Trading.Alerts.AlertLevel.Critical);
+        Trading.Alerts.Alert last = recent[^1];
+        r.Add(critical ? Mark.Fail : Mark.Warn, "Alerts", string.Create(CultureInfo.InvariantCulture,
+            $"{recent.Length} in the last day; the last: {Clock(last.AtUtc)} {last.Title}: {last.Text} (qa alerts)"));
+        if (critical)
+        {
+            r.Step(Priority.Session, $"Read today's alerts ('qa alerts'): {last.Title.ToLowerInvariant()} at {Clock(last.AtUtc)}. Then 'qa status' again.");
+        }
+    }
+
+    /// <summary>Plan 25: when the last backup was made and whether it was complete; a step when none is set up.</summary>
+    private static void CheckBackup(StatusReport r, string configDir, StatusPaths paths)
+    {
+        Trading.Backup.BackupSettings? settings;
+        try
+        {
+            settings = Trading.Backup.BackupSettings.Load(configDir);
+        }
+        catch (TradingConfigException ex)
+        {
+            // A broken backup setting never holds back a session: a warning, with advice.
+            r.Add(Mark.Warn, "Backup", ex.Message);
+            r.Step(Priority.Advice, $"Fix the backup setting: {ex.Message} (or set it again: qa backup setup --to <folder>)");
+            return;
+        }
+
+        if (settings is null)
+        {
+            r.Add(Mark.Todo, "Backup", "none set up: the audit log, the Paper book, the ledger and the price store are on this PC only");
+            r.Step(Priority.Advice, "Set up backups to OneDrive or another disk: qa backup setup --to <folder> (then qa backup). They are made after each session and evening import.");
+            return;
+        }
+
+        string? latest = Try(r, "Backup", () => Trading.Backup.Backups.Latest(settings.To));
+        Trading.Backup.BackupManifest? manifest = latest is null ? null : Trading.Backup.BackupManifest.Load(latest);
+        string where = $"to {settings.To} (keep {settings.Keep}, automatic {(settings.Automatic ? "on" : "off")})";
+        if (manifest is null)
+        {
+            r.Add(Mark.Warn, "Backup", $"none made yet {where}: qa backup");
+            r.Step(Priority.Advice, "Make the first backup: qa backup");
+            return;
+        }
+
+        bool old = r.Now - manifest.CreatedUtc > TimeSpan.FromDays(3);
+        string when = string.Create(CultureInfo.InvariantCulture, $"last {MarketTime.ToStockholm(manifest.CreatedUtc):yyyy-MM-dd HH:mm}");
+        if (!manifest.Complete)
+        {
+            r.Add(Mark.Warn, "Backup", $"{when} INCOMPLETE ({string.Join("; ", manifest.Items.Where(i => !i.Ok).Select(i => i.Name))}) {where}: qa backup verify");
+        }
+        else
+        {
+            r.Add(old ? Mark.Warn : Mark.Ok, "Backup", $"{when}, checked {where}{(old ? ": over 3 days old, run qa backup" : string.Empty)}");
+        }
+    }
+
+    /// <summary>Plan 23: the owner's waiting buys and sells by hand, and the shares the strategy leaves to the owner. Silent without any.</summary>
+    private static void CheckManual(StatusReport r, Universe universe, StatusPaths paths, TimeProvider time)
+    {
+        string paperDir = Path.Combine(paths.StateDir, TradingCommands.PaperDirName);
+        IReadOnlyList<ManualOrderRequest>? waiting = Try(r, "Manual", () => new ManualOrderInbox(paperDir, time).Pending());
+        IReadOnlySet<OrderbookId>? manual = Try(r, "Manual", () => PaperBook.ManualIn(paperDir));
+        if (waiting is { Count: > 0 })
+        {
+            bool running = SessionLock.Holder(paths.StateDir) is not null;
+            r.Add(Mark.Ok, "Manual", $"{waiting.Count} waiting: {string.Join("; ", waiting.Select(w => $"{w.Describe()} [{w.Id}]"))}; "
+                + (running ? "the running Paper session sends them in its trading window" : "the next Paper session sends them in its trading window")
+                + " (qa paper orders)");
+        }
+
+        if (manual is { Count: > 0 })
+        {
+            string tickers = string.Join(", ", manual
+                .Select(id => universe.Entries.Concat(universe.Exiting).FirstOrDefault(e => e.OrderbookId == id)?.Ticker ?? id.Value)
+                .Order(StringComparer.Ordinal));
+            r.Add(Mark.Ok, "Manual", $"{tickers}: yours (bought or sold by hand), the strategy leaves them; 'qa paper release <TICKER>' gives one back");
+        }
+    }
+
+    /// <summary>
+    /// Plan 18 (P6): Avanza keeps 1- and 5-minute bars for the day only, and the catch-up reaches back a week at 10
+    /// minutes, so a missed evening is noticed while it can still be collected. Silent until intraday bars are collected.
+    /// </summary>
+    private static void CheckIntraday(StatusReport r, string storePath, MarketCalendar calendar)
+    {
+        if (!File.Exists(storePath) || Try(r, "Intraday bars", () => HistoryStore.Open(storePath)) is not { } history)
+        {
+            return;
+        }
+
+        IntradayGaps? gaps;
+        using (history)
+        {
+            gaps = IntradayImporter.Gaps([.. history.GetIntradayCollectedDays(AvanzaChartImporter.AvanzaPriceChart.Name)], calendar, r.Now);
+        }
+
+        if (gaps is null)
+        {
+            return;
+        }
+
+        CultureInfo c = CultureInfo.InvariantCulture;
+        static string Days(IEnumerable<DateOnly> days) => string.Join(", ", days.Select(d => d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)));
+        if (gaps.None)
+        {
+            r.Add(Mark.Ok, "Intraday bars", string.Create(c, $"collected to {gaps.Last:yyyy-MM-dd}, no trading day missing in the last {IntradayImporter.GapLookBackDays} days"));
+            return;
+        }
+
+        var parts = new List<string> { string.Create(c, $"collected to {gaps.Last:yyyy-MM-dd}") };
+        if (gaps.TodayDue)
+        {
+            parts.Add("today's not yet (Avanza drops the 1- and 5-minute bars at midnight)");
+            r.Step(Priority.Advice, "Collect today's intraday bars before midnight: qa intraday import (or Start-ScheduledTask 'QuantAnalyst intraday import').");
+        }
+
+        if (gaps.CatchUp.Count > 0)
+        {
+            parts.Add($"missing {Days(gaps.CatchUp)} (the catch-up still reaches them as 10-minute bars)");
+            r.Step(Priority.Advice, string.Create(c,
+                $"Catch up the missed intraday day(s) while Avanza still has them (until {gaps.CatchUp[0].AddDays(IntradayImporter.FallbackDays):yyyy-MM-dd} for the first): qa intraday import"));
+        }
+
+        if (gaps.Lost.Count > 0)
+        {
+            parts.Add($"lost {Days(gaps.Lost)} (older than a week)");
+        }
+
+        r.Add(Mark.Warn, "Intraday bars", string.Join("; ", parts));
     }
 
     private static void CheckCalendar(StatusReport r, MarketCalendar calendar)
@@ -498,11 +713,16 @@ internal static class StatusCommand
         public void Create(byte[] key) => throw new InvalidOperationException(why);
     }
 
-    internal static string NextSession(DateTimeOffset now, TradingSchedule? schedule)
+    internal static string NextSession(DateTimeOffset now, TradingSchedule? schedule, IReadOnlyList<TradingSchedule>? foreign = null)
     {
         if (schedule is null)
         {
             return "Fix the paper account settings above, then start a session: qa paper run";
+        }
+
+        if (foreign is { Count: > 0 })
+        {
+            return NextSessionAcrossMarkets(now, [schedule, .. foreign]);
         }
 
         SessionPlan? today = schedule.Plan(Trading.OrderGateway.StockholmDate(now));
@@ -517,6 +737,112 @@ internal static class StatusCommand
         return $"Next session: {MarketTime.ToStockholm(next.DecisionUtc):dddd yyyy-MM-dd}. Start it that morning before {Clock(next.DecisionUtc)}: qa paper run";
     }
 
+    /// <summary>The foreign markets (ADR 0005) of the allowlist's shares, from their currencies in the instrument master.</summary>
+    internal static List<MarketInfo> ForeignMarkets(HistoryStore history, Universe universe)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+        ArgumentNullException.ThrowIfNull(universe);
+        var foreign = new List<MarketInfo>();
+        foreach (UniverseEntry e in universe.Entries)
+        {
+            if (Markets.ForCurrency(history.GetInstrument(e.OrderbookId)?.Instrument.Currency) is { } market && Markets.IsForeign(market.Currency) && !foreign.Contains(market))
+            {
+                foreign.Add(market);
+            }
+        }
+
+        return [.. foreign.OrderBy(m => Markets.All.ToList().IndexOf(m))];
+    }
+
+    /// <summary>
+    /// The Paper session's schedules (ADR 0005): Stockholm's, and one per foreign market on the allowlist whose calendar
+    /// loads (the session skips the others). For the app's Overview and Trading page. Throws when the paper settings,
+    /// the limits or the Stockholm calendar don't load; a store that can't be read means no foreign market.
+    /// </summary>
+    internal static (TradingSchedule Stockholm, IReadOnlyList<TradingSchedule> Foreign) SessionSchedules(string configDir, string storePath)
+    {
+        RiskLimits limits = RiskLimits.Load(Path.Combine(configDir, RiskLimits.FileName));
+        PaperConfig paper = PaperConfig.Load(Path.Combine(configDir, PaperConfig.FileName));
+        MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(configDir);
+        var home = new TradingSchedule(calendar, limits, paper.DecisionTime);
+        List<MarketInfo> markets = [];
+        try
+        {
+            Universe universe = Universe.Load(Path.Combine(configDir, Universe.FileName));
+            if (universe.Entries.Count > 0 && File.Exists(storePath))
+            {
+                using HistoryStore history = HistoryStore.Open(storePath);
+                markets = ForeignMarkets(history, universe);
+            }
+        }
+        catch (Exception ex) when (ex is TradingConfigException or HistoryStoreException or IOException or ArgumentException || DataCommands.IsStoreFailure(ex))
+        {
+            // Swedish only, as far as can be told.
+        }
+
+        var foreign = new List<TradingSchedule>();
+        foreach (MarketInfo market in markets)
+        {
+            try
+            {
+                foreign.Add(new TradingSchedule(MarketCalendarLoader.LoadDirectory(configDir, market.Mic), limits, paper.DecisionTime, calendar));
+            }
+            catch (CalendarConfigException)
+            {
+                // The session skips this market's shares too.
+            }
+        }
+
+        return (home, foreign);
+    }
+
+    /// <summary>
+    /// The next session day in short, for the app's Overview: "Mon 28 Sep · decides at 09:10", or with US or Canadian
+    /// shares "Mon 28 Sep · decides at 09:10 (XSTO), 15:40 (XNYS) · ends 22:02". Returns its first decision too.
+    /// </summary>
+    internal static (string Text, DateTimeOffset FirstDecisionUtc) NextSessionShort(DateTimeOffset now, TradingSchedule stockholm, IReadOnlyList<TradingSchedule> foreign)
+    {
+        ArgumentNullException.ThrowIfNull(stockholm);
+        ArgumentNullException.ThrowIfNull(foreign);
+        TradingSchedule[] all = [stockholm, .. foreign];
+        DateTimeOffset first = all.Min(s => s.NextDecision(now).DecisionUtc);
+        string day = MarketTime.ToStockholm(first).ToString("ddd d MMM", CultureInfo.InvariantCulture);
+        if (foreign.Count == 0)
+        {
+            return ($"{day} · decides at {Clock(first)}", first);
+        }
+
+        SessionPlan[] plans = [.. all.Select(s => s.Plan(s.Calendar.LocalDate(first))).OfType<SessionPlan>()];
+        string decides = string.Join(", ", all
+            .Select(s => (s.Mic, Plan: s.Plan(s.Calendar.LocalDate(first))))
+            .Where(x => x.Plan is { } p && p.DecisionUtc >= now)
+            .Select(x => $"{Clock(x.Plan!.DecisionUtc)} ({x.Mic})"));
+        return ($"{day} · decides at {decides} · ends {Clock(plans.Max(p => p.CloseUtc).AddMinutes(2))}", first);
+    }
+
+    /// <summary>
+    /// With US or Canadian shares on the list (ADR 0005): one session decides per market, e.g. "XSTO at 09:10, XNYS at
+    /// 15:40", and ends after the last close.
+    /// </summary>
+    private static string NextSessionAcrossMarkets(DateTimeOffset now, IReadOnlyList<TradingSchedule> schedules)
+    {
+        (TradingSchedule Schedule, SessionPlan Plan)[] today =
+            [.. schedules.Select(s => (s, s.Plan(s.Calendar.LocalDate(now)))).Where(x => x.Item2 is not null).Select(x => (x.s, x.Item2!))];
+        (TradingSchedule Schedule, SessionPlan Plan)[] open = [.. today.Where(x => now < x.Plan.WindowCloseUtc)];
+        if (open.Length > 0)
+        {
+            string decides = string.Join(", ", open.Select(x => now >= x.Plan.DecisionUtc ? $"{x.Schedule.Mic} at once" : $"{x.Schedule.Mic} at {Clock(x.Plan.DecisionUtc)}"));
+            string end = Clock(today.Max(x => x.Plan.CloseUtc));
+            DateTimeOffset first = open.Min(x => x.Plan.DecisionUtc);
+            return now < first
+                ? $"Start today's session before {Clock(first)}: qa paper run. It decides per market ({decides}), trades, and ends after the {end} close; keep its window open."
+                : $"Today's session can still start: qa paper run. It decides per market ({decides}) and ends after the {end} close; keep its window open.";
+        }
+
+        DateTimeOffset next = schedules.Min(s => s.NextDecision(now).DecisionUtc);
+        return $"Next session: {MarketTime.ToStockholm(next):dddd yyyy-MM-dd}. Start it that morning before {Clock(next)}: qa paper run";
+    }
+
     /// <summary>Runs a check; an expected failure becomes a FAIL line (and a config step) instead of stopping the report.</summary>
     private static T? Try<T>(StatusReport r, string label, Func<T> check)
         where T : class?
@@ -525,7 +851,7 @@ internal static class StatusCommand
         {
             return check();
         }
-        catch (Exception ex) when (ex is TradingConfigException or ArgumentException or CalendarConfigException or InvalidDataException or IOException
+        catch (Exception ex) when (ex is TradingConfigException or BacktestConfigException or ArgumentException or CalendarConfigException or InvalidDataException or IOException
                                        or JsonException or UnauthorizedAccessException or PaperBookException or HistoryStoreException or InvalidOperationException
                                    || DataCommands.IsStoreFailure(ex))
         {

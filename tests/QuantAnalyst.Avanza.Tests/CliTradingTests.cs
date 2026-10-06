@@ -88,6 +88,172 @@ public sealed class CliTradingTests : IDisposable
         Assert.Contains("is not in the allowlist", Qa("universe", "remove", "ERIC-B", "--config-dir", Config).Error, StringComparison.Ordinal);
     }
 
+    /// <summary>A Paper book in the state folder holding <paramref name="ericB"/> ERIC B shares (the shape the book writes).</summary>
+    private void PaperBookHolding(long ericB)
+    {
+        string dir = Path.Combine(State, TradingCommands.PaperDirName);
+        Directory.CreateDirectory(dir);
+        string positions = ericB > 0
+            ? $$"""[ { "orderbook_id": "5240", "ticker": "ERIC B", "quantity": {{ericB}}, "cost_basis": 500, "last_fill_price": 70 } ]"""
+            : "[]";
+        File.WriteAllText(Path.Combine(dir, "book.json"), $$"""
+            { "format": "qa-paper-book/1", "account": "PAPER", "costs": "avanza-start", "starting_cash": 5000, "cash": 4500, "fees_paid": 0,
+              "realized_pnl": 0, "start_of_day_value": 0, "positions": {{positions}}, "saved_utc": "2026-09-30T15:00:00Z" }
+            """);
+    }
+
+    [Fact]
+    public void Universe_RemovingAHeldShare_KeepsItForSelling_UntilItIsSold()
+    {
+        // Plan 21: a share taken off the list while Paper holds it moves to the exiting list (sells only).
+        Assert.Equal(0, Qa("history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store, "--state-dir", State, "--login", "totp").Code);
+        Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
+        PaperBookHolding(7);
+
+        (int code, string output, string error) = Qa("universe", "remove", "ERIC-B", "--config-dir", Config, "--state-dir", State);
+        Assert.True(code == 0, error);
+        Assert.Contains("ERIC B is still held: it moves to the exiting list, and the next session sells it", output, StringComparison.Ordinal);
+        Assert.Contains("0 instrument(s) in", output, StringComparison.Ordinal);
+        Assert.Contains("exiting: ERIC B", output, StringComparison.Ordinal);
+        Assert.Contains("ERIC B", Qa("universe", "list", "--config-dir", Config).Output, StringComparison.Ordinal);
+        Assert.Contains("(exiting: sells only, plan 21)", Qa("universe", "list", "--config-dir", Config).Output, StringComparison.Ordinal);
+
+        (code, _, error) = Qa("universe", "remove", "ERIC-B", "--config-dir", Config, "--state-dir", State);
+        Assert.Equal(1, code);
+        Assert.Contains("ERIC B is still held (7 shares) and on the exiting list: the next session sells it", error, StringComparison.Ordinal);
+
+        PaperBookHolding(0); // the session sold it
+        (code, output, error) = Qa("universe", "remove", "ERIC-B", "--config-dir", Config, "--state-dir", State);
+        Assert.True(code == 0, error);
+        Assert.Contains("removed ERIC B (5240)", output, StringComparison.Ordinal);
+        Trading.Risk.Universe after = Trading.Risk.Universe.Load(Path.Combine(Config, Trading.Risk.Universe.FileName));
+        Assert.Empty(after.Entries);
+        Assert.Empty(after.Exiting);
+    }
+
+    [Theory]
+    [InlineData("FNSE", "Unknown", "SMALL is listed on 'FNSE', not Nasdaq Stockholm's main market (XSTO), and it can't be told yet whether it trades continuously")]
+    [InlineData("FNSE", "PeriodicAuction", "SMALL is listed on 'FNSE' and trades only in auctions")]
+    [InlineData("SSME", "Continuous", "SMALL is listed on 'SSME': the program knows the courtage for Nasdaq Stockholm (XSTO) and First North (FNSE) only")]
+    public void Universe_RefusesAShareThatDoesNotTradeContinuously_OrWhoseCourtageIsNotKnown(string marketPlace, string model, string expected)
+    {
+        // Plan 18, P5 and plan 22: the fill model assumes continuous trading, and every trade is costed.
+        using (var store = Data.Store.HistoryStore.Open(Store))
+        {
+            string ticks = Data.Store.InstrumentRecord.CanonicalTickTable(new Core.Instruments.TickSizeTable([new Core.Instruments.TickSizeBand(0m, 99_999m, 0.01m)]));
+            store.UpsertInstrument(new Data.Store.InstrumentRecord(new Core.OrderbookId("9999"), null, "SMALL", "Small AB", "SEK", marketPlace, "STOCK",
+                Enum.Parse<Data.Store.TradingModel>(model), 1m, ticks, new DateOnly(2026, 9, 1)), "test", "test", DateTimeOffset.UtcNow);
+        }
+
+        (int code, _, string error) = Qa("universe", "add", "SMALL", "--config-dir", Config, "--store", Store);
+        Assert.Equal(1, code);
+        Assert.Contains(expected, error, StringComparison.Ordinal);
+        Assert.Empty(Trading.Risk.Universe.Load(Path.Combine(Config, Trading.Risk.Universe.FileName)).Entries);
+    }
+
+    [Fact]
+    public void Universe_AddsAFirstNorthShareMeasuredAsContinuous()
+    {
+        using (var store = Data.Store.HistoryStore.Open(Store))
+        {
+            string ticks = Data.Store.InstrumentRecord.CanonicalTickTable(new Core.Instruments.TickSizeTable([new Core.Instruments.TickSizeBand(0m, 99_999m, 0.01m)]));
+            store.UpsertInstrument(new Data.Store.InstrumentRecord(new Core.OrderbookId("9999"), null, "AIRA", "Aira", "SEK", "FNSE", "STOCK",
+                Data.Store.TradingModel.Continuous, 1m, ticks, new DateOnly(2026, 9, 1)), "test", "test", DateTimeOffset.UtcNow);
+        }
+
+        (int code, string output, string error) = Qa("universe", "add", "AIRA", "--config-dir", Config, "--store", Store);
+        Assert.True(code == 0, error);
+        Assert.Contains("AIRA", output, StringComparison.Ordinal);
+        Assert.Single(Trading.Risk.Universe.Load(Path.Combine(Config, Trading.Risk.Universe.FileName)).Entries);
+    }
+
+    [Theory]
+    [InlineData(1, 5000)]
+    [InlineData(5, 5000)] // as before plan 22
+    [InlineData(8, 5600)]
+    [InlineData(10, 7000)] // 1.43 requests/s
+    [InlineData(14, 7000)]
+    public void PaperPolls_LessOftenAsTheListGrows_WithinTheBudgetAndR15(int shares, int milliseconds)
+    {
+        TimeSpan every = PaperPolling.Interval(shares);
+        Assert.Equal(TimeSpan.FromMilliseconds(milliseconds), every);
+        Assert.True(every < TimeSpan.FromSeconds(10), "a quote stays under R15's 10 s between polls");
+        Assert.True(Math.Min(shares, Allowlist.MaxNames) / every.TotalSeconds <= 1.5, "the list's polls stay under 75 % of the 2 requests/s budget");
+    }
+
+    [Fact]
+    public void Universe_TakesASixthName_ButRefusesAnEleventh_ThePaperSessionPollsTen()
+    {
+        // Plan 22: 5 was the stream limit; Paper polls now, 10 names at most.
+        string file = Path.Combine(Config, Trading.Risk.Universe.FileName);
+        new Trading.Risk.Universe(Enumerable.Range(1, 5).Select(i => new Trading.Risk.UniverseEntry(new Core.OrderbookId($"{i}"), $"T{i}", $"Name {i}"))).Save(file);
+        Assert.Equal(0, Qa("history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store,
+            "--state-dir", State, "--login", "totp").Code);
+        Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
+        Assert.Equal(6, Trading.Risk.Universe.Load(file).Entries.Count);
+        Assert.Equal(0, Qa("universe", "remove", "ERIC-B", "--config-dir", Config).Code);
+
+        new Trading.Risk.Universe(Enumerable.Range(1, 10).Select(i => new Trading.Risk.UniverseEntry(new Core.OrderbookId($"{i}"), $"T{i}", $"Name {i}"))).Save(file);
+        (int code, _, string error) = Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store);
+        Assert.Equal(1, code);
+        Assert.Contains("already has 10 names, the most a Paper session polls (10). Remove one first.", error, StringComparison.Ordinal);
+        Assert.Equal(10, Trading.Risk.Universe.Load(file).Entries.Count);
+
+        // A name already on the list may be added again (nothing changes).
+        Assert.Equal(0, Qa("universe", "remove", "T1", "--config-dir", Config).Code);
+        Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
+        Assert.Equal(0, Qa("universe", "add", "ERIC-B", "--config-dir", Config, "--store", Store).Code);
+        Assert.Equal(10, Trading.Risk.Universe.Load(file).Entries.Count);
+    }
+
+    [Fact]
+    public void PaperOrder_PlacesARequest_ThatOrdersListsAndCancelRemoves()
+    {
+        // Plan 23: offline; the Paper session sends it later through the gateway.
+        new Trading.Risk.Universe([new Trading.Risk.UniverseEntry(new Core.OrderbookId("5240"), "ERIC B", "Ericsson B")],
+            [new Trading.Risk.UniverseEntry(new Core.OrderbookId("5239"), "ERIC A", "Ericsson A")]).Save(Path.Combine(Config, "universe.json"));
+
+        // Nothing manual and nothing waiting yet: there is nothing to release.
+        Assert.Contains("ERIC B is not manual", Qa("paper", "release", "ERIC-B", "--config-dir", Config, "--state-dir", State).Error, StringComparison.Ordinal);
+
+        (int code, string output, string error) = Qa("paper", "manual", "buy", "ERIC-B", "7", "--config-dir", Config, "--state-dir", State);
+        Assert.True(code == 0, error);
+        Assert.Matches(@"^Buy 7 ERIC B \(at the ask\) \[M\d{6}-[0-9a-f]{4}\] placed\. No Paper session is running: the next one sends it in its trading window\.", output);
+        string id = System.Text.RegularExpressions.Regex.Match(output, @"\[(M\d{6}-[0-9a-f]{4})\]").Groups[1].Value;
+
+        Assert.Equal(0, Qa("paper", "manual", "sell", "eric a", "2", "--limit", "120.5", "--config-dir", Config, "--state-dir", State).Code); // exiting: sell only
+        Assert.Contains("is off the list (exiting): it can only be sold", Qa("paper", "manual", "buy", "ERIC-A", "1", "--config-dir", Config, "--state-dir", State).Error, StringComparison.Ordinal);
+        Assert.Contains("VOLV B is not on the list: add it first", Qa("paper", "manual", "buy", "VOLV-B", "1", "--config-dir", Config, "--state-dir", State).Error, StringComparison.Ordinal);
+        Assert.NotEqual(0, Qa("paper", "manual", "buy", "ERIC-B", "0", "--config-dir", Config, "--state-dir", State).Code);
+
+        (code, output, _) = Qa("paper", "orders", "--config-dir", Config, "--state-dir", State);
+        Assert.Equal(0, code);
+        Assert.Contains("Waiting (2):", output, StringComparison.Ordinal);
+        Assert.Contains($"[{id}] Buy 7 ERIC B (at the ask)", output, StringComparison.Ordinal);
+        Assert.Contains("Sell 2 ERIC A (limit 120.5)", output, StringComparison.Ordinal);
+        Assert.Contains("Manual shares: none", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa("paper", "orders", "--cancel", id, "--config-dir", Config, "--state-dir", State);
+        Assert.Equal(0, code);
+        Assert.StartsWith($"Request {id} cancelled.", output, StringComparison.Ordinal);
+        Assert.Contains("No waiting request", Qa("paper", "orders", "--cancel", id, "--config-dir", Config, "--state-dir", State).Error, StringComparison.Ordinal);
+        Assert.Contains("Waiting (1):", output, StringComparison.Ordinal);
+        Assert.Contains($"[{id}] Buy 7 ERIC B (at the ask): cancelled", output, StringComparison.Ordinal);
+
+        // qa status shows the waiting request and the manual shares (none yet: a session marks a share manual).
+        (code, string status, error) = Qa("status", "--config-dir", Config, "--store", Store, "--state-dir", State, "--audit-dir", Audit,
+            "--kill-file", KillFile, "--promotion-dir", Path.Combine(_root, "promotion"));
+        Assert.True(code == 0, error);
+        Assert.Matches(@"ok    Manual\s+1 waiting: Sell 2 ERIC A \(limit 120\.5\) \[M\d{6}-[0-9a-f]{4}\]; the next Paper session sends them in its trading window \(qa paper orders\)", status);
+        Assert.DoesNotContain("yours (bought or sold by hand)", status, StringComparison.Ordinal);
+
+        Trading.Paper.PaperBook book = Trading.Paper.PaperBook.OpenOrCreate(Path.Combine(State, TradingCommands.PaperDirName), new Trading.Paper.PaperConfig("avanza-mini", 5_000m, new TimeOnly(9, 10)), null, TimeProvider.System, out _);
+        book.HoldManually(new Core.OrderbookId("5240"));
+        status = Qa("status", "--config-dir", Config, "--store", Store, "--state-dir", State, "--audit-dir", Audit,
+            "--kill-file", KillFile, "--promotion-dir", Path.Combine(_root, "promotion")).Output;
+        Assert.Contains("ERIC B: yours (bought or sold by hand), the strategy leaves them; 'qa paper release <TICKER>' gives one back", status, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void RiskLimits_AreSizedForThePaperAccount()
     {

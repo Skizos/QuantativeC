@@ -66,7 +66,7 @@ public sealed class EodReportTests : IDisposable
         {
             for (int i = 0; i < seconds; i++)
             {
-                quotes.Set(Eric, _time.GetUtcNow(), 100.4m, 500, 100.6m, 700, last, total);
+                quotes.Set(Eric, _time.GetUtcNow(), 100.4m, 500, 100.6m, 700, last, total, dayHigh: 100.9m, dayLow: 100.0m);
                 channel.OnQuote(quotes.Latest(Eric)!);
                 await session.StepAsync(CancellationToken.None);
                 _time.Advance(TimeSpan.FromSeconds(1));
@@ -102,9 +102,110 @@ public sealed class EodReportTests : IDisposable
         Assert.True(report.AuditChainValid);
         Assert.Contains(report.Events, e => e.StartsWith("risk rejections: R", StringComparison.Ordinal));
 
+        // Plan 19: both orders filled whole; the day's range (from the close mark) says the backtest fills them too.
+        EodFillRate rate = report.FillRate!;
+        Assert.Equal((2, 2, 0, 0, 1m, 2, 0), (rate.Sent, rate.FilledFully, rate.FilledPartly, rate.Unfilled, rate.VolumeFilled, rate.BacktestFills, rate.BacktestUnknown));
+        Assert.Equal(0m, rate.MissedVsBacktestSek);
+        Assert.Equal((100.1m, 100.0m, 100.9m, 100.3m), (rate.Orders[1].Close, rate.Orders[1].DayLow, rate.Orders[1].DayHigh, rate.Orders[1].DecisionPrice));
+        Assert.Contains("Limits: 2 limit order(s): 2 filled, 0 partly, 0 not (100 % of the volume); the backtest fills 2; nothing missed vs the backtest.", report.Summary(), StringComparison.Ordinal);
+
         string saved = report.Save(_dir.File("reports"));
         Assert.Equal(report.Fills, EodReport.Load(saved).Fills);
         Assert.Equal(report.Clean, EodReport.Load(saved).Clean);
+        Assert.Equal(rate.Orders, EodReport.Load(saved).FillRate!.Orders);
+    }
+
+    /// <summary>
+    /// Plan 19: a day of four orders that reached the market (and one the broker refused): filled, partly filled,
+    /// unfilled in a foreign share the backtest would not fill either, and a sell the backtest fills.
+    /// </summary>
+    private void FillRateDay()
+    {
+        AuditLog a = Synthetic();
+        a.Append("session-start", new { mode = "Paper" });
+        void Order(string id, string book, string ticker, string side, long volume, decimal limit, decimal decision, string end, long filled)
+        {
+            a.Append("intent", new { ticker, decisionPrice = decision });
+            a.Append("risk", new { passed = true, checks = Array.Empty<object>() });
+            a.Append("oms-new", new { clientOrderId = id, orderbookId = book, ticker, side, volume, limitPrice = limit });
+            if (filled > 0)
+            {
+                a.Append("oms-fill", new { clientOrderId = id, volume = filled, price = limit, value = filled * limit, fees = 0m, to = filled == volume ? "Filled" : "PartiallyFilled" });
+            }
+
+            if (end != "Filled")
+            {
+                a.Append("oms-state", new { clientOrderId = id, to = end });
+            }
+        }
+
+        Order("o1", "5240", "ERIC B", "Buy", 100, 100.5m, 100.0m, "Filled", 100);
+        Order("o2", "1001", "TEST B", "Buy", 50, 50m, 49.8m, "Cancelled", 10); // 40 left; the day traded down to 49.5
+        Order("o3", "5240", "ERIC B", "Sell", 20, 99m, 99.5m, "Cancelled", 0); // the day's high 101.5 is above it
+        Order("o4", "4478", "AAPL", "Buy", 10, 200m, 199m, "Cancelled", 0); // the day's low 201 never reached it
+        Order("o5", "5240", "ERIC B", "Buy", 5, 100m, 100m, "Rejected", 0); // refused by the broker: not counted
+        a.Append("close-mark", new { orderbookId = "5240", ticker = "ERIC B", currency = "SEK", last = 100.0m, bid = 99.9m, ask = 100.1m, dayHigh = 101.5m, dayLow = 99.8m, sekPerUnit = 1m });
+        a.Append("close-mark", new { orderbookId = "1001", ticker = "TEST B", currency = "SEK", last = (decimal?)null, bid = 50.9m, ask = 51.1m, dayHigh = 51.5m, dayLow = 49.5m, sekPerUnit = 1m });
+        a.Append("close-mark", new { orderbookId = "4478", ticker = "AAPL", currency = "USD", last = 202m, bid = 201.9m, ask = 202.1m, dayHigh = 203m, dayLow = 201m, sekPerUnit = 10m });
+    }
+
+    [Fact]
+    public void TheDaysReport_KeepsEveryListedSharesClose()
+    {
+        // Plan 24: the comparison with holding the list reads them; the last trade, else the mid.
+        FillRateDay();
+        Assert.Equal(
+            [new EodCloseMark("1001", "TEST B", "SEK", 51.0m, 1m), new EodCloseMark("4478", "AAPL", "USD", 202m, 10m), new EodCloseMark("5240", "ERIC B", "SEK", 100.0m, 1m)],
+            EodReport.Build(AuditDir, Monday, _time).CloseMarks);
+    }
+
+    [Fact]
+    public void TheFillRate_CountsWhatFilled_AndWhatTheUnfilledMissedAgainstTheBacktest()
+    {
+        FillRateDay();
+        EodFillRate rate = EodReport.Build(AuditDir, Monday, _time).FillRate!;
+
+        Assert.Equal((4, 1, 1, 2), (rate.Sent, rate.FilledFully, rate.FilledPartly, rate.Unfilled));
+        Assert.Equal(0.6111m, rate.VolumeFilled); // 110 of 180 shares
+        Assert.Equal((3, 0), (rate.BacktestFills, rate.BacktestUnknown));
+
+        EodLimitOrder partly = rate.Orders[1];
+        Assert.Equal((51.0m, true, 2_000m, 40m, 200.0m), (partly.Close, partly.BacktestFills, partly.UnfilledValueSek, partly.MissedSek, partly.MissedBps)); // the mid; 40 × (51 − 50)
+        EodLimitOrder sell = rate.Orders[2];
+        Assert.Equal((true, -20m, -101.0m), (sell.BacktestFills, sell.MissedSek, sell.MissedBps)); // 20 × (99 − 100): not selling saved 20
+        EodLimitOrder foreign = rate.Orders[3];
+        Assert.Equal((false, 20_000m, 200m), (foreign.BacktestFills, foreign.UnfilledValueSek, foreign.MissedSek)); // 10 × 2 USD × 10 SEK
+        Assert.Null(rate.Orders[0].MissedSek); // filled whole
+
+        // Against the backtest: only the orders it would have filled (o2, o3), not AAPL's, whose price never came down.
+        Assert.Equal((3_980m, 20m, 50.3m), (rate.UnfilledValueVsBacktestSek, rate.MissedVsBacktestSek, rate.MissedVsBacktestBps));
+        Assert.Equal(
+            "4 limit order(s): 1 filled, 1 partly, 2 not (61 % of the volume); the backtest fills 3; missed vs the backtest +20.00 SEK (+50.3 bps)",
+            rate.Describe());
+        Assert.Equal(
+            "Buy 50 TEST B @ 50: filled 10/50 (Cancelled); day low 49.5, high 51.5, close 51: the backtest fills it; missed +40.00 SEK (+200.0 bps)",
+            partly.Describe());
+        Assert.EndsWith("close 202: the backtest does not fill it either; missed +200.00 SEK (+100.0 bps)", foreign.Describe(), StringComparison.Ordinal);
+
+        // Across days: the orders of every report together.
+        EodFillRate both = EodFillRate.Combine([EodReport.Build(AuditDir, Monday, _time), EodReport.Build(AuditDir, Monday, _time)])!;
+        Assert.Equal((8, 40m), (both.Sent, both.MissedVsBacktestSek));
+    }
+
+    [Fact]
+    public void WithoutTheDaysRangeOrAClosePrice_TheFillRateSaysSo_AndADayWithoutOrdersHasNone()
+    {
+        AuditLog a = Synthetic();
+        a.Append("session-start", new { mode = "Paper" });
+        a.Append("oms-new", new { clientOrderId = "o1", orderbookId = "5240", ticker = "ERIC B", side = "Buy", volume = 10, limitPrice = 100m });
+        a.Append("oms-state", new { clientOrderId = "o1", to = "Cancelled" });
+
+        EodFillRate rate = EodReport.Build(AuditDir, Monday, _time).FillRate!;
+        Assert.Equal((1, 0, 1), (rate.Unfilled, rate.BacktestFills, rate.BacktestUnknown));
+        Assert.Equal("1 limit order(s): 0 filled, 0 partly, 1 not (0 % of the volume); the backtest fills 0 (1 without the day's range); nothing missed vs the backtest", rate.Describe());
+        Assert.Equal("Buy 10 ERIC B @ 100: filled 0/10 (Cancelled); day low -, high -, close -: no day range", rate.Orders[0].Describe());
+
+        Assert.Null(EodFillRate.From([]));
     }
 
     private Task<PlanResult> Decide(CancellationToken ct)

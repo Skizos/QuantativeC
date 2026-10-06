@@ -4,8 +4,10 @@ using QuantAnalyst.Trading.Audit;
 using QuantAnalyst.Trading.Halts;
 using QuantAnalyst.Trading.Kill;
 using QuantAnalyst.Trading.Model;
+using QuantAnalyst.Trading.Observation;
 using QuantAnalyst.Trading.Oms;
 using QuantAnalyst.Trading.Reconciliation;
+using QuantAnalyst.Trading.Risk;
 using QuantAnalyst.Trading.Scheduling;
 
 namespace QuantAnalyst.Trading.Paper;
@@ -24,6 +26,23 @@ public sealed record PaperSessionSummary(
     bool ReconciliationClean);
 
 /// <summary>
+/// One market of a Paper session (ADR 0005): its schedule (calendar, decision time, window, close), the decision for
+/// its shares, and which instruments are its own (whose day orders end at its close).
+/// </summary>
+/// <param name="Decide">Intents for this market's shares (bars through yesterday, live prices).</param>
+/// <param name="Trades">True for an instrument of this market.</param>
+public sealed record SessionMarket(TradingSchedule Schedule, Func<CancellationToken, Task<PlanResult>> Decide, Func<InstrumentSpec, bool> Trades)
+{
+    public string Mic => Schedule.Mic;
+
+    /// <summary>
+    /// Gets how many of this market's shares have a price the risk checks accept (<see cref="PriceGate"/>): the decision
+    /// waits for all of them, a minute at most, or half an hour while none has one. Null: no wait.
+    /// </summary>
+    public Func<DateTimeOffset, PriceCoverage>? Prices { get; init; }
+}
+
+/// <summary>
 /// One Paper trading session (ADR 0003, plan 06): a 1-second loop that
 /// <list type="number">
 /// <item>reconciles the OMS with the paper channel every 30 s, and at once when an Unknown order reaches 2 minutes;</item>
@@ -32,9 +51,13 @@ public sealed record PaperSessionSummary(
 /// <item>submits them through <see cref="OrderGateway"/>, one at a time and paced (R11 allows 5 actions a minute);</item>
 /// <item>at the close ends the day orders and reports the day.</item>
 /// </list>
+/// With shares on several markets (ADR 0005) each market decides, submits and ends its day orders on its own calendar
+/// and clock (Stockholm 09:10, New York and Toronto 09:40 local); the day ends, with one report, at the last close.
 /// On the way out it cancels everything still working through the gateway and ends the rest, so no paper order
 /// outlives the session. <c>endOfDayReport</c> (the CLI's end-of-day report writer) runs at the close, and for a partial
 /// day when the session stops earlier. Quotes reach the paper channel from the caller (<see cref="PaperOrderChannel.OnQuote"/>).
+/// An <c>observer</c> (the Windows app) is told the account's value every few seconds and the day's decision; it can't
+/// change anything (<see cref="GuardedObserver"/>).
 /// </summary>
 public sealed class PaperSession(
     OrderGateway gateway,
@@ -43,32 +66,71 @@ public sealed class PaperSession(
     KillSwitch kill,
     Reconciler reconciler,
     HaltController halts,
-    TradingSchedule schedule,
+    IReadOnlyList<SessionMarket> markets,
     AuditLog audit,
     TimeProvider time,
-    Func<CancellationToken, Task<PlanResult>> decide,
     TextWriter output,
-    Func<DateOnly, string>? endOfDayReport = null)
+    Func<DateOnly, string>? endOfDayReport = null,
+    ISessionObserver? observer = null)
 {
+    /// <summary>How often an observer is told the account's value.</summary>
+    public static readonly TimeSpan AccountEvery = TimeSpan.FromSeconds(5);
+
     public static readonly TimeSpan Tick = TimeSpan.FromSeconds(1);
     public static readonly TimeSpan ReconcileEvery = TimeSpan.FromSeconds(30);
 
     /// <summary>12 s apart keeps a burst of intents at 5 actions a minute (R11), with room for one cancel.</summary>
     public static readonly TimeSpan PaceBetweenOrders = TimeSpan.FromSeconds(13);
 
-    private readonly Queue<OrderIntent> _queue = new();
-    private DateOnly? _decidedOn;
-    private DateOnly? _endedOn;
+    private readonly MarketDay[] _markets = markets is { Count: > 0 }
+        ? [.. markets.Select(m => new MarketDay(m))]
+        : throw new ArgumentException("A session needs at least one market.", nameof(markets));
+
+    private readonly List<Queued> _queue = [];
+    private readonly HashSet<Guid> _manualOrders = [];
+    private DateOnly? _reportedOn;
     private DateTimeOffset? _lastSubmit;
     private int _decisions;
     private int _submitted;
     private int _accepted;
     private int _riskRejected;
     private bool _lastClean = true;
+    private readonly ISessionObserver? _observer = GuardedObserver.Wrap(observer);
+    private DateTimeOffset? _lastAccountTick;
+
+    /// <summary>
+    /// Gets the owner's manual requests (plan 23): taken each step, sent through the gateway ahead of the strategy's
+    /// queued orders; null when the session takes none.
+    /// </summary>
+    public ManualOrderDesk? Manual { get; init; }
+
+    /// <summary>Gets where a failed decision is alerted (plan 25); null: the console line only.</summary>
+    public Alerts.Alerter? Alerts { get; init; }
+
+    /// <summary>A session on Nasdaq Stockholm alone (a Swedish-only list): one decision, one close.</summary>
+    public PaperSession(
+        OrderGateway gateway,
+        PaperOrderChannel channel,
+        PaperBook book,
+        KillSwitch kill,
+        Reconciler reconciler,
+        HaltController halts,
+        TradingSchedule schedule,
+        AuditLog audit,
+        TimeProvider time,
+        Func<CancellationToken, Task<PlanResult>> decide,
+        TextWriter output,
+        Func<DateOnly, string>? endOfDayReport = null,
+        ISessionObserver? observer = null)
+        : this(gateway, channel, book, kill, reconciler, halts, [new SessionMarket(schedule, decide, _ => true)], audit, time, output, endOfDayReport, observer)
+    {
+    }
 
     public async Task<PaperSessionSummary> RunAsync(DateTimeOffset stopAtUtc, CancellationToken ct)
     {
         audit.Append("session-start", new { mode = "Paper", stopAtUtc, book.Costs, cash = book.Cash });
+        Manual?.Recover();
+        TellAccount(force: true);
         try
         {
             while (!ct.IsCancellationRequested && time.GetUtcNow() < stopAtUtc)
@@ -86,15 +148,22 @@ public sealed class PaperSession(
         }
         finally
         {
+            foreach (Queued q in _queue.Where(q => q.Manual is not null))
+            {
+                Manual?.NotSent(q.Manual!.Request, q.Manual.WasManual, "the session stopped before it was sent");
+            }
+
             _queue.Clear();
             await gateway.CancelAllAsync("session stopped", CancellationToken.None).ConfigureAwait(false);
             channel.EndOfDay("session stopped");
             await ReconcileAsync(CancellationToken.None).ConfigureAwait(false);
             DateOnly today = OrderGateway.StockholmDate(time.GetUtcNow());
-            if (_endedOn != today)
+            if (_reportedOn != today)
             {
                 Report(today, partial: true);
             }
+
+            TellAccount(force: true);
         }
 
         PaperSessionSummary summary = Summarize();
@@ -114,37 +183,91 @@ public sealed class PaperSession(
         }
 
         await kill.TickAsync(ct).ConfigureAwait(false);
+        TellAccount(force: false);
 
-        DateOnly today = OrderGateway.StockholmDate(now);
-        SessionPlan? plan = schedule.Plan(today);
-        if (plan is null)
+        foreach (MarketDay m in _markets)
         {
+            if (m.Today(now) is { } plan && m.DecidedOn != plan.Date && now >= plan.DecisionUtc && now < plan.WindowCloseUtc
+                && m.Gate.Open(plan.Date, now, say => output.WriteLine($"{Local(now)} {Where(m)}{say}")))
+            {
+                m.DecidedOn = plan.Date;
+                await DecideAsync(m, ct).ConfigureAwait(false);
+            }
+        }
+
+        if (Manual is { } desk)
+        {
+            await TakeManualAsync(desk, now, ct).ConfigureAwait(false);
+        }
+
+        if (_lastSubmit is not { } s || now - s >= PaceBetweenOrders)
+        {
+            // The first queued intent whose market still takes orders and whose share is past R11/R12 (a manual order
+            // right after the cancels it caused waits its 5 s); the rest go at their market's close.
+            int next = _queue.FindIndex(q => q.Market.Today(now) is { } p && now < p.WindowCloseUtc && gateway.NextActionAt(q.Intent.OrderbookId) <= now);
+            if (next >= 0)
+            {
+                Queued queued = _queue[next];
+                _queue.RemoveAt(next);
+                SubmitResult result = await SubmitNextAsync(queued.Intent, ct).ConfigureAwait(false);
+                if (queued.Manual is { } ticket)
+                {
+                    if (result.Order is { } order)
+                    {
+                        _manualOrders.Add(order.ClientOrderId);
+                    }
+
+                    Manual?.Sent(ticket.Request, result, ticket.WasManual);
+                }
+            }
+        }
+
+        foreach (MarketDay m in _markets)
+        {
+            if (m.Today(now) is { } plan && m.EndedOn != plan.Date && now >= plan.CloseUtc)
+            {
+                m.EndedOn = plan.Date;
+                await CloseAsync(m, now, ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A market's close: its queued intents are dropped and its day orders end. At the day's last close (every market
+    /// trading today has closed) the day is booked and reported once.
+    /// </summary>
+    private async Task CloseAsync(MarketDay m, DateTimeOffset now, CancellationToken ct)
+    {
+        foreach (Queued q in _queue.Where(q => q.Market == m && q.Manual is not null))
+        {
+            Manual?.NotSent(q.Manual!.Request, q.Manual.WasManual, $"the {m.Mic} close came before it was sent");
+        }
+
+        if (m.Today(now) is { } closing)
+        {
+            Manual?.ExpireAtClose(m.Market.Trades, closing.WindowCloseUtc); // plan 23: in today's report, not tomorrow's
+        }
+
+        _queue.RemoveAll(q => q.Market == m);
+        gateway.AuditCloseMarks(_markets.Length == 1 ? null : m.Market.Trades); // plan 19: before the day orders end
+        book.RecordCloseMarks(); // plan 21: the split guard compares tomorrow's prices with these
+        int ended = _markets.Length == 1 ? channel.EndOfDay("day order expired at the close") : channel.EndOfDay($"day order expired at the {m.Mic} close", m.Market.Trades);
+        await ReconcileAsync(ct).ConfigureAwait(false);
+        DateOnly today = OrderGateway.StockholmDate(now);
+        bool last = _markets.All(x => x.Today(now) is not { } p || x.EndedOn == p.Date);
+        if (!last)
+        {
+            audit.Append("market-close", new { date = today, market = m.Mic, ended });
+            output.WriteLine($"{Local(now)} {m.Mic} close: {ended} order(s) expired.");
             return;
         }
 
-        if (_decidedOn != today && now >= plan.DecisionUtc && now < plan.WindowCloseUtc)
-        {
-            _decidedOn = today;
-            await DecideAsync(ct).ConfigureAwait(false);
-        }
-
-        if (_queue.Count > 0 && now < plan.WindowCloseUtc && (_lastSubmit is not { } s || now - s >= PaceBetweenOrders))
-        {
-            await SubmitNextAsync(ct).ConfigureAwait(false);
-        }
-
-        if (_endedOn != today && now >= plan.CloseUtc)
-        {
-            _endedOn = today;
-            _queue.Clear();
-            int ended = channel.EndOfDay("day order expired at the close");
-            await ReconcileAsync(ct).ConfigureAwait(false);
-            PaperSessionSummary day = Summarize();
-            audit.Append("end-of-day", new { date = today, ended, day });
-            output.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                $"{Local(now)} close: {ended} order(s) expired. Value {day.AccountValue:N2} SEK ({Change(day):+0.00%;-0.00%} today), cash {day.Cash:N2}, fees {day.FeesPaid:N2}."));
-            Report(today, partial: false);
-        }
+        _reportedOn = today;
+        PaperSessionSummary day = Summarize();
+        audit.Append("end-of-day", new { date = today, ended, day });
+        output.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"{Local(now)} {Where(m)}close: {ended} order(s) expired. Value {day.AccountValue:N2} SEK ({Change(day):+0.00%;-0.00%} today), cash {day.Cash:N2}, fees {day.FeesPaid:N2}."));
+        Report(today, partial: false);
     }
 
     private void Report(DateOnly date, bool partial)
@@ -165,31 +288,36 @@ public sealed class PaperSession(
         }
     }
 
-    private async Task DecideAsync(CancellationToken ct)
+    private async Task DecideAsync(MarketDay m, CancellationToken ct)
     {
         _decisions++;
         if (kill.IsKilled || halts.IsHalted)
         {
             string why = string.Join(", ", halts.Active.Select(h => h.Reason));
-            output.WriteLine($"{Local(time.GetUtcNow())} decision skipped: trading is halted ({why}).");
-            audit.Append("decision-skipped", new { halts = why });
+            output.WriteLine($"{Local(time.GetUtcNow())} {Where(m)}decision skipped: trading is halted ({why}).");
+            audit.Append("decision-skipped", new { market = m.Mic, halts = why });
+            _observer?.Decision(new DecisionTick(time.GetUtcNow(), 0, [$"skipped: trading is halted ({why})"]));
             return;
         }
 
         PlanResult plan;
         try
         {
-            plan = await decide(ct).ConfigureAwait(false);
+            plan = await m.Market.Decide(ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Analytics.Backtesting.StrategyException)
         {
-            output.WriteLine($"{Local(time.GetUtcNow())} decision failed: {ex.Message}");
-            audit.Append("decision-failed", new { reason = ex.Message });
+            output.WriteLine($"{Local(time.GetUtcNow())} {Where(m)}decision failed: {ex.Message}");
+            audit.Append("decision-failed", new { market = m.Mic, reason = ex.Message });
+            Alerts?.Raise(Trading.Alerts.AlertLevel.Warning, "decision-failed", "Decision failed",
+                $"Paper {Where(m)}decision failed: {ex.Message} No orders from it today.");
+            _observer?.Decision(new DecisionTick(time.GetUtcNow(), 0, ["failed: " + ex.Message]));
             return;
         }
 
-        audit.Append("decision", new { intents = plan.Intents.Count, plan.Notes });
-        output.WriteLine($"{Local(time.GetUtcNow())} decision: {plan.Intents.Count} order(s).");
+        audit.Append("decision", new { market = m.Mic, intents = plan.Intents.Count, plan.Notes });
+        _observer?.Decision(new DecisionTick(time.GetUtcNow(), plan.Intents.Count, plan.Notes));
+        output.WriteLine($"{Local(time.GetUtcNow())} {Where(m)}decision: {plan.Intents.Count} order(s).");
         foreach (string note in plan.Notes)
         {
             output.WriteLine("  " + note);
@@ -197,13 +325,67 @@ public sealed class PaperSession(
 
         foreach (OrderIntent intent in plan.Intents)
         {
-            _queue.Enqueue(intent);
+            if (book.ManualHolds.Contains(intent.OrderbookId))
+            {
+                continue; // plan 23: the owner trades it by hand (the decision gives it no target; a late take-over may race)
+            }
+
+            _queue.Add(new Queued(m, intent));
         }
     }
 
-    private async Task SubmitNextAsync(CancellationToken ct)
+    /// <summary>
+    /// Plan 23: the owner's due requests. Each share an order is for becomes manual first: the strategy's queued orders
+    /// for it are dropped and its working ones cancelled, and the manual order goes to the front of the queue.
+    /// </summary>
+    private async Task TakeManualAsync(ManualOrderDesk desk, DateTimeOffset now, CancellationToken ct)
     {
-        OrderIntent queued = _queue.Dequeue();
+        IReadOnlyList<(ManualOrderRequest Request, OrderIntent Intent, InstrumentSpec Spec)> due = desk.Due(now, spec => WindowFor(spec, now));
+        foreach ((ManualOrderRequest request, OrderIntent intent, InstrumentSpec spec) in due)
+        {
+            MarketDay? market = _markets.FirstOrDefault(m => m.Market.Trades(spec));
+            if (market is null)
+            {
+                desk.NotSent(request, book.ManualHolds.Contains(intent.OrderbookId), "no market of this session trades it");
+                continue;
+            }
+
+            bool wasManual = !book.HoldManually(intent.OrderbookId);
+            _queue.RemoveAll(q => q.Manual is null && q.Intent.OrderbookId == intent.OrderbookId);
+            foreach (OpenOrderView working in gateway.OpenOrders.Where(o => o.OrderbookId == intent.OrderbookId && !_manualOrders.Contains(o.ClientOrderId)))
+            {
+                await gateway.CancelAsync(working.ClientOrderId, "the owner trades this share by hand", ct).ConfigureAwait(false);
+            }
+
+            int firstStrategy = _queue.FindIndex(q => q.Manual is null);
+            _queue.Insert(firstStrategy < 0 ? _queue.Count : firstStrategy, new Queued(market, intent, new ManualTicket(request, wasManual)));
+        }
+    }
+
+    /// <summary>Where the market of <paramref name="spec"/> stands now, for a manual request; null when it does not trade today.</summary>
+    private ManualWindow? WindowFor(InstrumentSpec spec, DateTimeOffset now)
+    {
+        MarketDay? m = _markets.FirstOrDefault(x => x.Market.Trades(spec));
+        if (m?.Today(now) is not { } plan)
+        {
+            return null;
+        }
+
+        DateTimeOffset previousWindowClose = DateTimeOffset.MinValue;
+        for (DateOnly d = plan.Date.AddDays(-1); d > plan.Date.AddDays(-15); d = d.AddDays(-1))
+        {
+            if (m.Market.Schedule.Plan(d) is { } before)
+            {
+                previousWindowClose = before.WindowCloseUtc;
+                break;
+            }
+        }
+
+        return new ManualWindow(now >= plan.WindowOpenUtc && now < plan.WindowCloseUtc && m.EndedOn != plan.Date, previousWindowClose);
+    }
+
+    private async Task<SubmitResult> SubmitNextAsync(OrderIntent queued, CancellationToken ct)
+    {
         DateTimeOffset now = time.GetUtcNow();
         _lastSubmit = now;
         OrderIntent intent = queued with { DecisionTimeUtc = now };
@@ -222,7 +404,8 @@ public sealed class PaperSession(
         string detail = r.Order is { } o
             ? string.Create(CultureInfo.InvariantCulture, $"{o.State}, filled {o.FilledVolume}/{o.Volume}{(o.AverageFillPrice is { } p ? $" @ {p:0.####}" : string.Empty)}")
             : r.Message;
-        output.WriteLine($"{Local(now)} {intent.Side} {intent.Quantity} {intent.Ticker}: {r.Status} ({detail})");
+        output.WriteLine($"{Local(now)} {(intent.StrategyId == ManualOrderDesk.StrategyId ? "manual " : string.Empty)}{intent.Side} {intent.Quantity} {intent.Ticker}: {r.Status} ({detail})");
+        return r;
     }
 
     private async Task ReconcileAsync(CancellationToken ct)
@@ -244,8 +427,50 @@ public sealed class PaperSession(
             book.FeesPaid, kill.IsKilled, _lastClean);
     }
 
+    /// <summary>Tells the observer the account's value, at most every <see cref="AccountEvery"/> unless forced.</summary>
+    private void TellAccount(bool force)
+    {
+        DateTimeOffset now = time.GetUtcNow();
+        if (_observer is null || (!force && _lastAccountTick is { } last && now - last < AccountEvery))
+        {
+            return;
+        }
+
+        _lastAccountTick = now;
+        AccountSnapshot a = book.Snapshot();
+        _observer.Account(new AccountTick(now, a.AccountValue, a.AvailableCash, a.StartOfDayValue, book.FeesPaid,
+            [.. book.Positions.Select(p => new ObservedPosition(p.OrderbookId, p.Ticker, p.Quantity, p.CostBasis, a.PositionValues.GetValueOrDefault(p.OrderbookId, p.CostBasis)))]));
+    }
+
+    /// <summary>"XNYS " before a market's lines when the session has several markets; nothing for Stockholm alone.</summary>
+    private string Where(MarketDay m) => _markets.Length == 1 ? string.Empty : m.Mic + " ";
+
     private static decimal Change(PaperSessionSummary s) => s.StartOfDayValue > 0 ? (s.AccountValue - s.StartOfDayValue) / s.StartOfDayValue : 0m;
 
     private static string Local(DateTimeOffset utc) =>
         Core.Market.MarketTime.ToStockholm(utc).ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+
+    /// <summary>An intent waiting for its turn (paced, R11); a manual one carries its request (plan 23).</summary>
+    private sealed record Queued(MarketDay Market, OrderIntent Intent, ManualTicket? Manual = null);
+
+    /// <param name="WasManual">The share was manual before this request: a refused order leaves it so.</param>
+    private sealed record ManualTicket(ManualOrderRequest Request, bool WasManual);
+
+    /// <summary>A market and what the session has done there today (its own local date).</summary>
+    private sealed class MarketDay(SessionMarket market)
+    {
+        public SessionMarket Market { get; } = market;
+
+        public string Mic => Market.Mic;
+
+        /// <summary>Gets the wait for live prices before the day's decision.</summary>
+        public PriceGate Gate { get; } = new(market.Prices);
+
+        public DateOnly? DecidedOn { get; set; }
+
+        public DateOnly? EndedOn { get; set; }
+
+        /// <summary>Today's plan on the market's own date, or null when it doesn't trade today.</summary>
+        public SessionPlan? Today(DateTimeOffset utc) => Market.Schedule.Plan(Market.Schedule.Calendar.LocalDate(utc));
+    }
 }

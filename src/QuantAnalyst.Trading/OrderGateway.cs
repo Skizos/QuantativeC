@@ -63,6 +63,19 @@ public sealed record GatewayEnvironment
 
     public required bool CourtageVerified { get; init; }
 
+    /// <summary>
+    /// Gets SEK per unit of each currency traded (ADR 0005): R6–R9 compare orders in SEK. Default: SEK only (a foreign
+    /// share's order is then not prepared: no rate).
+    /// </summary>
+    public IFxRates Fx { get; init; } = FxTable.SekOnly;
+
+    /// <summary>
+    /// Gets each market's schedule by currency (ADR 0005): R16 judges a USD or CAD order on its own market's calendar and
+    /// window, and fails it without one. A SEK order is judged on <see cref="Calendar"/> and the limits' Stockholm window,
+    /// as before.
+    /// </summary>
+    public IReadOnlyDictionary<string, Scheduling.TradingSchedule>? Schedules { get; init; }
+
     /// <summary>Gets Avanza's pre-trade checks (validate + preliminary fee): required live, never asked in simulated modes.</summary>
     public IBrokerPreflight? Preflight { get; init; }
 
@@ -196,7 +209,67 @@ public sealed class OrderGateway : IDisposable
     /// Gets the orders the OMS considers open, as the risk checks see them (R4, R7, R8, R13, R18). The plan takes the same
     /// list, so it clips to the room the checks will find.
     /// </summary>
-    public IReadOnlyList<OpenOrderView> OpenOrders => [.. _oms.Open.Select(o => o.View())];
+    public IReadOnlyList<OpenOrderView> OpenOrders => [.. _oms.Open.Select(o => o.View() with { FxToSek = FxOf(o.OrderbookId) })];
+
+    /// <summary>
+    /// The earliest time an action on <paramref name="id"/> passes the pacing checks: R11 (actions per minute) and R12
+    /// (the interval on one share; cancels count). A hint for a session that paces its queue (plan 23: a manual order
+    /// right after the cancels it caused); the risk engine still decides.
+    /// </summary>
+    public DateTimeOffset NextActionAt(OrderbookId id)
+    {
+        DateTimeOffset now = _time.GetUtcNow();
+        RiskLimits limits = _risk.Limits;
+        lock (_lock)
+        {
+            DateTimeOffset ready = _lastAction.TryGetValue(id, out DateTimeOffset last) ? last + limits.MinIntervalSameInstrument : now;
+            DateTimeOffset[] lastMinute = [.. _actions.Where(t => now - t < TimeSpan.FromMinutes(1) && t <= now).Order()];
+            if (lastMinute.Length >= limits.MaxActionsPerMinute)
+            {
+                // The minute must drop to max - 1 actions: the oldest ones leave it one by one.
+                DateTimeOffset freed = lastMinute[lastMinute.Length - limits.MaxActionsPerMinute] + TimeSpan.FromMinutes(1);
+                ready = freed > ready ? freed : ready;
+            }
+
+            return ready > now ? ready : now;
+        }
+    }
+
+    /// <summary>
+    /// Plan 19: at a market's close, one <c>close-mark</c> audit record per allowlisted share of that market: the last
+    /// price and its time, bid, ask, the day's high and low, and SEK per unit. The end-of-day report reads from them what
+    /// an unfilled order missed and whether the backtest would have filled it. Returns how many were recorded.
+    /// </summary>
+    /// <param name="which">The market's shares; null: every allowlisted share.</param>
+    public int AuditCloseMarks(Func<InstrumentSpec, bool>? which = null)
+    {
+        int marked = 0;
+        foreach (UniverseEntry entry in _env.Universe.Entries)
+        {
+            if (_env.Instruments.Find(entry.OrderbookId) is not { } spec || (which is not null && !which(spec)))
+            {
+                continue;
+            }
+
+            Quote? q = _env.Quotes.Latest(spec.OrderbookId);
+            _audit.Append("close-mark", new
+            {
+                orderbookId = spec.OrderbookId.Value,
+                spec.Ticker,
+                spec.Currency,
+                last = q?.Last,
+                timeOfLast = q?.TimeOfLastUtc,
+                bid = q?.Bid,
+                ask = q?.Ask,
+                dayHigh = q?.DayHigh,
+                dayLow = q?.DayLow,
+                sekPerUnit = _env.Fx.SekPerUnit(spec.Currency),
+            });
+            marked++;
+        }
+
+        return marked;
+    }
 
     /// <summary>Runs one intent through the whole pipeline. Orders are processed one at a time.</summary>
     public async Task<SubmitResult> SubmitAsync(OrderIntent intent, CancellationToken ct)
@@ -265,6 +338,7 @@ public sealed class OrderGateway : IDisposable
             prepared = spec is null
                 ? throw new OrderPreparationException($"orderbook {intent.OrderbookId} ({intent.Ticker}) has no instrument data (tick table, lot size)")
                 : OrderPreparation.Prepare(intent, spec);
+            RequireTradableCurrency(spec);
         }
         catch (OrderPreparationException ex)
         {
@@ -518,6 +592,68 @@ public sealed class OrderGateway : IDisposable
     private static string Failures(RiskReport report) => string.Join("; ", report.Failures.Select(f => $"{f.Id} {f.Message}"));
 
     /// <summary>
+    /// ADR 0005: shares in SEK, USD and CAD only; USD and CAD on paper only (Confirm and Auto refuse them before any risk
+    /// check); and a foreign share needs a known rate, or its value in SEK can't be judged.
+    /// </summary>
+    private void RequireTradableCurrency(InstrumentSpec spec)
+    {
+        if (Markets.ForCurrency(spec.Currency) is null)
+        {
+            throw new OrderPreparationException($"{spec.Ticker} trades in {spec.Currency}; the program trades shares in {Markets.CurrencyList} (ADR 0005).");
+        }
+
+        if (!Markets.IsForeign(spec.Currency))
+        {
+            return;
+        }
+
+        if (_env.Mode is not (TradingMode.Paper or TradingMode.Backtest))
+        {
+            throw new OrderPreparationException($"{spec.Ticker} trades in {spec.Currency}: foreign shares trade on paper only (ADR 0005); {_env.Mode} refuses them.");
+        }
+
+        if (_env.Fx.SekPerUnit(spec.Currency) is null)
+        {
+            throw new OrderPreparationException($"{spec.Ticker}: no {spec.Currency}/SEK rate is known, so the order's value in SEK can't be judged.");
+        }
+    }
+
+    /// <summary>SEK per unit of an instrument's currency (1 when unknown: SEK, or an instrument without data).</summary>
+    private decimal FxOf(OrderbookId id) =>
+        _env.Instruments.Find(id) is { } spec ? _env.Fx.SekPerUnit(spec.Currency) ?? 1m : 1m;
+
+    /// <summary>
+    /// A foreign order's market and today's window there (R16). Null for a SEK order: Stockholm is judged as before foreign
+    /// shares, on <see cref="GatewayEnvironment.Calendar"/> and the limits' window. A foreign market without a schedule
+    /// has no window, so R16 fails.
+    /// </summary>
+    private MarketWindow? MarketOf(InstrumentSpec spec, DateTimeOffset now)
+    {
+        if (!Markets.IsForeign(spec.Currency) || Markets.ForCurrency(spec.Currency) is not { } market)
+        {
+            return null;
+        }
+
+        if (_env.Schedules?.GetValueOrDefault(spec.Currency) is not { } schedule)
+        {
+            return new MarketWindow(market.Mic, market.TimeZone, Clock(market.TimeZoneId), null, null);
+        }
+
+        MarketCalendar calendar = schedule.Calendar;
+        DateOnly date = calendar.LocalDate(now);
+        try
+        {
+            return new MarketWindow(calendar.Mic, calendar.TimeZone, Clock(calendar.TimeZoneId), calendar.Classify(date), schedule.Plan(date));
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return new MarketWindow(calendar.Mic, calendar.TimeZone, Clock(calendar.TimeZoneId), null, null); // the year is not in the calendar
+        }
+
+        static string Clock(string zoneId) => zoneId[(zoneId.IndexOf('/', StringComparison.Ordinal) + 1)..].Replace('_', ' ');
+    }
+
+    /// <summary>
     /// The risk context, or null when the account state can't be read. A changed account (R1) or a broker fault that
     /// must stop trading raises its halt; a passing failure (e.g. a timeout) only blocks this order.
     /// </summary>
@@ -686,6 +822,8 @@ public sealed class OrderGateway : IDisposable
                 EstimatedFees = _env.Fees(order, spec),
                 Verified = new VerifiedConstants(_env.CourtageVerified, calendarVerified, spec.TickTableVerified),
                 Preflight = null,
+                FxRate = _env.Fx.SekPerUnit(spec.Currency) ?? 1m,
+                Market = MarketOf(spec, now),
             };
         }
     }

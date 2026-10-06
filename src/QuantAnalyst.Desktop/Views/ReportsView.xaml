@@ -1,55 +1,128 @@
 <UserControl x:Class="QuantAnalyst.Desktop.Views.ReportsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls">
     <DockPanel>
+        <!-- The Confirm gate: one dot per clean Paper day, 10 needed. -->
         <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
-            <StackPanel>
-                <TextBlock Text="Towards Confirm mode" FontSize="15" FontWeight="SemiBold" />
-                <StackPanel Orientation="Horizontal" Margin="0,8,0,6">
-                    <ProgressBar Value="{Binding CleanDays, Mode=OneWay}" Maximum="{Binding NeededDays, Mode=OneWay}" Width="300" Height="14" />
-                    <TextBlock Text="{Binding GateProgress}" Margin="12,0,0,0" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <!-- The dots, and what the gate still needs beside them; in a narrow pane the lines go under the dots. -->
+            <c:AdaptiveRow Spacing="32" FillMinWidth="240">
+                <StackPanel>
+                    <TextBlock Text="TOWARDS CONFIRM MODE" Style="{StaticResource Overline}" />
+                    <TextBlock Text="{Binding GateProgress}" Style="{StaticResource KpiValue}" />
+                    <ItemsControl ItemsSource="{Binding GateDots}" Margin="0,10,0,0">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Ellipse Width="16" Height="16" Margin="0,0,6,0">
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Setter Property="Fill" Value="{StaticResource LineBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding}" Value="True">
+                                                    <Setter Property="Fill" Value="{StaticResource PositiveBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
-                <ItemsControl ItemsSource="{Binding GateLines}">
+                <ItemsControl c:AdaptiveRow.Fill="True" ItemsSource="{Binding GateLines}" VerticalAlignment="Center">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <TextBlock Text="{Binding}" TextWrapping="Wrap" Style="{StaticResource Hint}" />
+                            <TextBlock Text="{Binding}" Style="{StaticResource Hint}" Margin="0,2" />
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+            </c:AdaptiveRow>
+        </Border>
+
+        <!-- The week of the selected day (plan 20): the same summary as qa report week. The headline beside the whole
+             summary; in a narrow pane the summary goes under it. -->
+        <Border DockPanel.Dock="Top" Style="{StaticResource Card}">
+            <StackPanel>
+                <TextBlock Text="{Binding WeekNote}" Style="{StaticResource Hint}" TextWrapping="Wrap"
+                           Visibility="{Binding WeekNote, Converter={StaticResource NonEmptyToVisibility}}" />
+                <c:AdaptiveRow DataContext="{Binding Week}" Spacing="32" FillMinWidth="320"
+                               Visibility="{Binding Converter={StaticResource NonEmptyToVisibility}}">
+                    <StackPanel>
+                        <TextBlock Text="{Binding Title}" Style="{StaticResource Overline}" />
+                        <TextBlock Text="{Binding Return}" Style="{StaticResource KpiValue}" Foreground="{Binding ReturnMark, Converter={StaticResource MarkToBrush}}" />
+                        <TextBlock Text="{Binding Days}" Style="{StaticResource Hint}" Margin="0,2,0,10" />
+                        <TextBlock Text="THIS WEEK" Style="{StaticResource Overline}" />
+                        <Border Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="0,2,0,8"
+                                Background="{Binding ThisWeekMark, Converter={StaticResource MarkToSoftBrush}}">
+                            <TextBlock Text="{Binding ThisWeek}" Style="{StaticResource ChipText}" Foreground="{Binding ThisWeekMark, Converter={StaticResource MarkToBrush}}" />
+                        </Border>
+                        <TextBlock Text="SINCE THE FIRST PAPER DAY" Style="{StaticResource Overline}" />
+                        <Border Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="0,2,0,8"
+                                Background="{Binding SinceStartMark, Converter={StaticResource MarkToSoftBrush}}">
+                            <TextBlock Text="{Binding SinceStart}" Style="{StaticResource ChipText}" Foreground="{Binding SinceStartMark, Converter={StaticResource MarkToBrush}}" />
+                        </Border>
+                        <TextBlock Text="AGAINST HOLDING THE LIST" Style="{StaticResource Overline}" />
+                        <Border Style="{StaticResource Chip}" HorizontalAlignment="Left" Margin="0,2,0,0"
+                                Background="{Binding HoldMark, Converter={StaticResource MarkToSoftBrush}}">
+                            <TextBlock Text="{Binding Hold}" Style="{StaticResource ChipText}" Foreground="{Binding HoldMark, Converter={StaticResource MarkToBrush}}" />
+                        </Border>
+                    </StackPanel>
+                    <ScrollViewer c:AdaptiveRow.Fill="True" MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding Lines}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding}" Style="{StaticResource MonoText}" TextWrapping="Wrap" Margin="0,1" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </c:AdaptiveRow>
             </StackPanel>
         </Border>
 
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="260" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Border Grid.Column="0" Style="{StaticResource Card}" Padding="0" Margin="0,0,12,0">
-                <ListBox ItemsSource="{Binding Days}" SelectedItem="{Binding Selected}" BorderThickness="0">
+        <!-- The days beside the selected one; in a narrow pane the days go on top (they scroll). -->
+        <c:AdaptiveSplit FirstWidth="280" Breakpoint="720" StackedFirstMaxHeight="200" StackedSecondMinHeight="240">
+            <!-- The days, newest first. -->
+            <Border Style="{StaticResource Card}" Padding="0,10" Margin="0">
+                <ListBox ItemsSource="{Binding Days}" SelectedItem="{Binding Selected}" BorderThickness="0" Background="Transparent"
+                         ItemContainerStyle="{StaticResource RowItem}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <StackPanel Orientation="Horizontal" Margin="6,4">
-                                <TextBlock Text="{Binding DateText}" Width="120" />
-                                <TextBlock Text="{Binding State}" FontWeight="SemiBold" Foreground="{Binding State, Converter={StaticResource MarkToBrush}}" />
-                            </StackPanel>
+                            <DockPanel>
+                                <Border DockPanel.Dock="Right" Style="{StaticResource Chip}" Background="{Binding State, Converter={StaticResource MarkToSoftBrush}}">
+                                    <TextBlock Text="{Binding State}" Style="{StaticResource ChipText}" Foreground="{Binding State, Converter={StaticResource MarkToBrush}}" />
+                                </Border>
+                                <TextBlock Text="{Binding DateText}" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            </DockPanel>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
             </Border>
-            <Border Grid.Column="1" Style="{StaticResource Card}">
+
+            <!-- The selected day. -->
+            <Border Style="{StaticResource Card}" Margin="0">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel DataContext="{Binding Selected}">
-                        <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,10" />
+                        <TextBlock Text="{Binding DateText}" Style="{StaticResource H2}" />
+                        <TextBlock Text="{Binding Summary}" TextWrapping="Wrap" Margin="0,8,0,16" LineHeight="21" />
+                        <TextBlock Text="DETAILS" Style="{StaticResource Overline}" Margin="0,0,0,6" />
                         <ItemsControl ItemsSource="{Binding Details}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <TextBlock Text="{Binding}" TextWrapping="Wrap" FontFamily="{StaticResource Mono}" Margin="0,2" />
+                                    <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="0,6">
+                                        <TextBlock Text="{Binding}" Style="{StaticResource MonoText}" />
+                                    </Border>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </StackPanel>
                 </ScrollViewer>
             </Border>
-        </Grid>
+        </c:AdaptiveSplit>
     </DockPanel>
 </UserControl>

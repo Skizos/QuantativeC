@@ -34,6 +34,8 @@ whichever steps are still open:
 
 Recommended, not required for Paper:
 - **O10:** the stream recording from plan 04's stop point, to replace the hand-written SSE fixture with a real one.
+  **2026-09-30:** Avanza refuses the order-depth stream (HTTP 429, even a single connection), so no recording exists.
+  Paper now runs on the 5-second polls alone (owner's decision, ADR 0002 §3 amendment).
 
 ### Confirm (real orders)
 
@@ -57,6 +59,7 @@ Owner's part (**O**) and Claude's part (**C**). Confirm is usable when every lin
 | C6 | Claude | The live end-of-day execution-quality report and the Auto gate's numbers | C5 | step 6 green |
 | C7 | Claude | Final order DTOs and deals mapper from O4/O5; removes the "provisional" flag | O4, O5 | step 7 green |
 | C8 | Claude | Docs, a gate run, and the handover checklist | C1–C7 | step 8 |
+| O11 | you | **A working order-depth stream for Confirm.** Avanza refused it on 2026-09-30 (HTTP 429), and Confirm requires it (ADR 0002 §3). The clean way: Avanza's written consent (`avanza-terms.md` §3), then a recording with `qa stream` (O10). | – | `qa stream ERIC-B` shows fresh depth, not STALE |
 | O9 | you | **First real orders:** `qa trade run --mode confirm`, minimal size, watching the cards; the checklist is `docs/handover-confirm.md` | everything above | your first live end-of-day report |
 
 ## Research re-check (before step 1, per CLAUDE.md)

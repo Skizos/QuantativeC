@@ -18,6 +18,7 @@ using QuantAnalyst.Data.Calendar;
 using QuantAnalyst.Data.History;
 using QuantAnalyst.Data.Store;
 using QuantAnalyst.Trading.Accounts;
+using QuantAnalyst.Trading.Alerts;
 
 namespace QuantAnalyst.Cli.Commands;
 
@@ -54,14 +55,33 @@ internal sealed record AvanzaCliServices(
     public Func<string, string?> GetVariable { get; init; } = Environment.GetEnvironmentVariable;
 
     /// <summary>
+    /// Gets who watches a running Paper session: null in the terminal. The Windows app draws its live charts from it
+    /// (quotes, the account's value, order changes, the decision); it can't change anything (GuardedObserver).
+    /// </summary>
+    public Trading.Observation.ISessionObserver? SessionObserver { get; init; }
+
+    /// <summary>
     /// Gets the order channel a Confirm session sends through: Avanza's. Tests pass a stand-in; whatever it is, the
     /// session sends only with the live authorization the Confirm startup checks issue for that very channel.
     /// </summary>
     internal Func<AvanzaConnection, IBrokerOrderChannel> OrderChannel { get; init; } = connection => connection.CreateOrderChannel();
 
+    /// <summary>
+    /// Gets who shows an alert on the screen (plan 25): nobody, except in <see cref="Default"/> (the program and the app),
+    /// where it is a Windows notification on Windows. So a test run never pops notifications; tests that check them pass
+    /// their own.
+    /// </summary>
+    public Func<Trading.Alerts.IAlertNotifier?> Notifier { get; init; } = () => null;
+
+    /// <summary>Gets where FX rates come from (ADR 0005): the Riksbank's daily fixing. Tests pass a fake.</summary>
+    public Func<IFxRateSource> FxRates { get; init; } = () => Data.Fx.RiksbankFxSource.Shared;
+
     public static AvanzaCliServices Default { get; } = new(
         (options, secrets, prompt, logger, redactor) => AvanzaConnection.Create(options, secrets, logger, redactor, prompt),
-        CreateSecretStore);
+        CreateSecretStore)
+    {
+        Notifier = () => OperatingSystem.IsWindows() ? new WindowsToastNotifier() : null,
+    };
 
     private static ISecretStore CreateSecretStore(string kind) => kind switch
     {
@@ -138,6 +158,8 @@ internal static partial class AvanzaCommands
         yield return Rebalance(services);
         yield return History(services);
         yield return Probe(services);
+        yield return Intraday(services);
+        yield return Benchmark(services);
         yield return Recordings(services);
         yield return Secrets();
     }
@@ -185,7 +207,8 @@ internal static partial class AvanzaCommands
             IReadOnlyList<Account> accounts = await ctx.Connection.Gateway.GetAccountsAsync(ctx.Ct).ConfigureAwait(false);
             IReadOnlyList<TradingAccount> trading = await ctx.Connection.Gateway.GetTradingAccountsAsync(ctx.Ct).ConfigureAwait(false);
             AllowlistResult allowlist = AccountAllowlist.FromEnvironment(trading, services.GetVariable);
-            var rows = accounts.Select(a =>
+            IReadOnlyList<AccountSummary> summaries = AccountOverview.Summaries(accounts, trading, allowlist);
+            var rows = accounts.Zip(summaries, (a, s) =>
             {
                 TradingAccount? t = trading.FirstOrDefault(x => x.Id == a.Id);
                 return new
@@ -199,7 +222,7 @@ internal static partial class AvanzaCommands
                     a.BuyingPower,
                     AvailableForPurchase = t?.AvailableForPurchase,
                     Tradable = t?.IsTradable,
-                    AllowedForLiveTrading = allowlist.Allowed && allowlist.Account!.Id == a.Id,
+                    AllowedForLiveTrading = s.IsLiveAccount,
                 };
             }).ToList();
 
@@ -587,22 +610,38 @@ internal static partial class AvanzaCommands
     // ---- shared plumbing ------------------------------------------------------------------------------
 
     /// <param name="Interactive">True when stderr is the real console (Ctrl+C handling, in-place QR redraw).</param>
-    private sealed record Ctx(AvanzaConnection Connection, ILogger Logger, bool Interactive, CancellationToken Ct);
+    /// <param name="Redactor">The command's redactor: it knows the secrets the connection registered.</param>
+    /// <param name="Alerts">Plan 25: the command's alerts; null for a command that raises none.</param>
+    private sealed record Ctx(AvanzaConnection Connection, ILogger Logger, bool Interactive, Redactor Redactor, Alerter? Alerts, CancellationToken Ct);
+
+    /// <summary>Plan 25: how a command's failure is alerted: what it is called, the alert's kind and level.</summary>
+    private sealed record AlertAs(string What, string Kind, AlertLevel Level)
+    {
+        public static AlertAs Import { get; } = new("Evening import", "import-failed", AlertLevel.Warning);
+
+        public static AlertAs Session(string what) => new(what, "session-failed", AlertLevel.Critical);
+    }
 
     /// <param name="live">
     /// False: output is buffered and redacted as a whole at the end. True (long-running verbs): every line is redacted
     /// and written as soon as it is complete.
     /// </param>
+    /// <param name="alertAs">
+    /// Plan 25: how an alert names this command when it fails or stops on an error; null raises none. The owner's own
+    /// stop (Ctrl+C, the app's Stop) and "no session today" are not failures.
+    /// </param>
     private static int Run(
-        ParseResult parse, AvanzaCliServices services, Common common, string? record, Func<Ctx, TextWriter, Task<int>> body, bool live = false)
+        ParseResult parse, AvanzaCliServices services, Common common, string? record, Func<Ctx, TextWriter, Task<int>> body, bool live = false, AlertAs? alertAs = null)
     {
         TextWriter output = parse.InvocationConfiguration.Output;
         TextWriter error = parse.InvocationConfiguration.Error;
         var redactor = new Redactor();
         var logger = new RedactingLogger(error, redactor, parse.GetValue(common.Verbose) ? LogLevel.Debug : LogLevel.Warning);
         TextWriter buffer = live ? new RedactingLineWriter(output, redactor) : new StringWriter(CultureInfo.InvariantCulture);
+        Alerter? alerts = null;
         try
         {
+            alerts = alertAs is null ? null : Alerting.Create(services, ConfigDirOf(parse), parse.GetValue(common.StateDir)!, buffer, redactor.Redact, alertAs.What);
             ISecretStore secrets = services.SecretStoreFactory(parse.GetValue(common.SecretStore)!);
             var options = new AvanzaOptions
             {
@@ -613,7 +652,7 @@ internal static partial class AvanzaCommands
             bool interactive = ReferenceEquals(error, Console.Error) && !Console.IsErrorRedirected;
             IBankIdPrompt prompt = services.BankIdPrompt?.Invoke(error, interactive) ?? new ConsoleBankIdPrompt(error, interactive);
             using AvanzaConnection connection = services.ConnectionFactory(options, secrets, prompt, logger, redactor);
-            int code = body(new Ctx(connection, logger, interactive, services.Cancellation), buffer).GetAwaiter().GetResult();
+            int code = body(new Ctx(connection, logger, interactive, redactor, alerts, services.Cancellation), buffer).GetAwaiter().GetResult();
             Flush(buffer, output, redactor);
             return code;
         }
@@ -621,6 +660,12 @@ internal static partial class AvanzaCommands
                                        or HistoryImportException or HistoryStoreException or CalendarConfigException
                                    || DataCommands.IsStoreFailure(ex))
         {
+            if (alerts is not null && alertAs is not null && ex is not NoSessionTodayException)
+            {
+                string why = DataCommands.IsStoreFailure(ex) ? DataCommands.StoreFailureMessage(ex) : ex.Message;
+                alerts.Raise(alertAs.Level, alertAs.Kind, $"{alertAs.What} stopped", $"{alertAs.What} stopped: {why}");
+            }
+
             Flush(buffer, output, redactor);
             if (DataCommands.IsStoreFailure(ex))
             {
@@ -638,6 +683,62 @@ internal static partial class AvanzaCommands
             error.WriteLine(redactor.Redact($"{prefix}: {ex.Message}"));
             return code;
         }
+        catch (Exception ex) when (alerts is not null && alertAs is not null && ex is not OperationCanceledException && AlertCrash(alerts, alertAs, ex))
+        {
+            throw; // not reached: AlertCrash returns false, so the exception goes on unchanged after its alert
+        }
+    }
+
+    /// <summary>Plan 25: an unexpected exception stops the command too; alerted, then left to propagate.</summary>
+    private static bool AlertCrash(Alerter alerts, AlertAs alertAs, Exception ex)
+    {
+        alerts.Raise(alertAs.Level, alertAs.Kind, $"{alertAs.What} stopped", $"{alertAs.What} stopped on an unexpected error: {ex.GetType().Name}: {ex.Message}");
+        return false;
+    }
+
+    /// <summary>The command's --config-dir, when it has one and it was given.</summary>
+    private static string? ConfigDirOf(ParseResult parse) =>
+        parse.CommandResult.Command.Options.OfType<Option<string?>>().FirstOrDefault(o => o.Name == "--config-dir") is { } option ? parse.GetValue(option) : null;
+
+    /// <summary>
+    /// One read-only query for the Windows app, with a command's plumbing: the secret store, the login method, the app's
+    /// BankID prompt, the login lock, redaction and cancellation. It logs in once (never retried) and runs
+    /// <paramref name="body"/>; failures propagate as the broker's own exceptions for the app to explain.
+    /// </summary>
+    internal static async Task<T> QueryAsync<T>(AvanzaCliServices services, string stateDirectory, string login, Func<AvanzaConnection, CancellationToken, Task<T>> body)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(body);
+        var redactor = new Redactor();
+        var logger = new RedactingLogger(TextWriter.Null, redactor, LogLevel.Warning);
+        ISecretStore secrets = services.SecretStoreFactory(OperatingSystem.IsWindows() ? "credman" : "env");
+        var options = new AvanzaOptions
+        {
+            StateDirectory = stateDirectory,
+            LoginMethod = login == "totp" ? AvanzaLoginMethod.Totp : AvanzaLoginMethod.BankId,
+        };
+        IBankIdPrompt prompt = services.BankIdPrompt?.Invoke(TextWriter.Null, false) ?? new ConsoleBankIdPrompt(TextWriter.Null, false);
+        using AvanzaConnection connection = services.ConnectionFactory(options, secrets, prompt, logger, redactor);
+        await connection.Authenticator.LoginAsync(services.Cancellation).ConfigureAwait(false);
+        return await body(connection, services.Cancellation).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// A read that needs no login (the app's share search: Avanza's own site searches logged out, and the Go SDK lists
+    /// search as public; docs/research/avanza-endpoints.md). The same plumbing as <see cref="QueryAsync{T}"/>, but it
+    /// never logs in: an answer of 401/403 comes back as <see cref="SessionExpiredException"/> and the caller decides
+    /// whether a login is worth it. The login lock still applies.
+    /// </summary>
+    internal static async Task<T> PublicQueryAsync<T>(AvanzaCliServices services, string stateDirectory, Func<AvanzaConnection, CancellationToken, Task<T>> body)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(body);
+        var redactor = new Redactor();
+        var logger = new RedactingLogger(TextWriter.Null, redactor, LogLevel.Warning);
+        ISecretStore secrets = services.SecretStoreFactory(OperatingSystem.IsWindows() ? "credman" : "env");
+        var options = new AvanzaOptions { StateDirectory = stateDirectory };
+        using AvanzaConnection connection = services.ConnectionFactory(options, secrets, new ConsoleBankIdPrompt(TextWriter.Null, false), logger, redactor);
+        return await body(connection, services.Cancellation).ConfigureAwait(false);
     }
 
     private static void Flush(TextWriter buffer, TextWriter output, Redactor redactor)

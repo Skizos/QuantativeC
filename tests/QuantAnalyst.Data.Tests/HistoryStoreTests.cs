@@ -27,6 +27,46 @@ public sealed class HistoryStoreTests : IDisposable
         new(new DateOnly(2026, 9, day), close, close + 1m, close - 1m, close, volume);
 
     [Fact]
+    public void Dividends_AreVersioned_ARestatedAmountIsANewRowNotAnOverwrite()
+    {
+        using HistoryStore store = Open();
+        var spring = new DividendEvent(new DateOnly(2026, 3, 26), new DateOnly(2026, 3, 31), 1.45m, "SEK", "ORDINARY");
+        var autumn = new DividendEvent(new DateOnly(2026, 10, 22), null, 1.45m, "SEK", "ORDINARY");
+        Assert.Equal(new WriteCounts(2, 0, 0), store.UpsertDividends(Eric, [spring, autumn], Source, "v1", T1));
+
+        // Later: the autumn payment date is announced, and after a 2:1 split the spring amount is restated per current share.
+        DividendEvent[] later = [spring with { Amount = 0.725m }, autumn with { PaymentDate = new DateOnly(2026, 10, 27) }];
+        Assert.Equal(new WriteCounts(0, 2, 0), store.UpsertDividends(Eric, later, Source, "v2", T2));
+        Assert.Equal(new WriteCounts(0, 0, 2), store.UpsertDividends(Eric, later, Source, "v2", T2.AddHours(1)));
+
+        Assert.Equal([1.45m, 1.45m], store.GetDividends(Eric, Source.Name, asOfUtc: T1).Select(d => d.Dividend.Amount));
+        IReadOnlyList<StoredDividend> now = store.GetDividends(Eric, Source.Name);
+        Assert.Equal((0.725m, "v2", T2), (now[0].Dividend.Amount, now[0].SourceVersion, now[0].KnownAtUtc));
+        Assert.Equal(later[1], now[1].Dividend);
+        Assert.Equal(autumn.ExDate, Assert.Single(store.GetDividends(Eric, Source.Name, from: new DateOnly(2026, 10, 1))).Dividend.ExDate);
+        Assert.Empty(store.GetDividends(new OrderbookId("5239"), Source.Name));
+
+        Assert.Throws<ArgumentException>(() => store.UpsertDividends(Eric, [spring with { Amount = -1m }], Source, "v3", T2));
+        Assert.Throws<ArgumentException>(() => store.UpsertDividends(Eric, [spring, spring with { Amount = 2m }], Source, "v3", T2));
+    }
+
+    [Fact]
+    public void ShareCounts_AreStoredOnlyWhenTheyChange_AndReadAsOfADate()
+    {
+        using HistoryStore store = Open();
+        DateOnly d1 = new(2026, 9, 28), d2 = new(2026, 9, 29), d3 = new(2026, 9, 30);
+        Assert.True(store.UpsertShareCount(Eric, d1, 3_334_151_735m, Source, "v1", T1));
+        Assert.False(store.UpsertShareCount(Eric, d2, 3_334_151_735m, Source, "v1", T1.AddDays(1))); // unchanged: no row
+        Assert.True(store.UpsertShareCount(Eric, d3, 6_668_303_470m, Source, "v1", T1.AddDays(2)));
+
+        Assert.Null(store.LatestShareCount(Eric, Source.Name, d1.AddDays(-1)));
+        StoredShareCount before = store.LatestShareCount(Eric, Source.Name, d2)!;
+        Assert.Equal((d1, 3_334_151_735m), (before.AsOf, before.Shares));
+        Assert.Equal(6_668_303_470m, store.LatestShareCount(Eric, Source.Name, d3)!.Shares);
+        Assert.Throws<ArgumentOutOfRangeException>(() => store.UpsertShareCount(Eric, d3, 0m, Source, "v1", T2));
+    }
+
+    [Fact]
     public void Restatement_IsNotVisibleBeforeItsKnownAt()
     {
         using HistoryStore store = Open();

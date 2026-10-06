@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Time.Testing;
 using QuantAnalyst.Analytics.Backtesting;
 using QuantAnalyst.Core;
@@ -42,6 +43,65 @@ public sealed class DailyPlannerTests
         Assert.Equal(100.5m, i.LimitPrice); // +50 bps from the 100.0 reference; OrderPreparation rounds it
         Assert.Equal(100.0m, i.DecisionPrice);
         Assert.Contains(p.Notes, n => n.Contains("TEST B: hold", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Coverage_CountsTheSharesWithAPriceTheRiskChecksAccept_AndNamesTheFirstMissing()
+    {
+        DateTimeOffset now = _time.GetUtcNow();
+        Assert.Equal(new PriceCoverage(0, 2, "ERIC B: no quote yet"), DailyPlanner.Coverage(Specs, _quotes, Risk, now));
+
+        Price(Eric, 99.9m, 100.1m);
+        Assert.Equal(new PriceCoverage(1, 2, "TEST B: no quote yet"), DailyPlanner.Coverage(Specs, _quotes, Risk, now));
+
+        // A price R15 would refuse is not ready, however recent it looks (plan 18, P1/P3).
+        Quote stale = _quotes.Set(Test, now, 49.9m, 1_000, 50.1m, 1_000, 50m, 1_000);
+        _quotes.Put(stale with { IsStale = true, StaleReason = "depth stream reconnecting (HTTP 429)" });
+        Assert.Equal(new PriceCoverage(1, 2, "TEST B: stale: depth stream reconnecting (HTTP 429)"), DailyPlanner.Coverage(Specs, _quotes, Risk, now));
+
+        _quotes.Put(stale with { Bid = null, Ask = null, Last = null });
+        Assert.Equal("TEST B: no fresh last trade and no bid/ask", DailyPlanner.Coverage(Specs, _quotes, Risk, now).Missing);
+
+        Price(Test, 49.9m, 50.1m);
+        Assert.Equal(new PriceCoverage(2, 2, null), DailyPlanner.Coverage(Specs, _quotes, Risk, now));
+    }
+
+    [Theory]
+    [InlineData(OrderSide.Buy, "1.01")] // 1.005 would round down to the last price, 1.00
+    [InlineData(OrderSide.Sell, "0.99")] // 0.995 would round up to 1.00
+    public void OnAShareWhoseStepIsLargeAgainstItsPrice_TheLimitStillMovesOneStepTowardTheMarket(OrderSide side, string expected)
+    {
+        // Plan 18, P4: at 1 SEK the 0.01 step is 1 %, so the 0.5 % offset rounded away and the limit sat at the last price.
+        Price(Eric, 0.99m, 1.01m);
+        PlanResult p = side == OrderSide.Buy
+            ? Plan([0.05, double.NaN])
+            : Plan([0.0, double.NaN], Account(eric: 1_000, ericValue: 1_000m));
+        OrderIntent i = Assert.Single(p.Intents);
+        Assert.Equal(side, i.Side);
+        Assert.Equal(decimal.Parse(expected, CultureInfo.InvariantCulture), i.LimitPrice);
+    }
+
+    [Fact]
+    public void TheStepTowardTheMarket_NeverLeavesR5sCollar()
+    {
+        // At 0.40 SEK a 0.01 step is 2.5 %, beyond the 2 % collar: the limit stays where the offset put it (and rests)
+        // rather than being rejected by R5.
+        Price(Eric, 0.39m, 0.41m);
+        OrderIntent i = Assert.Single(Plan([0.05, double.NaN]).Intents);
+        Assert.Equal(0.402m, i.LimitPrice);
+        Assert.Equal(0.41m, DailyPlanner.TowardTheMarket(Specs[0], 0.40m, 0.402m, OrderSide.Buy, collar: 0.03m)); // a wider collar allows the step
+    }
+
+    [Fact]
+    public void ALimitInsideTheSpread_IsNamedInTheDecision()
+    {
+        // Plan 18, P4: FASTAT's buy rested at last + 0.5 %, below a wider ask, and the decision did not say why.
+        Price(Eric, 10.00m, 10.20m); // reference 10.10; limit 10.1505, which the gateway rounds down to 10.15
+        PlanResult wide = Plan([0.05, double.NaN]);
+        Assert.Contains("ERIC B: the buy limit 10.15 is below the ask 10.2 (spread 1.98 %): it rests until a trade prints through it", wide.Notes);
+
+        Price(Eric, 99.9m, 100.1m); // a tight spread: the limit is above the ask, no note
+        Assert.DoesNotContain(Plan([0.05, double.NaN]).Notes, n => n.Contains("rests", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -213,7 +273,11 @@ public sealed class StrategyReplayTests
     {
         MarketPanel panel = SyntheticMarket.Generate(new SyntheticMarketOptions { Instruments = 2, Periods = 30, Seed = 7 });
         Assert.Equal([0.5, 0.5], StrategyReplay.DecideAtLastBar(panel.Truncate(3), new BuyAndHold(5)));
-        Assert.All(StrategyReplay.DecideAtLastBar(panel, new BuyAndHold(5)), w => Assert.True(double.IsNaN(w)));
+
+        // Plan 27 review: after its entry bars buy-and-hold says "hold" (NaN), which a new Paper book can't follow (it
+        // holds nothing): the replay gives it the last target the strategy set, so the book buys in once.
+        Assert.Equal([0.5, 0.5], StrategyReplay.DecideAtLastBar(panel, new BuyAndHold(5)));
+        Assert.All(StrategyReplay.DecideAtLastBar(panel, new Never()), w => Assert.True(double.IsNaN(w))); // never set: still "hold"
 
         // A stateful strategy must see every bar in order; replaying makes that true.
         double[] ma = StrategyReplay.DecideAtLastBar(panel, new MovingAverageCross(3, 10));
@@ -226,6 +290,13 @@ public sealed class StrategyReplayTests
         MarketPanel panel = SyntheticMarket.Generate(new SyntheticMarketOptions { Instruments = 2, Periods = 5, Seed = 7 });
         Assert.Throws<StrategyException>(() => StrategyReplay.DecideAtLastBar(panel, new Fixed(0.7, 0.7)));
         Assert.Throws<StrategyException>(() => StrategyReplay.DecideAtLastBar(panel, new Fixed(-0.1, 0.1)));
+    }
+
+    private sealed class Never : IStrategy
+    {
+        public void Decide(BarWindow window, Span<double> targets)
+        {
+        }
     }
 
     private sealed class Fixed(double a, double b) : IStrategy
@@ -326,6 +397,52 @@ public sealed class PaperSessionTests : IDisposable
         await StepFor(TimeSpan.FromSeconds(1));
         Assert.All(_oms.All, o => Assert.Equal(OmsState.Cancelled, o.State));
         Assert.Contains("close: 2 order(s) expired", _output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StartedAfterTheDecisionTime_ItWaitsForLivePrices_ThenDecides()
+    {
+        // The first step of a session started at 09:54 used to decide at once, before the quote feeds' first answer,
+        // and every share was skipped for the day ("no fresh live price").
+        bool priced = false;
+        var schedule = new TradingSchedule(OrderGatewayTests.Calendar(), RiskLimits.AdrDefaults, new TimeOnly(9, 10));
+        var late = new PaperSession(_gateway, _channel, _book, _kill, new Reconciler(_oms, _halts, _audit, _time, _book.Account), _halts,
+            [new SessionMarket(schedule, Decide, _ => true) { Prices = _ => priced ? new PriceCoverage(2, 2, null) : new PriceCoverage(0, 2, "ERIC B: no quote yet") }], _audit, _time, _output);
+        _time.SetUtcNow(new DateTimeOffset(2026, 9, 28, 7, 54, 30, TimeSpan.Zero)); // 09:54:30
+
+        for (int i = 0; i < 3; i++)
+        {
+            await late.StepAsync(CancellationToken.None);
+            _time.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        Assert.Equal(0, _decisions);
+        string waiting = "09:54:30 waiting for live prices before deciding (0 of 2 ready; ERIC B: no quote yet)";
+        Assert.Single(_output.ToString().Split('\n'), l => l.StartsWith(waiting, StringComparison.Ordinal)); // said once
+
+        priced = true;
+        await late.StepAsync(CancellationToken.None);
+        Assert.Equal(1, _decisions);
+    }
+
+    [Fact]
+    public async Task WithSomeLivePricesMissing_ItDecidesAnywayAfterAMinute_AndSaysWhich()
+    {
+        var schedule = new TradingSchedule(OrderGatewayTests.Calendar(), RiskLimits.AdrDefaults, new TimeOnly(9, 10));
+        var late = new PaperSession(_gateway, _channel, _book, _kill, new Reconciler(_oms, _halts, _audit, _time, _book.Account), _halts,
+            [new SessionMarket(schedule, Decide, _ => true) { Prices = _ => new PriceCoverage(1, 2, "TEST B: no quote yet") }], _audit, _time, _output);
+        _time.SetUtcNow(new DateTimeOffset(2026, 9, 28, 7, 54, 30, TimeSpan.Zero));
+
+        for (int i = 0; i < 60; i++)
+        {
+            await late.StepAsync(CancellationToken.None);
+            _time.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        Assert.Equal(0, _decisions);
+        await late.StepAsync(CancellationToken.None); // 09:55:30
+        Assert.Equal(1, _decisions);
+        Assert.Contains("09:55:30 no usable live price for 1 of 2 share(s) after 60 s (TEST B: no quote yet); deciding anyway (they are skipped today).", _output.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]

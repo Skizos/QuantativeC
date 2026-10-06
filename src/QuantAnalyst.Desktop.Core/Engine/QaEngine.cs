@@ -57,6 +57,9 @@ public sealed class QaEngine : ObservableObject
 
     public AppBankIdPrompt BankId { get; }
 
+    /// <summary>Gets the UI thread's dispatcher (for models that apply a running command's events on it).</summary>
+    internal IUiDispatcher Ui => _ui;
+
     /// <summary>Gets the title of the running command, or null when idle.</summary>
     public string? CurrentCommand
     {
@@ -74,9 +77,10 @@ public sealed class QaEngine : ObservableObject
 
     /// <summary>
     /// Runs <c>qa</c> with <paramref name="args"/> and returns when it has finished. Throws when another command is
-    /// running: the caller disables its buttons while <see cref="IsBusy"/>.
+    /// running: the caller disables its buttons while <see cref="IsBusy"/>. A Paper session reports to
+    /// <paramref name="observer"/> (the Trading page's live charts), which can't change what it does.
     /// </summary>
-    public async Task<CommandResult> RunAsync(string title, IReadOnlyList<string> args)
+    public async Task<CommandResult> RunAsync(string title, IReadOnlyList<string> args, Trading.Observation.ISessionObserver? observer = null)
     {
         ArgumentNullException.ThrowIfNull(args);
         if (IsBusy)
@@ -101,7 +105,7 @@ public sealed class QaEngine : ObservableObject
 
         var output = new LineWriter(t => Emit(t, false));
         var error = new LineWriter(t => Emit(t, true));
-        AvanzaCliServices services = _services with { Cancellation = cts.Token, BankIdPrompt = (_, _) => BankId, Input = TextReader.Null };
+        AvanzaCliServices services = _services with { Cancellation = cts.Token, BankIdPrompt = (_, _) => BankId, Input = TextReader.Null, SessionObserver = observer };
         int code;
         bool cancelled = false;
         try
@@ -136,6 +140,51 @@ public sealed class QaEngine : ObservableObject
         {
             return new CommandResult(title, code, cancelled, [.. lines]);
         }
+    }
+
+    /// <summary>
+    /// Runs a read-only Avanza query in-process (e.g. the Accounts page's overview), one at a time like a command:
+    /// busy while it runs, stopped by <see cref="Cancel"/>, with the app's BankID QR code. Its result comes back
+    /// typed instead of printed; the activity log gets one line saying what ran.
+    /// </summary>
+    internal async Task<T> QueryAsync<T>(string title, Func<AvanzaCliServices, Task<T>> body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        if (IsBusy)
+        {
+            throw new InvalidOperationException($"'{CurrentCommand}' is still running; wait for it or stop it first.");
+        }
+
+        using var cts = new CancellationTokenSource();
+        _cts = cts;
+        CurrentCommand = title;
+        _ui.Post(() => LineWritten?.Invoke(new OutputLine(title + " …", false)));
+        AvanzaCliServices services = _services with { Cancellation = cts.Token, BankIdPrompt = (_, _) => BankId, Input = TextReader.Null };
+        try
+        {
+            return await Task.Run(() => body(services), CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            _cts = null;
+            _ui.Post(() =>
+            {
+                BankId.Reset();
+                CurrentCommand = null;
+            });
+        }
+    }
+
+    /// <summary>
+    /// Runs a read that needs no login and changes nothing (the share search), <b>alongside</b> whatever runs: no busy
+    /// flag, no BankID prompt, no activity line per keystroke. Anything that logs in or writes goes through
+    /// <see cref="RunAsync"/> or <see cref="QueryAsync{T}"/>, one at a time.
+    /// </summary>
+    internal Task<T> ReadPublicAsync<T>(Func<AvanzaCliServices, Task<T>> body)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        AvanzaCliServices services = _services with { Cancellation = CancellationToken.None, BankIdPrompt = null, Input = TextReader.Null, SessionObserver = null };
+        return Task.Run(() => body(services), CancellationToken.None);
     }
 
     /// <summary>Stops the running command the way Ctrl+C does (a Paper session cancels its orders and writes its report).</summary>

@@ -60,7 +60,10 @@ internal static partial class AvanzaMapper
         string wire = dto.Metadata.Resolution.ChartResolution;
         ChartResolution resolution = ParseResolution(wire)
             ?? throw Drift(AvanzaRoutes.PriceChart, PriceChartDto.Version, DtoTier.B, "$.metadata.resolution.chartResolution", "unknown chart resolution");
-        return new PriceHistory(ToBars(dto), resolution, dto.PreviousClosingPrice);
+        return new PriceHistory(ToBars(dto), resolution, dto.PreviousClosingPrice)
+        {
+            AvailableResolutions = [.. dto.Metadata.Resolution.AvailableResolutions ?? []],
+        };
     }
 
     /// <summary>"day", "DAY", "five_minutes", "FIVE_MINUTES" → the enum; anything else → null.</summary>

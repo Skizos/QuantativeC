@@ -70,6 +70,75 @@ public sealed class BacktestApiTests
     }
 
     [Fact]
+    public void AForeignShare_PaysItsOwnCourtage_SetBeforeTheFirstStep()
+    {
+        // ABI 1.3 (ADR 0005): instrument 1 is a US share (prices in SEK): 0.25 %, minimum 9.40 SEK (1 USD at 9.40).
+        using var bt = QeBacktest.Create(Costs with { CourtageMin = 0, CourtageRate = 0, FxFeeRate = 0 }, TwoInstruments);
+        bt.SetCourtage(1, 9.40, 0.0025);
+        var fills = new BacktestFill[2];
+        bt.Step(
+            [new(100, 102, 98, 101, 1e6), new(50, 51, 49, 50, 1e6)],
+            [new(0, BacktestSide.Buy, BacktestOrderType.Limit, 10, 100), new(1, BacktestSide.Buy, BacktestOrderType.Limit, 100, 50)],
+            fills,
+            out int count);
+        Assert.Equal(2, count);
+        Assert.Equal(0.0, fills[0].Courtage);
+        Assert.Equal(0.0025 * 100 * 50, fills[1].Courtage, 1e-12); // 12.50 SEK, above the minimum
+
+        var ex = Assert.Throws<QeException>(() => bt.SetCourtage(1, 1, 0.001)); // after the first step
+        Assert.Contains("before the first step", ex.Message, StringComparison.Ordinal);
+        using var other = QeBacktest.Create(Costs, TwoInstruments);
+        Assert.Throws<QeException>(() => other.SetCourtage(2, 1, 0.001)); // no such instrument
+    }
+
+    [Fact]
+    public void IntradayFills_TakeTheLimitOnATradeThrough_NeverABetterOpen()
+    {
+        // ABI 1.4 (plan 17): the same bar and order, daily vs intraday.
+        BacktestBar[] bars = [new(99, 101, 98, 100, 1e6), new(50, 50, 50, 50, 1e6)];
+        BacktestOrder[] buy = [new(0, BacktestSide.Buy, BacktestOrderType.Limit, 10, 100)];
+        var fills = new BacktestFill[1];
+
+        using var daily = QeBacktest.Create(Costs, TwoInstruments);
+        daily.Step(bars, buy, fills, out int count);
+        Assert.Equal((1, 99.0), (count, fills[0].Price)); // the open is the auction
+
+        using var intraday = QeBacktest.Create(Costs, TwoInstruments);
+        intraday.SetFillMode(BacktestFillMode.Intraday);
+        intraday.Step(bars, buy, fills, out count);
+        Assert.Equal((1, 100.0), (count, fills[0].Price)); // at the limit, never better
+
+        intraday.Step([new(100.5, 101, 100, 100.5, 1e6), new(50, 50, 50, 50, 1e6)], buy, fills, out count);
+        Assert.Equal(0, count); // a touch is no fill
+
+        var ex = Assert.Throws<QeException>(() => intraday.SetFillMode(BacktestFillMode.Daily));
+        Assert.Contains("before the first step", ex.Message, StringComparison.Ordinal);
+        using var other = QeBacktest.Create(Costs, TwoInstruments);
+        Assert.Throws<QeException>(() => other.SetFillMode((BacktestFillMode)7));
+    }
+
+    [Fact]
+    public void AnInstrumentsOwnHalfSpread_IsPaidOnMarketOrders()
+    {
+        using var bt = QeBacktest.Create(Costs with { HalfSpreadBps = 5, SlippageBps = 2 }, TwoInstruments);
+        bt.SetHalfSpread(1, 20);
+        var fills = new BacktestFill[2];
+        bt.Step(
+            [new(100, 101, 99, 100, 1e6), new(50, 51, 49, 50, 1e6)],
+            [new(0, BacktestSide.Buy, BacktestOrderType.MarketOnOpen, 10), new(1, BacktestSide.Buy, BacktestOrderType.MarketOnOpen, 10)],
+            fills,
+            out int count);
+        Assert.Equal(2, count);
+        Assert.Equal(100 * 1.0007, fills[0].Price, 1e-9); // the config's 5 + 2 bps
+        Assert.Equal(50 * 1.0022, fills[1].Price, 1e-9);  // its own 20 + 2 bps
+        Assert.Throws<QeException>(() => bt.SetHalfSpread(0, 5)); // after the first step
+
+        using var other = QeBacktest.Create(Costs, TwoInstruments);
+        Assert.Throws<QeException>(() => other.SetHalfSpread(0, -1));
+        Assert.Throws<QeException>(() => other.SetHalfSpread(2, 5));
+    }
+
+    [Fact]
     public void InvalidInput_ThrowsWithTheNativeMessage_AndChangesNothing()
     {
         using var bt = QeBacktest.Create(Costs, TwoInstruments);

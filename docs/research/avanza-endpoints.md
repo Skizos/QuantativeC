@@ -15,6 +15,18 @@
 
 Base URL for everything: `https://www.avanza.se`.
 
+**Re-checked 2026-09-28 (share search in the app, `docs/plans/15-share-search.md`):** the Qluxzz commit list still ends
+at `a6a18a9` (2026-09-21). Its [`constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py)
+still has `INSTRUMENT_SEARCH_PATH = "/_api/search/filtered-search"`. The Go SDK's
+[`market/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/types.go)
+`SearchHit` (`type`, `title`, `description`, `flagCode`, `orderBookId`, `urlSlugName`, `tradeable`, `sellable`,
+`buyable`, `price`, `stockSectors`, `fundTags`, `marketPlaceName`, `subType`), `SearchHitPrice` (`last`, `currency`,
+`todayChangePercent`, `todayChangeValue`, `todayChangeDirection`, `threeMonthsAgoChangePercent`,
+`threeMonthsAgoChangeDirection`, `spread`; strings) and `StockSector` (`id`, `level`, `name`, `englishName`) match
+our live recording of 2026-09-25 field for field. The app's search uses the same route and body as `qa history
+import`; it only maps more of the answer: the ticker (in the title's last parentheses, e.g. `Ericsson B (ERIC B)`, as
+recorded live), `flagCode`, `todayChangePercent` and the level-1 sector's `englishName`. No new endpoint.
+
 **Re-checked 2026-09-26 (Phase 7 step 1, pre-trade checks):** still no newer commits (Qluxzz `a6a18a9`, avanza-sdk-go `43f3902`). Qluxzz `constants.py` has **no** validate or preliminary-fee route. The two routes and their shapes were re-read from the Go SDK: [`trading/service.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/service.go) (`ValidateOrder`, `GetPreliminaryFee`: POST, non-200 is an error) and [`trading/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/trading/types.go):
 - **Validate request** (`ValidateOrderRequest`): `isDividendReinvestment`, `requestId` (nullable), `orderRequestParameters`, `price` (number), `volume` (number), `openVolume`, `accountId`, `side` (`BUY`/`SELL`), `orderbookId`, `validUntil`, `metadata`, `condition` (`NORMAL`/`FILL_OR_KILL`), `isin`, `currency`, `marketPlace`.
 - **Validate response** (`ValidateOrderResponse`): `commissionWarning`, `employeeValidation`, `largeInScaleWarning`, `orderValueLimitWarning`, `priceRampingWarning`, `canadaOddLotWarning`, each `{valid: bool}`.
@@ -94,11 +106,37 @@ Rate limits: nothing is documented. The Go SDK default is **one request per 100 
 | Orderbook parameters | `GET /_api/trading-critical/rest/orderbook/{orderbookId}` | Py, Go | Returns **`tickSizeList.tickSizeEntries[{min,max,tick}]`**, `volumeFactor`, `tradingUnit`, `minValidUntil`/`maxValidUntil`, `orderbookStatus`, `marketPlace`, `isin`, `currency`, and `featureSupport` (stopLoss, fillAndOrKill, …). **This is the authoritative per-instrument tick table.** |
 | Market data snapshot | `GET /_api/trading-critical/rest/marketdata/{orderbookId}` | Py, Go | `quote{buy,sell,last,highest,lowest,timeOfLast,updated,totalVolumeTraded,vwap}` + `orderDepth{receivedTime,levels[{buySide,sellSide}]}` + `trades`. Empty sides are formatted `"0.00"`, so volumes must decode as decimal. |
 | Stock info | `GET /_api/market-guide/stock/{id}` (+ `/details`, `/quote`, `/orderdepth`, `/marketplace`) | Py, Go | The Go SDK marks these **public** (no session needed). |
+| Stock details: dividends and share count (2026-09-30, plan 21) | `GET /_api/market-guide/stock/{id}/details` | Go | `AvanzaRoutes.StockDetails`, Tier B. Go SDK [`43f39025` `market/service.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/service.go) `GetStockDetails` ("does not require an authenticated session") and [`market/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/types.go) `StockDetails`: `dividends{events[], pastEvents[]}`, each `{exDate, paymentDate (omitempty), amount, currencyCode, dividendType}`, and `stock{numberOfShares, preferred, depositoryReceipt}`; the other sections (company, companyEvents, owners, trades, order depth, …) we accept as they come. The SDK's recorded sample [`market/testdata/stock_details.json`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/testdata/stock_details.json) (Nvidia; our fixture `stock-details-nvidia.json`, unchanged) shows past amounts **per current share** (0.004 USD before the 2024 10:1 split, 0.01 after). Neither client has split data. Both HEADs re-checked 2026-09-30: unchanged (`a6a18a9`, `43f3902`). |
 | Price chart | `GET /_api/price-chart/stock/{id}?timePeriod=...&resolution=...` | Py, Go | OHLC `{timestamp(ms),open,high,low,close,totalVolumeTraded}`. Periods `today…infinity`, resolutions `minute…quarter`. **Public.** |
+| Price chart, intraday (2026-09-29, plan 17) | same route | Py, Go | Resolutions `minute`, `two_minutes`, `five_minutes`, `ten_minutes`, `thirty_minutes`, `hour`, `day`, `week`, `month`, `quarter`, sent lower-case (Qluxzz [`a6a18a94` `constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py) `Resolution`; `get_chart_data` lower-cases both parameters). The server picks what it allows per period and says so in `metadata.resolution.{chartResolution, availableResolutions}` (Go SDK [`43f39025` `market/types.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/types.go)). Our recording of `one_month` allows only `hour`, `day`, `week`. **The owner's probe (`qa intraday probe ERIC-B`, 2026-09-29 23:24 Stockholm, public, no login)** answered which periods give minute bars (see the table below): **only `today`**. |
+| Price chart for a market index (2026-10-06, plan 24 B) | same route, `/_api/price-chart/stock/{orderbookId}`, with the index's orderbook id | Py (indirect), Go (indirect) | **UNVERIFIED until the owner's first `qa benchmark import`.** Neither client documents the chart for an index. Evidence that it works: Qluxzz [`a6a18a94` `avanza.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/avanza.py) `get_index_info` reads index info through the **stock** route ("Works when sending InstrumentType.STOCK, but not InstrumentType.INDEX"), and the Go SDK [`43f39025` `market/service.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/market/service.go) has `GetStockPriceChartComparison` (`/_api/price-chart/stock/{id}/compare/{compareId}`), a stock rebased against another orderbook. Qluxzz `constants.py` lists `InstrumentType.INDEX = "index"` for the search, which we do **not** use: the owner gives the index's number from its page address on avanza.se (`qa benchmark set`). The answer goes through the same Tier B `PriceChartDto` as a share's; a different shape fails the check and nothing is stored. Both HEADs could not be re-checked (the GitHub API is not reachable from this session); the pins above are the latest checked (2026-09-30). |
 | Off-hours price | `GET /_push/market-offhours-price/latest/{id}` | Go | Public. |
 | Order validation (pre-flight) | `POST /_api/trading-critical/rest/order/validation/validate` | Go | Returns `commissionWarning`, `orderValueLimitWarning`, `priceRampingWarning`, `largeInScaleWarning`… each `{valid: bool}`. Read-only pre-trade check; see ADR 0003. |
 | Preliminary fee | `POST /_api/trading/preliminary-fee/preliminaryfee` | Go | Body `{accountId, orderbookId, price, volume, side}` as strings. Returns `commission`, `marketFees`, `totalFees`, `totalSum`, `currencyExchangeFee{rate,sum}`. **Gets the real courtage for an order, so the class need not be hard-coded.** |
 | Session info | `GET /_api/authentication/session/info/session` | Go | Health check (§1). |
+
+**Intraday probe, 2026-09-29** (owner, ERIC B, orderbook 5240; asked after the close, at 23:24 Stockholm):
+
+| period | asked | answered | bars | days | offers (`availableResolutions`) |
+|---|---|---|---|---|---|
+| `today` | (its own) | `minute` | 475 | 1 (09:00–17:29) | minute, two_minutes, five_minutes, ten_minutes, thirty_minutes, hour, day |
+| `today` | `five_minutes` | `five_minutes` | 102 | 1 (09:00–17:25) | the same |
+| `one_week` | (its own) | `ten_minutes` | 306 | 6 | ten_minutes, thirty_minutes, hour, day |
+| `one_month` | (its own) | `hour` | 198 | 22 | hour, day, week |
+| `three_months` | (its own) | `day` | 67 | 67 | day, week, month |
+
+- 1- and 5-minute bars come **only for the current day**: a day not collected by its evening is lost at those
+  resolutions (a week back gives 10-minute bars at best).
+- Asked late in the evening, `today` still returned the whole day, so the evening import works.
+- A minute with no trade has no bar (475 of 510 minutes for ERIC B); every 5-minute slot was there (102, the last
+  one the closing auction's 17:25).
+- **Used by the catch-up (plan 17 A2b, 2026-09-29):** `GET /_api/price-chart/stock/{id}?timePeriod=one_week&resolution=ten_minutes`.
+  It is the same route, and `one_week` and `ten_minutes` are both in Qluxzz
+  [`a6a18a94` `constants.py`](https://github.com/Qluxzz/avanza/blob/a6a18a948f88cb7e340051e480b203b2ee917eed/avanza/constants.py)
+  (`TimePeriod.ONE_WEEK`, `Resolution.TEN_MINUTES`, `CHARTDATA_PATH = "/_api/price-chart/stock/{}"`; fetched again
+  2026-09-29 before building the catch-up). The probe saw the server offer it. Called once per share only
+  when a trading day of the last week has no 5- or 10-minute bars. The answer must be `ten_minutes`, as for the
+  other resolutions.
 
 **No login needed:** the Go SDK README says search, stock/certificate/warrant info, quote, order depth, market place, price chart, off-hours price, news and forum work without a session. That lets the chart importer and much of Paper-mode data run **without** credentials. The ToS question in `avanza-terms.md` still applies.
 
@@ -120,6 +158,9 @@ This is the first contact with the real API. The list below has **field names on
 - **Account fields:** `autoDistribution` and `isDiscretionaryAccount` are booleans. `interestRates` is `{currency: {deposit, loan}}` of value objects. `creditAccountClearingAccountNumber` was null everywhere.
 - **Account names:** `name.defaultName` is the account number, and the sanitizer replaces it.
 - **Timestamps:** marketdata `quote.timeOfLast`/`updated` are ISO **without offset**, in **Europe/Stockholm local time**. Proof: `timeOfLast` "17:29:40" equals `orderDepth.receivedTime` and `trades[].dealTime` (epoch ms) of 15:29:40Z. Transaction `date` is `yyyy-MM-ddT00:00:00`.
+- **Day range:** marketdata `quote.highest`/`lowest` are the day's high and low so far: last 94.96 lies between lowest
+  94.54 and highest 95.82 on 6,090,838 shares traded (`034-marketdata.json`). Plan 19 carries them into the composed
+  quote for the end-of-day fill-rate check; no field was added.
 - **Search prices** are Swedish-formatted strings (`"94,96"`). The search response also echoes `searchFilter`.
 - **Deals:** `{"deals": [], "fundDeals": []}`. The element fields are still unknown until the first fill.
 - **ERIC B orderbook:** 17 tick bands (0.02 at 50–99.98 SEK).
@@ -189,6 +230,25 @@ Its replacement is **Server-Sent Events** (Go SDK, `internal/sse/subscription.go
 
 - **Other events:** the Go SDK tests show `event: info` with plain-text data (`connected`, `heartbeat`) on the same stream ([`order_depth_test.go`](https://github.com/vmorsell/avanza-sdk-go/blob/43f39025751c05ff73a85e708dadee4bfa9da2ca/order_depth_test.go)).
 - **Re-checked 2026-09-25 (Phase 4):** both client HEADs are unchanged (Qluxzz `a6a18a94`, Go SDK `43f39025`).
+
+**First live use, 2026-09-30 (the owner's Paper session, 10:19): every order-depth connection was refused with HTTP 429**,
+from the first attempt and on every retry, for all three shares (connections already about a second apart), while the
+REST market-data polls worked. The stream has never been captured live; the only fixture is hand-written. Not yet known:
+- whether it is a rate or concurrency limit (another stream open, e.g. Avanza in a browser)
+- or a refusal of non-browser clients. The Go SDK (`internal/sse/subscription.go` at `43f39025`, fetched again
+  2026-09-30) sends a full browser header set on SSE requests: `Accept-Language`, `Pragma`, `Priority`, `Sec-Ch-Ua*`,
+  `Sec-Fetch-Dest/Mode/Site`, a browser `User-Agent`, and oddly `Content-Type: application/json`. We send our own
+  `User-Agent` (`QuantAnalyst/0.3 …`) and none of those.
+
+The owner's `qa stream ERIC-B` (one stream, no browser tab open, 10:38) was refused the same way at once. So it is not our
+own connections adding up. **Decision (owner, 2026-09-30): Paper runs on the polls alone** (ADR 0002 §3 amendment);
+the imitation was declined. Confirm and Auto still need the stream, so this must be solved before Phase 7's first live
+day (asking Avanza, `avanza-terms.md` §3, is the clean way).
+
+Since then a refusal's log line names the answering `Server` and any `Retry-After`, and `qa stream` (recording on by
+default) keeps the first three refused answers: status, header names and the body. That tells a block page from a
+rate limit. Imitating a browser would be the owner's decision: Avanza's user terms bar automated tools without written
+consent (`avanza-terms.md`).
 
 Open issue: [Qluxzz #140 "Event-stream (SSE)"](https://github.com/Qluxzz/avanza/issues/140) (2025-09-23) has no maintainer answer. The SSE protocol is known from the Go SDK only, so we need our own recorded fixtures (Phase 4) before relying on it.
 

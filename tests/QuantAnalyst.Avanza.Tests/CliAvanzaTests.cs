@@ -276,6 +276,9 @@ public sealed class CliAvanzaTests : IDisposable
         string[] forbidden = ["buy", "sell", "place", "order", "cancel", "modify", "transfer", "withdraw", "deposit", "payment"];
         Assert.DoesNotContain(verbs, v => forbidden.Contains(v, StringComparer.OrdinalIgnoreCase));
 
+        // Plan 23: Paper's manual buys and sells are 'qa paper manual buy|sell' (an argument, not a verb of their own).
+        Assert.Contains("manual", verbs);
+
         // Phase 7: the only live verbs are the Confirm session and the rebalance, both behind the Confirm startup checks.
         Assert.Contains("trade", verbs);
         Assert.Contains("rebalance", verbs);

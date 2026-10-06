@@ -1,17 +1,10 @@
 <Window x:Class="QuantAnalyst.Desktop.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="clr-namespace:QuantAnalyst.Desktop.Core.ViewModels;assembly=QuantAnalyst.Desktop.Core"
-        xmlns:views="clr-namespace:QuantAnalyst.Desktop.Views"
-        Title="QuantAnalyst" Width="1200" Height="820" MinWidth="900" MinHeight="600"
-        WindowStartupLocation="CenterScreen" Background="{StaticResource Page}" FontSize="13">
-    <Window.Resources>
-        <DataTemplate DataType="{x:Type vm:StatusViewModel}"><views:StatusView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:InstrumentsViewModel}"><views:InstrumentsView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:StrategyViewModel}"><views:StrategyView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:SessionViewModel}"><views:SessionView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:ReportsViewModel}"><views:ReportsView /></DataTemplate>
-    </Window.Resources>
+        xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls"
+        Title="QuantAnalyst" Width="1320" Height="880" MinWidth="1040" MinHeight="680"
+        WindowStartupLocation="CenterScreen" Background="{StaticResource PageBrush}" Foreground="{StaticResource InkBrush}"
+        FontFamily="{StaticResource UiFont}" FontSize="14" UseLayoutRounding="True">
 
     <Grid>
         <Grid.RowDefinitions>
@@ -20,91 +13,241 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Header: name, the mode banner, the login method and the KILL button. Always visible. -->
-        <Border Grid.Row="0" Background="{StaticResource Ink}" Padding="16,10">
-            <DockPanel LastChildFill="True">
-                <TextBlock DockPanel.Dock="Left" Text="QuantAnalyst" Foreground="White" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <Button DockPanel.Dock="Right" Style="{StaticResource Kill}" Content="KILL" Command="{Binding KillCommand}" Margin="12,0,0,0"
-                        ToolTip="Stop all trading now: a running session halts within a second and cancels every working order." />
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="Login" Foreground="#D1D5DB" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <ComboBox ItemsSource="{Binding LoginMethods}" SelectedItem="{Binding LoginMethod}" Width="90"
+        <!-- Header: name, the mode, the login method and KILL. Always visible. -->
+        <Border Grid.Row="0" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="20,10">
+            <DockPanel LastChildFill="False">
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                    <Border Width="34" Height="34" CornerRadius="9" Background="{StaticResource AccentBrush}">
+                        <c:Icon Data="{StaticResource IconTrading}" Foreground="White" Width="20" Height="20" StrokeThickness="2.2" />
+                    </Border>
+                    <TextBlock Text="QuantAnalyst" Style="{StaticResource H2}" FontSize="18" Margin="12,0,0,0" VerticalAlignment="Center" />
+                    <Border Style="{StaticResource ModeChip}" Margin="18,0,0,0"
+                            ToolTip="The app trades on paper only: orders are simulated on live Avanza prices and nothing is ever sent to Avanza.">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="8" Height="8" Fill="{StaticResource WarningBrush}" VerticalAlignment="Center" Margin="0,0,7,0" />
+                            <TextBlock Text="{Binding ModeBanner}" Foreground="{StaticResource WarningBrush}" FontWeight="SemiBold" FontSize="12.5" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <Button DockPanel.Dock="Right" Style="{StaticResource Kill}" Command="{Binding KillCommand}"
+                        ToolTip="Stop all trading now: a running session halts within a second and cancels every working order.">
+                    <StackPanel Orientation="Horizontal">
+                        <c:Icon Data="{StaticResource IconPower}" Width="16" Height="16" StrokeThickness="2.4" Margin="0,0,8,0" />
+                        <TextBlock Text="KILL" />
+                    </StackPanel>
+                </Button>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="Login" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ComboBox ItemsSource="{Binding LoginMethods}" SelectedItem="{Binding LoginMethod}" Width="104"
                               IsEnabled="{Binding Engine.IsBusy, Converter={StaticResource InverseBool}}"
                               ToolTip="bankid: approve on your phone. totp: unattended, needs stored credentials (qa secrets set)." />
                 </StackPanel>
-                <Border Background="#FEF3C7" CornerRadius="4" Padding="10,4" Margin="18,0" HorizontalAlignment="Left" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding ModeBanner}" Foreground="#78350F" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                </Border>
             </DockPanel>
         </Border>
 
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200" />
+                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
 
-            <!-- Navigation -->
-            <ListBox Grid.Column="0" ItemsSource="{Binding Pages}" SelectedItem="{Binding SelectedPage}" BorderThickness="0,0,1,0"
-                     BorderBrush="{StaticResource Line}" Background="White" Padding="0,8">
-                <ListBox.ItemTemplate>
-                    <DataTemplate>
-                        <TextBlock Text="{Binding Title}" FontSize="15" Padding="12,10" />
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+            <!-- Navigation rail: folds to icons for more room (the name shows on hover). -->
+            <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,1,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Width" Value="224" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding NavCollapsed}" Value="True">
+                                <Setter Property="Width" Value="84" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <DockPanel>
+                    <Button DockPanel.Dock="Top" Style="{StaticResource Ghost}" Command="{Binding ToggleNavCommand}" HorizontalAlignment="Left" Margin="18,12,0,0"
+                            ToolTip="Fold the menu to icons for more room, or unfold it">
+                        <c:Icon Width="18" Height="18">
+                            <c:Icon.Style>
+                                <Style TargetType="c:Icon">
+                                    <Setter Property="Data" Value="{StaticResource IconFold}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding NavCollapsed}" Value="True">
+                                            <Setter Property="Data" Value="{StaticResource IconUnfold}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </c:Icon.Style>
+                        </c:Icon>
+                    </Button>
+                    <ListBox ItemsSource="{Binding Pages}" SelectedItem="{Binding SelectedPage}" BorderThickness="0" Background="Transparent"
+                             Padding="0,6,0,12" ItemContainerStyle="{StaticResource NavItem}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" ToolTip="{Binding Title}">
+                                    <c:Icon Data="{Binding Kind, Converter={StaticResource PageIcon}}" Width="20" Height="20" />
+                                    <TextBlock Text="{Binding Title}" FontSize="14.5" FontWeight="SemiBold" Margin="12,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DataContext.NavCollapsed, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </DockPanel>
+            </Border>
 
-            <!-- The selected page -->
-            <DockPanel Grid.Column="1" Margin="24,18,24,8">
-                <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
-                    <DockPanel>
-                        <Button DockPanel.Dock="Right" Content="Refresh" Command="{Binding SelectedPage.RefreshCommand}" />
-                        <TextBlock Text="{Binding SelectedPage.Title}" Style="{StaticResource PageTitle}" />
+            <!-- The pages: the selected one, and optionally a second one on the right with a divider to drag. -->
+            <Grid Grid.Column="1" x:Name="Panes">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="MainColumn" Width="*" MinWidth="460" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition x:Name="BesideColumn" Width="0" />
+                </Grid.ColumnDefinitions>
+
+                <DockPanel Grid.Column="0" Margin="28,22,20,8">
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+                        <!-- The title, and the page's tools beside it; in a narrow pane the tools move under the title. -->
+                        <c:AdaptiveRow FillMinWidth="170" Spacing="16">
+                            <TextBlock c:AdaptiveRow.Fill="True" Text="{Binding SelectedPage.Title}" Style="{StaticResource H1}" TextTrimming="CharacterEllipsis"
+                                       VerticalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <c:Icon Data="{StaticResource IconSplit}" Width="16" Height="16" Margin="0,0,6,0" Foreground="{StaticResource InkSecondaryBrush}" />
+                                <TextBlock Text="Beside" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <ComboBox ItemsSource="{Binding BesideChoices}" SelectedItem="{Binding SelectedBeside}" Width="132" Margin="0,0,12,0"
+                                          ToolTip="Show a second page on the right of this one, e.g. Charts beside Instruments. Charts beside Charts is a second chart." />
+                                <Button Style="{StaticResource Ghost}" Command="{Binding OpenWindowCommand}" CommandParameter="{Binding SelectedPage}" Margin="0"
+                                        ToolTip="Open this page in a window of its own (e.g. on another screen). Open as many as you like; they close with the app.">
+                                    <StackPanel Orientation="Horizontal">
+                                        <c:Icon Data="{StaticResource IconWindow}" Width="16" Height="16" Margin="0,0,6,0" />
+                                        <TextBlock Text="New window" />
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource Ghost}" Command="{Binding SelectedPage.RefreshCommand}" Margin="4,0,0,0"
+                                        ToolTip="Read everything on this page again from the files the CLI uses.">
+                                    <StackPanel Orientation="Horizontal">
+                                        <c:Icon Data="{StaticResource IconRefresh}" Width="16" Height="16" Margin="0,0,6,0" />
+                                        <TextBlock Text="Refresh" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </c:AdaptiveRow>
+                        <TextBlock Text="{Binding SelectedPage.Subtitle}" Style="{StaticResource Hint}" Margin="0,4,0,12" />
+                        <ContentControl Content="{Binding SelectedPage}" ContentTemplate="{StaticResource PageMessage}" Focusable="False" />
+                    </StackPanel>
+                    <ContentControl Content="{Binding SelectedPage}" Focusable="False" />
+                </DockPanel>
+
+                <!-- The divider: a thin line with a wide grip, green under the mouse and while dragged. -->
+                <GridSplitter Grid.Column="1" Width="12" HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"
+                              Margin="0,22,0,8" Cursor="SizeWE" ShowsPreview="False" Focusable="False"
+                              Visibility="{Binding HasBeside, Converter={StaticResource Visibility}}"
+                              ToolTip="Drag to share the width between the two pages">
+                    <GridSplitter.Template>
+                        <ControlTemplate TargetType="GridSplitter">
+                            <Border Background="Transparent">
+                                <Border x:Name="Line" Width="2" CornerRadius="1" HorizontalAlignment="Center" Background="{StaticResource LineStrongBrush}" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Line" Property="Background" Value="{StaticResource AccentBrush}" />
+                                    <Setter TargetName="Line" Property="Width" Value="4" />
+                                </Trigger>
+                                <Trigger Property="IsDragging" Value="True">
+                                    <Setter TargetName="Line" Property="Background" Value="{StaticResource AccentBrush}" />
+                                    <Setter TargetName="Line" Property="Width" Value="4" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </GridSplitter.Template>
+                </GridSplitter>
+
+                <Border Grid.Column="2" Visibility="{Binding HasBeside, Converter={StaticResource Visibility}}">
+                    <DockPanel Margin="20,22,28,8" DataContext="{Binding BesidePage}">
+                        <DockPanel DockPanel.Dock="Top" Margin="0,4,0,14">
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Style="{StaticResource Ghost}" Command="{Binding DataContext.OpenWindowCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        CommandParameter="{Binding}" Margin="0" ToolTip="Open this page in a window of its own">
+                                    <c:Icon Data="{StaticResource IconWindow}" Width="16" Height="16" />
+                                </Button>
+                                <Button Style="{StaticResource Ghost}" Command="{Binding RefreshCommand}" Margin="2,0,0,0" ToolTip="Read this page again">
+                                    <c:Icon Data="{StaticResource IconRefresh}" Width="16" Height="16" />
+                                </Button>
+                                <Button Style="{StaticResource Ghost}" Command="{Binding DataContext.CloseBesideCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                        Margin="2,0,0,0" ToolTip="Close the page on the right">
+                                    <c:Icon Data="{StaticResource IconClose}" Width="16" Height="16" />
+                                </Button>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <c:Icon Data="{Binding Kind, Converter={StaticResource PageIcon}}" Width="22" Height="22" VerticalAlignment="Center"
+                                        Foreground="{StaticResource AccentBrush}" />
+                                <TextBlock Text="{Binding Title}" Style="{StaticResource H2}" FontSize="21" Margin="10,0,0,0" VerticalAlignment="Center" />
+                            </StackPanel>
+                        </DockPanel>
+                        <ContentControl DockPanel.Dock="Top" Content="{Binding}" ContentTemplate="{StaticResource PageMessage}" Focusable="False" />
+                        <ContentControl Content="{Binding}" Focusable="False" />
                     </DockPanel>
-                    <TextBlock Text="{Binding SelectedPage.Subtitle}" Style="{StaticResource Hint}" Margin="0,2,0,0" />
-                    <TextBlock Text="{Binding SelectedPage.Message}" TextWrapping="Wrap" Margin="0,8,0,0" FontWeight="SemiBold"
-                               Foreground="{Binding SelectedPage.MessageIsError, Converter={StaticResource ErrorToBrush}}" />
-                </StackPanel>
-                <ContentControl Content="{Binding SelectedPage}" Focusable="False" />
-            </DockPanel>
+                </Border>
+            </Grid>
 
             <!-- BankID overlay: shown while a login waits for the phone. -->
-            <Grid Grid.ColumnSpan="2" Background="#B3111827"
+            <Grid Grid.ColumnSpan="2" Background="{StaticResource OverlayBrush}"
                   Visibility="{Binding Engine.BankId.IsWaiting, Converter={StaticResource Visibility}}">
-                <Border Background="White" CornerRadius="8" Padding="28" HorizontalAlignment="Center" VerticalAlignment="Center" Width="420">
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="32,28" HorizontalAlignment="Center" VerticalAlignment="Center" Width="440">
                     <StackPanel>
-                        <TextBlock Text="Log in to Avanza with BankID" FontSize="18" FontWeight="SemiBold" />
-                        <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,14"
+                        <TextBlock Text="Log in to Avanza with BankID" Style="{StaticResource H2}" FontSize="20" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,18"
                                    Text="Open the BankID app on your phone, choose 'Scan QR code' and scan this code. It changes every second; that is normal." />
-                        <Image Source="{Binding Engine.BankId.QrPng, Converter={StaticResource PngToImage}}" Width="300" Height="300"
-                               RenderOptions.BitmapScalingMode="NearestNeighbor" />
-                        <TextBlock Text="{Binding Engine.BankId.Status}" TextWrapping="Wrap" Margin="0,14,0,14" HorizontalAlignment="Center" />
-                        <Button Content="Cancel login" Command="{Binding CancelCommand}" HorizontalAlignment="Center" />
+                        <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="12" Padding="12" HorizontalAlignment="Center">
+                            <Image Source="{Binding Engine.BankId.QrPng, Converter={StaticResource PngToImage}}" Width="280" Height="280"
+                                   RenderOptions.BitmapScalingMode="NearestNeighbor" />
+                        </Border>
+                        <TextBlock Text="{Binding Engine.BankId.Status}" TextWrapping="Wrap" Margin="0,16,0,16" HorizontalAlignment="Center" TextAlignment="Center" />
+                        <Button Content="Cancel login" Command="{Binding CancelCommand}" HorizontalAlignment="Center" Margin="0" />
                     </StackPanel>
                 </Border>
             </Grid>
         </Grid>
 
         <!-- Bottom: what runs now, the KILL notice, and the activity log of every command. -->
-        <Border Grid.Row="2" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Background="White">
-            <Expander Padding="12,4" IsExpanded="False">
+        <Border Grid.Row="2" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Background="{StaticResource SurfaceBrush}">
+            <Expander Padding="16,6" IsExpanded="False">
                 <Expander.Header>
                     <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,8,0">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{StaticResource PositiveBrush}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Engine.IsBusy}" Value="True">
+                                            <Setter Property="Fill" Value="{StaticResource InfoBrush}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
                         <TextBlock Text="{Binding BusyText}" FontWeight="SemiBold" Margin="0,0,16,0" />
-                        <TextBlock Text="{Binding Notice}" Foreground="{StaticResource Danger}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="  ·  Activity log (every command's output)" Style="{StaticResource Hint}" />
+                        <TextBlock Text="{Binding Notice}" Foreground="{StaticResource NegativeBrush}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,16,0" />
+                        <TextBlock Text="Activity log: every command's output" Style="{StaticResource Caption}" VerticalAlignment="Center" />
                     </StackPanel>
                 </Expander.Header>
-                <ListBox x:Name="ActivityList" ItemsSource="{Binding Activity}" Style="{StaticResource Console}" Height="220">
+                <ListBox x:Name="ActivityList" ItemsSource="{Binding Activity}" Style="{StaticResource Console}" Height="220" Margin="0,8,0,4">
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <TextBlock Text="{Binding Text}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
-                                        <Setter Property="Foreground" Value="#E5E7EB" />
+                                        <Setter Property="Foreground" Value="{StaticResource ConsoleInkBrush}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsError}" Value="True">
-                                                <Setter Property="Foreground" Value="#FCA5A5" />
+                                                <Setter Property="Foreground" Value="{StaticResource ConsoleErrorBrush}" />
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>

@@ -51,7 +51,7 @@ internal static partial class AvanzaCommands
         {
             RequireConfirm(parse.GetValue(options.Mode), "qa trade run");
             return ConfirmSessionAsync(services, parse, options, ctx, output, decideAtStart: false);
-        }, live: true));
+        }, live: true, alertAs: AlertAs.Session("Confirm session")));
         command.Subcommands.Add(run);
         return command;
     }
@@ -72,7 +72,7 @@ internal static partial class AvanzaCommands
 
             RequireConfirm(parse.GetValue(options.Mode), "qa rebalance --execute");
             return ConfirmSessionAsync(services, parse, options, ctx, output, decideAtStart: true);
-        }, live: true));
+        }, live: true, alertAs: parse.GetValue(options.Execute!) ? AlertAs.Session("Confirm session") : null));
         return command;
     }
 
@@ -145,6 +145,14 @@ internal static partial class AvanzaCommands
         string auditDir = parse.GetValue(o.AuditDir)!;
         string promotionDir = parse.GetValue(o.PromotionDir)!;
         PaperSetup setup = PaperSetup.Load(TradingCommands.ResolveConfigDir(parse.GetValue(o.ConfigDir)), promotionDir);
+        int streamed = setup.Universe.Entries.Count + setup.Universe.Exiting.Count;
+        if (streamed > MaxStreamInstruments)
+        {
+            // Plan 22: Paper polls up to 10 shares; Confirm still requires one order-book stream per share (ADR 0002 §3).
+            throw new ArgumentException(
+                $"Confirm streams each share's order book, at most {MaxStreamInstruments} (ADR 0002 §3); the list has {streamed} with the exiting shares. Paper takes up to {Allowlist.MaxNames}: for Confirm, keep {MaxStreamInstruments}.");
+        }
+
         StrategyDefinition definition = ChooseStrategy(parse.GetValue(o.Strategy), parse.GetValue(o.Param), setup.Paper);
         string storePath = parse.GetValue(o.Store)!;
         output.WriteLine($"Confirm session: {definition.Spec.Describe()} on {string.Join(", ", setup.Universe.Entries.Select(e => e.Ticker))}; model courtage class {setup.Costs.DisplayName ?? setup.Costs.Name}.");
@@ -189,8 +197,13 @@ internal static partial class AvanzaCommands
 
         WriteChecks(output, startup, "Confirm startup checks: all passed.");
         var halts = new HaltController(audit, time);
+        if (ctx.Alerts is { } alerts)
+        {
+            halts.Raised += h => AlertHalt(alerts, h); // plan 25
+        }
+
         List<InstrumentSpec> specs = await LiveSpecsAsync(ctx, setup).ConfigureAwait(false);
-        await RefreshHistoryForLiveAsync(ctx, storePath, setup, time, output).ConfigureAwait(false);
+        await RefreshHistoryForLiveAsync(ctx, storePath, setup, specs, time, output).ConfigureAwait(false);
 
         var quotes = new LiveQuotes();
         var account = new GatewayAccountState(ctx.Connection.Gateway, live.Account, quotes, time, stateDir);
@@ -206,7 +219,7 @@ internal static partial class AvanzaCommands
             Calendar = setup.Calendar,
             Universe = setup.Universe,
             AllowedAccountIds = new HashSet<string>(StringComparer.Ordinal) { live.Account.Value },
-            Fees = (order, spec) => ModelFees.For(setup.Costs, order.Value, spec.Currency),
+            Fees = (order, spec) => ModelFees.For(setup.Costs, order.Value, spec.Currency, spec.MarketPlace),
             CourtageVerified = setup.Costs.Verified,
             Preflight = ctx.Connection.CreatePreflight(),
             Confirmation = new ConsoleOrderConfirmation(output, prompt, time),
@@ -214,14 +227,22 @@ internal static partial class AvanzaCommands
         };
         using var gateway = new OrderGateway(channel, env, risk, oms, halts, audit, time);
         using var kill = new KillSwitch(gateway, halts, audit, time, parse.GetValue(o.KillFile)!, stateDir, account, setup.Limits);
-        kill.Alerted += message => output.WriteLine("ALERT: " + message);
+        kill.Alerted += message =>
+        {
+            if (ctx.Alerts is { } a)
+            {
+                a.Raise(Trading.Alerts.AlertLevel.Critical, "kill", "Trading stopped", message); // plan 25: also "ALERT: …" on the console
+            }
+            else
+            {
+                output.WriteLine("ALERT: " + message);
+            }
+        };
         var reconciler = new Reconciler(oms, halts, audit, time, live.Account);
-        IReadOnlyList<string> tickers = [.. specs.Select(s => s.Ticker)];
-
         async Task<PlanResult> Plan(CancellationToken ct)
         {
             DateTimeOffset now = time.GetUtcNow();
-            double[] targets = TargetsAtLastBar(storePath, tickers, setup, definition, now);
+            double[] targets = TargetsWithExits(storePath, specs, setup, definition, now);
             AccountSnapshot snapshot = await account.GetAsync(ct).ConfigureAwait(false);
             return DailyPlanner.Plan(targets, specs, snapshot, gateway.OpenOrders, quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
         }
@@ -253,7 +274,8 @@ internal static partial class AvanzaCommands
         }
 
         var session = new ConfirmSession(gateway, account, kill, reconciler, new GatewayBrokerState(ctx.Connection.Gateway, time), halts, setup.Schedule, audit, time,
-            Plan, output, decideAtStart, EndOfDayReport, costAssumptionBps: setup.Costs.HalfSpreadBps + setup.Costs.SlippageBps);
+            Plan, output, decideAtStart, EndOfDayReport, costAssumptionBps: setup.Costs.HalfSpreadBps + setup.Costs.SlippageBps,
+            prices: now => DailyPlanner.Coverage(specs, quotes, risk, now));
         ConfirmSessionSummary summary;
         try
         {
@@ -316,7 +338,7 @@ internal static partial class AvanzaCommands
         }
 
         List<InstrumentSpec> specs = await LiveSpecsAsync(ctx, setup).ConfigureAwait(false);
-        await RefreshHistoryForLiveAsync(ctx, storePath, setup, time, output).ConfigureAwait(false);
+        await RefreshHistoryForLiveAsync(ctx, storePath, setup, specs, time, output).ConfigureAwait(false);
         var quotes = new LiveQuotes();
         foreach (InstrumentSpec spec in specs)
         {
@@ -328,7 +350,7 @@ internal static partial class AvanzaCommands
         DateTimeOffset now = time.GetUtcNow();
         var risk = new PreTradeRiskEngine(setup.Limits);
         PlanResult plan = DailyPlanner.Plan( // plan only: no session, so nothing of ours is working
-            TargetsAtLastBar(storePath, [.. specs.Select(s => s.Ticker)], setup, definition, now), specs, snapshot, [], quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
+            TargetsWithExits(storePath, specs, setup, definition, now), specs, snapshot, [], quotes, risk, new ExecutionOptions(), definition.Spec.Describe(), now);
 
         output.WriteLine(string.Create(CultureInfo.InvariantCulture,
             $"Rebalance plan for {tradingAccount.Id.Masked} ({definition.Spec.Describe()}): value {snapshot.AccountValue:N2} SEK, available {snapshot.AvailableCash:N2}."));
@@ -343,10 +365,11 @@ internal static partial class AvanzaCommands
         return 0;
     }
 
+    /// <summary>The list's shares, then the exiting ones (plan 21), which <see cref="TargetsWithExits"/> sells to zero.</summary>
     private static async Task<List<InstrumentSpec>> LiveSpecsAsync(Ctx ctx, PaperSetup setup)
     {
         var specs = new List<InstrumentSpec>();
-        foreach (UniverseEntry entry in setup.Universe.Entries)
+        foreach (UniverseEntry entry in setup.Universe.Entries.Concat(setup.Universe.Exiting))
         {
             InstrumentTradingParams p = await ctx.Connection.Gateway.GetTradingParamsAsync(entry.OrderbookId, ctx.Ct).ConfigureAwait(false);
             specs.Add(new InstrumentSpec(entry.OrderbookId, entry.Ticker, p.Name, p.Currency, Math.Max(1, p.TradingUnit), p.TickSizes, TickTableVerified: true, p.Isin, p.MarketPlace));
@@ -355,17 +378,30 @@ internal static partial class AvanzaCommands
         return specs;
     }
 
-    private static async Task RefreshHistoryForLiveAsync(Ctx ctx, string storePath, PaperSetup setup, TimeProvider time, TextWriter output)
+    /// <summary>Live trading is Swedish (ADR 0005: foreign shares on paper only), so every name is brought up to Stockholm's yesterday.</summary>
+    private static async Task RefreshHistoryForLiveAsync(Ctx ctx, string storePath, PaperSetup setup, IReadOnlyList<InstrumentSpec> specs, TimeProvider time, TextWriter output)
     {
         try
         {
-            await RefreshHistoryAsync(ctx, storePath, setup, time, output).ConfigureAwait(false);
+            await RefreshHistoryAsync(ctx, storePath, [new PaperMarket(Markets.Stockholm, setup.Calendar, setup.Schedule, specs)], time, output).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is BrokerException or HistoryImportException)
         {
             // Informational data (ADR 0002 Tier B): the decision refuses stale history itself.
             output.WriteLine($"WARNING: the history could not be brought up to date ({ex.Message}); the decision uses what is stored.");
         }
+    }
+
+    /// <summary>
+    /// Plan 21: the strategy's targets for the list's shares (its panel is the list only), and zero for the exiting ones,
+    /// aligned with <paramref name="specs"/>.
+    /// </summary>
+    private static double[] TargetsWithExits(string storePath, IReadOnlyList<InstrumentSpec> specs, PaperSetup setup, StrategyDefinition definition, DateTimeOffset now)
+    {
+        InstrumentSpec[] listed = [.. specs.Where(s => !setup.Universe.IsExiting(s.OrderbookId))];
+        double[] targets = listed.Length == 0 ? [] : TargetsAtLastBar(storePath, [.. listed.Select(s => s.Ticker)], setup, definition, now);
+        var byId = listed.Select((s, i) => (s.OrderbookId, targets[i])).ToDictionary(x => x.OrderbookId, x => x.Item2);
+        return [.. specs.Select(s => byId.TryGetValue(s.OrderbookId, out double t) ? t : 0.0)];
     }
 
     /// <summary>The strategy's target weights on the stored daily bars through the last trading day (never today's).</summary>
@@ -380,7 +416,7 @@ internal static partial class AvanzaCommands
                 $"the history ends {panel.Dates[^1]:yyyy-MM-dd}, not on the last trading day {yesterday:yyyy-MM-dd}; run 'qa history import' for {string.Join(", ", tickers)} first. No orders today.");
         }
 
-        return StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
+        return StrategyReplay.DecideAtLastBar(panel, definition.Factory);
     }
 
     private static DateTimeOffset StopAt(double? seconds, PaperSetup setup, DateTimeOffset start, string command) =>
@@ -417,7 +453,7 @@ internal static partial class AvanzaCommands
     {
         DepthLevel? top = m.Depth.Count > 0 ? m.Depth[0] : null;
         return new Quote(m.OrderbookId, m.Bid, top?.BidVolume ?? 0m, m.Ask, top?.AskVolume ?? 0m, m.Last, m.TimeOfLastUtc, m.TotalVolumeTraded,
-            m.Depth, QuoteSource.Poll, m.DepthReceivedUtc, now, now, now, false, null);
+            m.Depth, QuoteSource.Poll, m.DepthReceivedUtc, now, now, now, false, null, m.High, m.Low);
     }
 
     private static async Task PumpLiveQuotesAsync(Broadcaster<Quote>.Subscription subscription, LiveQuotes quotes)

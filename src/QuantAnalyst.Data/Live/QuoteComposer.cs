@@ -18,6 +18,13 @@ public sealed class QuoteComposerOptions
     /// <summary>How often the stale transition is checked when nothing arrives (the flag lags the threshold by at most this).</summary>
     public TimeSpan CheckInterval { get; init; } = TimeSpan.FromMilliseconds(250);
 
+    /// <summary>
+    /// Gets a value indicating whether the pushed order depth is used (default). False: polls only, and a quote is stale
+    /// only when no poll arrived within <see cref="StaleAfter"/>. Paper runs so since 2026-09-30 (owner's decision:
+    /// Avanza refuses the order-depth stream with HTTP 429); Confirm and Auto keep requiring the stream.
+    /// </summary>
+    public bool DepthStream { get; init; } = true;
+
     public void Validate()
     {
         if (PollInterval < TimeSpan.FromSeconds(1) || StaleAfter <= TimeSpan.Zero || CheckInterval < TimeSpan.FromMilliseconds(50) || CheckInterval > StaleAfter)
@@ -33,7 +40,8 @@ public sealed class QuoteComposerOptions
 /// <list type="bullet">
 /// <item>bid/ask/depth from the <b>newer</b> of the last depth event and the last poll; last trade and volume from the poll</item>
 /// <item><b>stale</b> ⇔ no data yet, or the depth stream is not connected, or <c>now − max(depthAt, pollAt) &gt; StaleAfter</c>
-/// (receipt times on our clock, not Avanza's <c>updated</c>)</item>
+/// (receipt times on our clock, not Avanza's <c>updated</c>); with <see cref="QuoteComposerOptions.DepthStream"/> off, polls
+/// alone: stale ⇔ no poll within <c>StaleAfter</c></item>
 /// <item>a quote is published on every depth event, stream state change and poll, and on every fresh⇄stale transition
 /// (checked every <see cref="QuoteComposerOptions.CheckInterval"/>, 250 ms by default)</item>
 /// <item>a failed poll (<see cref="BrokerUnavailableException"/>) is logged and the quote goes stale on its own; session
@@ -85,7 +93,9 @@ public sealed class QuoteComposer
     public async Task RunAsync(CancellationToken ct)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        Task[] loops = [StreamLoopAsync(stop.Token), PollLoopAsync(stop.Token), StaleLoopAsync(stop.Token)];
+        Task[] loops = _options.DepthStream
+            ? [StreamLoopAsync(stop.Token), PollLoopAsync(stop.Token), StaleLoopAsync(stop.Token)]
+            : [PollLoopAsync(stop.Token), StaleLoopAsync(stop.Token)];
         Exception? failure = null;
         try
         {
@@ -251,7 +261,9 @@ public sealed class QuoteComposer
             asOf,
             now,
             staleReason is not null,
-            staleReason);
+            staleReason,
+            _poll?.High,
+            _poll?.Low);
     }
 
     private string? StaleReason(DateTimeOffset now, DateTimeOffset? asOf)
@@ -259,6 +271,14 @@ public sealed class QuoteComposer
         if (asOf is null)
         {
             return "no data yet";
+        }
+
+        if (!_options.DepthStream)
+        {
+            TimeSpan sincePoll = now - asOf.Value;
+            return sincePoll > _options.StaleAfter
+                ? string.Create(CultureInfo.InvariantCulture, $"no poll update for {sincePoll.TotalSeconds:0.0} s")
+                : null;
         }
 
         if (_streamState != StreamState.Connected)

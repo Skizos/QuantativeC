@@ -1,11 +1,17 @@
 using System.CommandLine;
 using System.Globalization;
 using System.Runtime.Versioning;
+using QuantAnalyst.Analytics.Backtesting;
 using QuantAnalyst.Avanza.Credentials;
 using QuantAnalyst.Core;
+using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.Calendar;
+using QuantAnalyst.Data.History;
+using QuantAnalyst.Data.Store;
 using QuantAnalyst.Trading;
 using QuantAnalyst.Trading.Audit;
 using QuantAnalyst.Trading.Modes;
+using QuantAnalyst.Trading.Paper;
 using QuantAnalyst.Trading.Reports;
 using QuantAnalyst.Trading.Risk;
 
@@ -14,11 +20,12 @@ namespace QuantAnalyst.Cli.Commands;
 internal static partial class TradingCommands
 {
     public const string DefaultReportsDir = "reports/eod";
+    public const string DefaultWeeksDir = "reports/week";
     public const string DefaultPromotionDir = "promotion";
 
     // ---- qa report eod | gate --------------------------------------------------------------------------
 
-    private static Command ReportCommand()
+    private static Command ReportCommand(TimeProvider time)
     {
         var command = new Command("report", "End-of-day reports (ADR 0003 §3/§8), rebuilt from the audit log: orders, risk rejections, fills vs the market's VWAP, reconciliation, violations.");
 
@@ -51,6 +58,13 @@ internal static partial class TradingCommands
                 }
 
                 WriteReport(w, report, path);
+            }
+
+            // Plan 19: the fill rate over every day so far, the evidence for (or against) changing the limit policy.
+            if (!parse.GetValue(json) && days.Count > 1
+                && EodFillRate.Combine(days.Select(d => EodReport.Build(audit, d, TimeProvider.System))) is { } allDays)
+            {
+                w.WriteLine($"All {days.Count} days ({days[0]:yyyy-MM-dd} to {days[^1]:yyyy-MM-dd}): {allDays.Describe()}.");
             }
 
             return 0;
@@ -91,7 +105,227 @@ internal static partial class TradingCommands
 
         command.Subcommands.Add(eod);
         command.Subcommands.Add(gate);
+        command.Subcommands.Add(WeekCommand(time));
         return command;
+    }
+
+    // ---- qa report week (plan 20) ------------------------------------------------------------------------
+
+    private static Command WeekCommand(TimeProvider time)
+    {
+        var week = new Option<string?>("--week") { Description = "ISO week, e.g. 2026-W40 (default: the week of the last day a session ran)" };
+        var date = new Option<string?>("--date") { Description = "Any day of the week, yyyy-MM-dd" };
+        var json = new Option<bool>("--json") { Description = "Print the summary JSON" };
+        var auditDir = AuditDirOption();
+        var weeksDir = new Option<string>("--weeks-dir") { Description = "Weekly summaries folder", DefaultValueFactory = _ => DefaultWeeksDir };
+        var store = DataCommands.StoreOption();
+        var configDir = ConfigDirOption();
+        var ledger = new Option<string?>("--ledger") { Description = $"Trial ledger (default: <repository>/{TrialLedger.DefaultPath})" };
+        var command = new Command(
+            "week",
+            "The weekly summary (plan 20): the week's Paper days, Paper's return against the saved strategy's recorded backtest (this week and since the start), the limit fill rate, and the intraday collection. Offline; saves reports/week/YYYY-Www.json.");
+        foreach (Option o in new Option[] { week, date, json, auditDir, weeksDir, store, configDir, ledger })
+        {
+            command.Options.Add(o);
+        }
+
+        command.SetAction(parse => Execute(parse, w =>
+        {
+            if (parse.GetValue(week) is not null && parse.GetValue(date) is not null)
+            {
+                throw new ArgumentException("Give --week or --date, not both.");
+            }
+
+            DateOnly? day = parse.GetValue(week) is { } iso ? WeeklyReport.ParseWeek(iso) : DataCommands.ParseDate(parse.GetValue(date), "--date");
+            var paths = new WeekPaths(parse.GetValue(auditDir)!, ResolveConfigDir(parse.GetValue(configDir)), parse.GetValue(store)!, parse.GetValue(ledger));
+            WeeklyReport report = BuildWeek(paths, day, time.GetUtcNow());
+            string path = report.Save(parse.GetValue(weeksDir)!);
+            if (parse.GetValue(json))
+            {
+                w.WriteLine(File.ReadAllText(path));
+                return 0;
+            }
+
+            foreach (string line in report.Lines())
+            {
+                w.WriteLine(line);
+            }
+
+            w.WriteLine($"  saved to {path}");
+            return 0;
+        }));
+        return command;
+    }
+
+    /// <summary>What the weekly summary reads (plan 20); <see cref="ConfigDir"/> is resolved already.</summary>
+    /// <param name="Ledger">The trial ledger; null: the repository's.</param>
+    internal sealed record WeekPaths(string AuditDir, string ConfigDir, string Store, string? Ledger);
+
+    /// <summary>
+    /// The weekly summary of <paramref name="day"/>'s week (null: the week of the last session), as <c>qa report week</c>
+    /// prints it and the app's Reports page shows it. Read-only. Throws <see cref="ArgumentException"/> without an audit
+    /// folder.
+    /// </summary>
+    /// <param name="readStore">False while the price store must not be opened (the app, while a command runs).</param>
+    internal static WeeklyReport BuildWeek(WeekPaths paths, DateOnly? day, DateTimeOffset now, bool readStore = true)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        IReadOnlyList<DateOnly> days = AuditDays(paths.AuditDir);
+        DateOnly today = OrderGateway.StockholmDate(now);
+        DateOnly chosen = day ?? (days.Count > 0 ? days[^1] : today);
+        MarketCalendar calendar = MarketCalendarLoader.LoadDirectory(paths.ConfigDir);
+        DateOnly monday = WeeklyReport.MondayOf(chosen);
+
+        // Up to today: a later day has had no session yet, and today's intraday bars come in the evening.
+        DateOnly[] trading = [.. Enumerable.Range(0, 5).Select(monday.AddDays).Where(d => d <= today && calendar.Years.Contains(d.Year) && calendar.Classify(d).IsTradingDay)];
+        List<EodReport> reports = [.. days.Select(d => EodReport.Build(paths.AuditDir, d, TimeProvider.System))];
+        GateResult gate = PromotionGate.Confirm(reports, AuditLog.Verify(paths.AuditDir));
+
+        IntradayCoverage? intraday = null;
+        int? needed = null;
+        string? unavailable = null;
+        IReadOnlyDictionary<string, IReadOnlyList<DividendEvent>>? dividends = null;
+        string? dividendsMissing = null;
+        BenchmarkSettings? index;
+        Dictionary<DateOnly, decimal> indexCloses = [];
+        string? indexMissing = null;
+        try
+        {
+            index = BenchmarkSettings.Load(paths.ConfigDir);
+        }
+        catch (TradingConfigException ex)
+        {
+            // A broken benchmark setting costs only its own line.
+            index = new BenchmarkSettings(new Core.OrderbookId("0"), "benchmark");
+            indexMissing = ex.Message;
+        }
+
+        if (!readStore)
+        {
+            unavailable = "shown when nothing else runs (the price store is in use)";
+            dividendsMissing = "the price store is in use";
+            indexMissing = "shown when nothing else runs (the price store is in use)";
+        }
+        else
+        {
+            try
+            {
+                intraday = IntradayWeek(paths.Store, paths.ConfigDir, [.. trading.Where(d => d < today)], out needed);
+                dividends = ListDividends(paths.Store, reports, out dividendsMissing);
+                if (index is not null && indexMissing is null && File.Exists(paths.Store))
+                {
+                    using HistoryStore history = HistoryStore.Open(paths.Store);
+                    foreach (StoredBar b in history.GetDailyBars(index.OrderbookId, AvanzaChartImporter.AvanzaPriceChart.Name))
+                    {
+                        indexCloses[b.Bar.Date] = b.Bar.Close;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is HistoryStoreException or IOException || DataCommands.IsStoreFailure(ex))
+            {
+                unavailable = "the price store is busy; they show again next time";
+                dividendsMissing = "the price store is busy";
+                indexMissing = "the price store is busy; it shows again next time";
+            }
+        }
+
+        WeeklyReport week = WeeklyReport.Build(chosen, trading, reports, gate, Expectation(paths.ConfigDir, paths.Ledger), intraday, needed, now, dividends,
+            index is null ? null : (index.Name, indexCloses));
+        return week with
+        {
+            IntradayUnavailable = unavailable,
+            HoldDividendsMissing = dividends is null ? dividendsMissing ?? week.HoldDividendsMissing : null,
+            BenchmarkMissing = indexMissing ?? week.BenchmarkMissing,
+        };
+    }
+
+    /// <summary>
+    /// Plan 24: the dividends of every share in the reports' close marks, as stored at each Paper start (plan 21), for
+    /// holding the list. Null, with <paramref name="missing"/> saying why, when the store has none to give.
+    /// </summary>
+    private static Dictionary<string, IReadOnlyList<DividendEvent>>? ListDividends(string storePath, IReadOnlyList<EodReport> reports, out string? missing)
+    {
+        missing = null;
+        string[] ids = [.. reports.SelectMany(r => r.CloseMarks).Select(m => m.OrderbookId).Distinct(StringComparer.Ordinal)];
+        if (ids.Length == 0)
+        {
+            return new Dictionary<string, IReadOnlyList<DividendEvent>>(StringComparer.Ordinal);
+        }
+
+        if (!File.Exists(storePath))
+        {
+            missing = "no price store";
+            return null;
+        }
+
+        using HistoryStore history = HistoryStore.Open(storePath);
+        string source = CorporateDataImporter.AvanzaStockDetails.Name;
+        if (history.GetSource(source) is null)
+        {
+            missing = "not fetched yet: a Paper session fetches them when it starts";
+            return null;
+        }
+
+        DateOnly from = reports.Min(r => r.Date).AddDays(-1), to = reports.Max(r => r.Date);
+        return ids.ToDictionary(
+            id => id,
+            id => (IReadOnlyList<DividendEvent>)[.. history.GetDividends(new OrderbookId(id), source, from, to).Select(d => d.Dividend)],
+            StringComparer.Ordinal);
+    }
+
+    /// <summary>The saved strategy's recorded backtest, on today's allowlist if there is one (plan 20); null without either.</summary>
+    private static BacktestExpectation? Expectation(string configDir, string? ledgerPath)
+    {
+        if (PaperConfig.Load(Path.Combine(configDir, PaperConfig.FileName)).Strategy is not { } saved)
+        {
+            return null;
+        }
+
+        var ledger = new TrialLedger(BacktestCommands.ResolveLedger(ledgerPath));
+        if (!File.Exists(ledger.Path))
+        {
+            return null;
+        }
+
+        StrategySpec spec = StrategyCatalog.Create(saved.Name, saved.Parameters).Spec;
+        string[] allowlist = [.. Universe.Load(Path.Combine(configDir, Universe.FileName)).Entries.Select(e => e.Ticker)];
+        return BacktestExpectation.Find(ledger.ReadAll(), spec, allowlist);
+    }
+
+    /// <summary>
+    /// The research shares' intraday bars over the week's trading days, and the days the go/no-go needs (plan 17: 120
+    /// before the intraday holdout's days). Null before any collection.
+    /// </summary>
+    private static IntradayCoverage? IntradayWeek(string storePath, string configDir, IReadOnlyList<DateOnly> trading, out int? needed)
+    {
+        needed = null;
+        if (!File.Exists(storePath))
+        {
+            return null;
+        }
+
+        IReadOnlyList<IntradayName> names = AvanzaCommands.CollectedShares(storePath, configDir, TextWriter.Null);
+        IntradayCoverage coverage;
+        using (HistoryStore history = HistoryStore.Open(storePath))
+        {
+            coverage = IntradayCoverage.Measure(history, names.Select(n => (n.Id, n.Ticker)), trading, AvanzaChartImporter.AvanzaPriceChart.Name);
+        }
+
+        if (coverage.CollectedDays == 0 && names.Count == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            needed = IntradayReport.MinDays + IntradayHoldout.Load(Path.Combine(configDir, IntradayHoldout.FileName)).Days;
+        }
+        catch (BacktestConfigException)
+        {
+            // Without the holdout policy the need is unknown; the line says only what was collected.
+        }
+
+        return coverage;
     }
 
     // ---- qa promote (the owner's command; Claude is blocked by hook rule 6 and the settings deny rules) ---------
@@ -278,6 +512,21 @@ internal static partial class TradingCommands
         {
             w.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"  fill {f.Side} {f.Volume} {f.Ticker} @ {f.Price} (limit {f.Limit}, {f.How}); {f.ReferenceKind} {(f.Reference is { } x ? x.ToString("0.####", CultureInfo.InvariantCulture) : "-")}, {(f.DeviationBps is { } d ? $"{d:+0.0;-0.0} bps" : "no reference")}"));
+        }
+
+        foreach (EodLimitOrder o in r.FillRate?.Orders ?? [])
+        {
+            w.WriteLine("  limit " + o.Describe());
+        }
+
+        foreach (EodCorporateAction a in r.CorporateActions)
+        {
+            w.WriteLine($"  {a.Kind} {a.Text}");
+        }
+
+        foreach (string m in r.ManualOrders)
+        {
+            w.WriteLine("  manual " + m);
         }
 
         foreach (string v in r.Violations)

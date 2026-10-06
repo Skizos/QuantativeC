@@ -20,6 +20,9 @@ internal static partial class TradingCommands
 {
     public const string DefaultAuditDir = "audit";
     public const string DefaultStateDir = "state";
+
+    /// <summary>The Paper book's folder under the state folder.</summary>
+    public const string PaperDirName = "paper";
     public const string DefaultKillFile = "KILL";
 
     public static IEnumerable<Command> Create(AvanzaCliServices services)
@@ -28,8 +31,14 @@ internal static partial class TradingCommands
         yield return RiskLimitsCommand();
         yield return AuditCommand();
         yield return KillCommand();
-        yield return ReportCommand();
+        yield return ReportCommand(services.Time);
         yield return PromoteCommand(services);
+        yield return AlertCommands.Create(services);
+        yield return BackupCommands.Create(services);
+        foreach (Command morning in MorningCommands.Create(services))
+        {
+            yield return morning;
+        }
     }
 
     public static Option<string?> ConfigDirOption() =>
@@ -67,7 +76,7 @@ internal static partial class TradingCommands
         {
             string path = Path.Combine(ResolveConfigDir(parse.GetValue(configDir)), Universe.FileName);
             Universe u = Universe.Load(path);
-            if (u.Entries.Count == 0)
+            if (u.Entries.Count == 0 && u.Exiting.Count == 0)
             {
                 w.WriteLine($"The allowlist is empty ({path}): every order is rejected (R2). Add names with: qa universe add ERIC-B");
                 return 0;
@@ -79,15 +88,20 @@ internal static partial class TradingCommands
                 table.Add(e.Ticker, e.OrderbookId.Value, e.Name);
             }
 
+            foreach (UniverseEntry e in u.Exiting)
+            {
+                table.Add(e.Ticker, e.OrderbookId.Value, $"{e.Name} (exiting: sells only, plan 21)");
+            }
+
             table.Write(w);
-            w.WriteLine($"{u.Entries.Count} instrument(s) in {path}.");
+            w.WriteLine($"{u.Entries.Count} instrument(s) in {path}{(u.Exiting.Count > 0 ? $", and {u.Exiting.Count} exiting" : string.Empty)}.");
             return 0;
         }));
 
         var addTickers = new Argument<string[]>("tickers") { Description = "Tickers from the instrument master, e.g. ERIC-B VOLV-B", Arity = ArgumentArity.OneOrMore };
         var addConfig = ConfigDirOption();
         var store = DataCommands.StoreOption();
-        var add = new Command("add", "Add instruments by ticker, looked up offline in the instrument master (run 'qa history import <TICKER>' first). SEK only in v1.");
+        var add = new Command("add", "Add instruments by ticker, looked up offline in the instrument master (run 'qa history import <TICKER>' first). Shares in SEK, USD or CAD (USD and CAD trade on paper only, ADR 0005); at most 10 names (a Paper session polls them all; Confirm streams at most 5).");
         add.Arguments.Add(addTickers);
         add.Options.Add(addConfig);
         add.Options.Add(store);
@@ -98,15 +112,8 @@ internal static partial class TradingCommands
             using HistoryStore history = DataCommands.OpenExisting(parse.GetValue(store)!);
             foreach (string ticker in parse.GetValue(addTickers)!)
             {
-                StoredInstrument found = DataCommands.FindInstrument(history, ticker, null, null);
-                InstrumentRecord r = found.Instrument;
-                if (!string.Equals(r.Currency, OrderPreparationCurrency, StringComparison.Ordinal))
-                {
-                    throw new ArgumentException($"{r.Ticker} trades in {r.Currency}; v1 trades SEK instruments only.");
-                }
-
-                u = u.With(new UniverseEntry(r.OrderbookId, r.Ticker, r.Name));
-                w.WriteLine($"added {r.Ticker} ({r.OrderbookId}, {r.Name})");
+                (u, UniverseEntry entry) = Allowlist.Add(u, history, ticker);
+                w.WriteLine($"added {entry.Ticker} ({entry.OrderbookId}, {entry.Name})");
             }
 
             u.Save(path);
@@ -116,23 +123,26 @@ internal static partial class TradingCommands
 
         var removeTickers = new Argument<string[]>("tickers") { Description = "Tickers to remove", Arity = ArgumentArity.OneOrMore };
         var removeConfig = ConfigDirOption();
-        var remove = new Command("remove", "Remove instruments from the allowlist.");
+        var removeState = new Option<string>("--state-dir") { Description = "State folder (the Paper book says which shares are still held)", DefaultValueFactory = _ => DefaultStateDir };
+        var remove = new Command(
+            "remove",
+            "Remove instruments from the allowlist. A share the Paper book still holds moves to the exiting list instead: the next session sells it (sells only), then remove it again (plan 21).");
         remove.Arguments.Add(removeTickers);
         remove.Options.Add(removeConfig);
+        remove.Options.Add(removeState);
         remove.SetAction(parse => Execute(parse, w =>
         {
             string path = Path.Combine(ResolveConfigDir(parse.GetValue(removeConfig)), Universe.FileName);
+            IReadOnlyDictionary<OrderbookId, long> held = PaperBook.HeldIn(Path.Combine(parse.GetValue(removeState)!, PaperDirName));
             Universe u = Universe.Load(path);
             foreach (string ticker in parse.GetValue(removeTickers)!)
             {
-                UniverseEntry entry = u.Entries.FirstOrDefault(e => SameTicker(e.Ticker, ticker))
-                    ?? throw new ArgumentException($"{ticker} is not in the allowlist.");
-                u = u.Without(entry.OrderbookId);
-                w.WriteLine($"removed {entry.Ticker} ({entry.OrderbookId})");
+                (u, UniverseEntry entry, bool exiting) = Allowlist.Remove(u, ticker, held);
+                w.WriteLine(Allowlist.Removed(entry, exiting));
             }
 
             u.Save(path);
-            w.WriteLine($"{u.Entries.Count} instrument(s) in {path}.");
+            w.WriteLine($"{u.Entries.Count} instrument(s) in {path}{(u.Exiting.Count > 0 ? $"; exiting: {string.Join(", ", u.Exiting.Select(e => e.Ticker))}" : string.Empty)}.");
             return 0;
         }));
 
@@ -141,13 +151,6 @@ internal static partial class TradingCommands
         command.Subcommands.Add(remove);
         return command;
     }
-
-    private const string OrderPreparationCurrency = Trading.Pipeline.OrderPreparation.Currency;
-
-    private static bool SameTicker(string a, string b) =>
-        string.Equals(Normalize(a), Normalize(b), StringComparison.OrdinalIgnoreCase);
-
-    private static string Normalize(string t) => t.Trim().Replace('-', ' ').Replace('_', ' ');
 
     // ---- qa risk-limits ------------------------------------------------------------------------------
 

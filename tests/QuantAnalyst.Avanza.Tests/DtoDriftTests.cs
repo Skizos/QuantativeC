@@ -25,6 +25,8 @@ public sealed class DtoDriftTests
         Assert.Equal(2, Parse("search-eric.json", AvanzaTierBContext.Default.SearchResponseDto, DtoTier.B).Hits.Count);
         Assert.Equal(2, Parse("price-chart-5240.json", AvanzaTierBContext.Default.PriceChartDto, DtoTier.B).Ohlc.Count);
         Assert.Single(Parse("transactions.json", AvanzaTierBContext.Default.TransactionsDto, DtoTier.B).Transactions);
+        Assert.Equal(24_200_000_000m, Parse("stock-details-nvidia.json", AvanzaTierBContext.Default.StockDetailsDto, DtoTier.B).Stock?.NumberOfShares); // the Go SDK's sample, unchanged
+        Assert.Single(Parse("stock-details-5240.json", AvanzaTierBContext.Default.StockDetailsDto, DtoTier.B).Dividends.Events);
         Assert.Empty(_log.Lines);
     }
 
@@ -152,6 +154,21 @@ public sealed class DtoDriftTests
             _json.Deserialize(json, AvanzaTierBContext.Default.SearchResponseDto, "search", SearchResponseDto.Version, DtoTier.B));
         Assert.False(ex.HaltsTrading);
         Assert.Contains("orderBookId", ex.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StockDetails_WithoutItsDividends_IsTierBDrift_OtherSectionsAreAcceptedAsTheyCome()
+    {
+        byte[] noDividends = Fixtures.Mutate("stock-details-5240.json", n => n.AsObject().Remove("dividends"));
+        var ex = Assert.Throws<SchemaDriftException>(() =>
+            _json.Deserialize(noDividends, AvanzaTierBContext.Default.StockDetailsDto, "stock-details", StockDetailsDto.Version, DtoTier.B));
+        Assert.False(ex.HaltsTrading);
+        Assert.Contains("dividends", ex.Detail, StringComparison.Ordinal);
+
+        // A section we do not read may change shape freely: it is accepted without a warning.
+        byte[] reshaped = Fixtures.Mutate("stock-details-5240.json", n => n["company"] = new JsonArray(1, 2, 3));
+        Assert.NotNull(_json.Deserialize(reshaped, AvanzaTierBContext.Default.StockDetailsDto, "stock-details", StockDetailsDto.Version, DtoTier.B).Company);
+        Assert.Empty(_log.Lines);
     }
 
     private T Parse<T>(string fixture, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> info, DtoTier tier = DtoTier.A) =>

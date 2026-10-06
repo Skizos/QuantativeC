@@ -260,3 +260,73 @@ internal sealed class TransactionOrderbookDto
 
     public decimal? VolumeFactor { get; init; }
 }
+
+// ---- GET /_api/market-guide/stock/{id}/details (plan 21) --------------------------------------------------
+// Go SDK market/types.go StockDetails, StockDividends, DividendEvent @ 43f39025. Only the dividends and the share
+// count are read; every other section is accepted as it comes (JsonElement), so their changes are not drift.
+
+internal sealed class StockDetailsDto
+{
+    public const string Version = "stock-details/2026-09-30";
+
+    public required StockDividendsDto Dividends { get; init; }
+
+    public StockShareInfoDto? Stock { get; init; }
+
+    public JsonElement? Company { get; init; }
+
+    public JsonElement? CompanyEvents { get; init; }
+
+    public JsonElement? CompanyOwners { get; init; }
+
+    public JsonElement? CompanyHoldings { get; init; }
+
+    public JsonElement? BrokerTradeSummaries { get; init; }
+
+    public JsonElement? TradingTerms { get; init; }
+
+    public JsonElement? FundExposures { get; init; }
+
+    public JsonElement? EtfExposures { get; init; }
+
+    public JsonElement? EsgView { get; init; }
+
+    public JsonElement? Trades { get; init; }
+
+    public JsonElement? OrderDepth { get; init; }
+
+    public JsonElement? InsiderTransactionsView { get; init; }
+
+    public JsonElement? CompanyReports { get; init; }
+}
+
+internal sealed class StockDividendsDto
+{
+    /// <summary>Announced dividends (ex-date ahead).</summary>
+    public required List<DividendEventDto> Events { get; init; }
+
+    public required List<DividendEventDto> PastEvents { get; init; }
+}
+
+internal sealed class DividendEventDto
+{
+    public required string ExDate { get; init; }
+
+    /// <summary>Absent until announced (Go SDK: <c>omitempty</c>).</summary>
+    public string? PaymentDate { get; init; }
+
+    public required decimal Amount { get; init; }
+
+    public required string CurrencyCode { get; init; }
+
+    public string? DividendType { get; init; }
+}
+
+internal sealed class StockShareInfoDto
+{
+    public decimal? NumberOfShares { get; init; }
+
+    public bool? Preferred { get; init; }
+
+    public bool? DepositoryReceipt { get; init; }
+}

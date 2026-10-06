@@ -15,7 +15,18 @@ public enum TradingMode
 
 /// <summary>An order the OMS considers open (working, partially filled, sent or Unknown).</summary>
 /// <param name="IsUnknown">True for an order whose submit outcome is unknown (R18 blocks its instrument).</param>
-public sealed record OpenOrderView(Guid ClientOrderId, OrderbookId OrderbookId, OrderSide Side, long RemainingVolume, decimal LimitPrice, bool IsUnknown);
+/// <param name="FxToSek">SEK per unit of the order's currency (1 for a SEK share; ADR 0005): its value in SEK is remaining × limit × this.</param>
+public sealed record OpenOrderView(Guid ClientOrderId, OrderbookId OrderbookId, OrderSide Side, long RemainingVolume, decimal LimitPrice, bool IsUnknown, decimal FxToSek = 1m)
+{
+    /// <summary>Gets what is still to trade, in SEK.</summary>
+    public decimal RemainingValueSek => RemainingVolume * LimitPrice * FxToSek;
+}
+
+/// <summary>
+/// The order's market for R16 (ADR 0005): its trading day and today's order window from the market's own calendar, and
+/// the clock the card shows it on ("Stockholm", "New York", "Toronto").
+/// </summary>
+public sealed record MarketWindow(string Mic, TimeZoneInfo Zone, string Clock, TradingDay? Today, Scheduling.SessionPlan? Plan);
 
 /// <summary>A recent intent for the duplicate check (R14).</summary>
 public sealed record RecentIntent(OrderbookId OrderbookId, OrderSide Side, long Volume, decimal? LimitPrice, DateTimeOffset AtUtc);
@@ -98,6 +109,15 @@ public sealed record RiskContext
 
     /// <summary>Gets Avanza's validate answer, or null when it was not asked (Paper/Backtest) (R21).</summary>
     public BrokerPreflight? Preflight { get; init; }
+
+    /// <summary>Gets SEK per unit of the order's currency (1 for a SEK share; ADR 0005). R6–R9 compare the order's value in SEK.</summary>
+    public decimal FxRate { get; init; } = 1m;
+
+    /// <summary>
+    /// Gets the order's market and today's window there (R16, ADR 0005). Null means Nasdaq Stockholm judged from
+    /// <see cref="Today"/> and the limits' Stockholm window, as before foreign shares.
+    /// </summary>
+    public MarketWindow? Market { get; init; }
 
     public bool IsLive => Mode is TradingMode.Confirm or TradingMode.Auto;
 }

@@ -1,3 +1,8 @@
+using QuantAnalyst.Core;
+using QuantAnalyst.Core.Market;
+using QuantAnalyst.Data.History;
+using QuantAnalyst.Data.Store;
+using QuantAnalyst.Desktop.Core.Charts;
 using QuantAnalyst.Desktop.Core.Engine;
 using QuantAnalyst.Desktop.Core.ViewModels;
 using QuantAnalyst.Trading.Audit;
@@ -12,11 +17,15 @@ namespace QuantAnalyst.Desktop.Tests;
 public sealed class ViewModelTests : IDisposable
 {
     private readonly TempWorkspace _ws = new();
+    private readonly FakeEnvironment _env = new();
 
     public void Dispose() => _ws.Dispose();
 
-    private ShellViewModel Shell(ScriptedRunner? runner = null) =>
-        new(_ws.Workspace, runner is null ? new QaEngine(new ImmediateDispatcher()) : new QaEngine(new ImmediateDispatcher(), runner.Run, null), _ws.Time);
+    private ShellViewModel Shell(ScriptedRunner? runner = null)
+    {
+        QaEngine engine = runner is null ? new QaEngine(new ImmediateDispatcher()) : new QaEngine(new ImmediateDispatcher(), runner.Run, null);
+        return new(_ws.Workspace, engine, _ws.Time, new EngineAccountSource(engine, _ws.Workspace), _env);
+    }
 
     private void SaveMaCross() =>
         PaperConfig.SaveStrategy(Path.Combine(_ws.Workspace.ConfigDir, PaperConfig.FileName),
@@ -76,31 +85,6 @@ public sealed class ViewModelTests : IDisposable
     // ---- Instruments ------------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task AddingAnInstrument_ImportsItsHistoryThenAllowsIt_AndStopsAtTheFirstFailure()
-    {
-        var runner = new ScriptedRunner().Answer(0).Answer(0, ["added ERIC B (5240, Ericsson B)"]);
-        ShellViewModel shell = Shell(runner);
-        shell.LoginMethod = "totp";
-        shell.Instruments.NewTicker = " ERIC-B ";
-        await shell.Instruments.AddCommand.ExecuteAsync();
-
-        Assert.Equal(2, runner.Calls.Count);
-        Assert.Equal(["history", "import", "ERIC-B"], runner.Calls[0].Take(3));
-        Assert.Equal("totp", runner.Calls[0][^1]);
-        Assert.Equal(["universe", "add", "ERIC-B"], runner.Calls[1].Take(3));
-        Assert.Equal("added ERIC B (5240, Ericsson B)", shell.Instruments.Message);
-        Assert.Equal(string.Empty, shell.Instruments.NewTicker);
-
-        var failing = new ScriptedRunner().Answer(1, errors: ["error: No stock with ticker 'XYZ'"]);
-        ShellViewModel other = Shell(failing);
-        other.Instruments.NewTicker = "XYZ";
-        await other.Instruments.AddCommand.ExecuteAsync();
-        Assert.Single(failing.Calls);
-        Assert.True(other.Instruments.MessageIsError);
-        Assert.Contains("No stock with ticker 'XYZ'", other.Instruments.Message, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public async Task TheInstrumentList_ShowsTheAllowlist_AndRemoveRunsUniverseRemove()
     {
         _ws.AllowEricB();
@@ -110,11 +94,129 @@ public sealed class ViewModelTests : IDisposable
 
         InstrumentRow row = Assert.Single(shell.Instruments.Rows);
         Assert.Equal(("ERIC B", "Ericsson B", "5240", "none yet"), (row.Ticker, row.Name, row.OrderbookId, row.History));
-        Assert.False(shell.Instruments.AddCommand.CanExecute(null)); // no ticker typed
+        Assert.Empty(shell.Instruments.Results); // nothing searched yet
+        Assert.False(shell.Instruments.IsSearchOpen);
 
         await shell.Instruments.RemoveCommand.ExecuteAsync(row);
         Assert.Equal(["universe", "remove", "ERIC B"], runner.Calls.Single().Take(3));
     }
+
+    [Fact]
+    public async Task TheInstrumentChart_ShowsTheStoredCloses_WithRanges_AndTheSavedStrategysAverages()
+    {
+        _ws.AllowEricB();
+        PaperConfig.SaveStrategy(Path.Combine(_ws.Workspace.ConfigDir, PaperConfig.FileName),
+            new PaperStrategy("ma-cross", new Dictionary<string, string> { ["fast"] = "2", ["slow"] = "4" }));
+        var days = new List<DailyBar>();
+        for (DateOnly d = new(2026, 6, 1); days.Count < 80; d = d.AddDays(1))
+        {
+            if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday))
+            {
+                decimal close = 100m + days.Count;
+                days.Add(new DailyBar(d, close, close, close, close, 1000));
+            }
+        }
+
+        using (HistoryStore store = HistoryStore.Open(_ws.Workspace.Store))
+        {
+            store.RegisterSource(AvanzaChartImporter.AvanzaPriceChart);
+            store.UpsertDailyBars(new OrderbookId("5240"), days, AvanzaChartImporter.AvanzaPriceChart, "test", _ws.Time.GetUtcNow());
+        }
+
+        InstrumentsViewModel page = Shell().Instruments;
+        await page.RefreshAsync();
+        Assert.Equal("ERIC B", page.SelectedRow!.Ticker); // the first name is shown at once
+        await page.LoadChartAsync();
+
+        Assert.Equal(80, page.Chart.Main.Count); // 1Y holds all 80 days
+        Assert.Equal(["2-day average", "4-day average"], page.Chart.Overlays.Select(o => o.Name));
+        Assert.Equal(100, page.Chart.Baseline);
+        Assert.Equal("179,00 kr", page.LastClose);
+        Assert.Equal("up", page.RangeDirection);
+        Assert.StartsWith("\u25B2 +79,00", page.RangeChange, StringComparison.Ordinal);
+        Assert.Contains("2- and 4-day averages", page.ChartNote, StringComparison.Ordinal);
+
+        page.SelectedRange = page.Ranges.Single(r => r.Label == "1M");
+        Assert.InRange(page.Chart.Main.Count, 20, 24);
+        Assert.EndsWith("· 1M", page.RangeChange, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheInstrumentChart_SaysSoWhenNothingIsStoredYet()
+    {
+        _ws.AllowEricB();
+        InstrumentsViewModel page = Shell().Instruments;
+        await page.RefreshAsync();
+        await page.LoadChartAsync();
+        Assert.True(page.Chart.IsEmpty);
+        Assert.StartsWith("No stored prices yet", page.ChartNote, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheStatusPage_ChartsThePaperAccountsValue_FromTheReports()
+    {
+        StatusViewModel status = Shell().Status;
+        await status.RefreshAsync();
+        Assert.True(status.PaperChart.IsEmpty);
+        Assert.Equal("5\u00A0000,00 kr", status.PaperValue); // the starting cash
+        Assert.Contains("after the first Paper session", status.PaperNote, StringComparison.Ordinal);
+
+        foreach ((int day, decimal start, decimal end) in new[] { (28, 5000m, 5006m), (29, 5006m, 5010m) })
+        {
+            var clock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 9, day, 15, 32, 0, TimeSpan.Zero));
+            var audit = new AuditLog(_ws.Workspace.AuditDir, clock);
+            audit.Append("session-start", new { mode = "Paper" });
+            audit.Append("end-of-day", new { day = new { startOfDayValue = start, accountValue = end, cash = end, feesPaid = 0m } });
+        }
+
+        await status.RefreshAsync();
+        Assert.Equal([5000.0, 5006.0, 5010.0], status.PaperChart.Main.Select(p => p.Value));
+        Assert.Equal(5000, status.PaperChart.Baseline);
+        Assert.Equal("5\u00A0010,00 kr", status.PaperValue);
+        Assert.StartsWith("+10,00 kr (+0,20\u00A0%) since 28 Sep", status.PaperChange, StringComparison.Ordinal);
+        Assert.Equal("up", status.PaperDirection);
+    }
+
+    [Fact]
+    public async Task TheOverview_ShowsTheNextSession_TheGate_TheLiveAccount_AndTheKillSwitch()
+    {
+        ShellViewModel shell = Shell();
+        StatusViewModel status = shell.Status;
+        await status.RefreshAsync();
+        Assert.Equal("Overview", status.Title);
+        Assert.Equal("Mon 28 Sep · decides at 09:10", status.NextSessionText); // Saturday 12:00 now
+        Assert.Equal("in 1 d 21 h", status.NextSessionIn);
+        Assert.Equal(10, status.GateDots.Count);
+        Assert.DoesNotContain(true, status.GateDots);
+        Assert.Equal("0 of 10 clean Paper days", status.GateProgress);
+        Assert.Equal(("Not chosen", "neutral"), (status.LiveAccountText, status.LiveAccountTone));
+        Assert.Equal(("Off", "ok"), (status.KillText, status.KillTone));
+
+        var monday = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 9, 28, 15, 32, 0, TimeSpan.Zero));
+        var audit = new AuditLog(_ws.Workspace.AuditDir, monday);
+        audit.Append("session-start", new { mode = "Paper" });
+        audit.Append("end-of-day", new { day = new { startOfDayValue = 5000m, accountValue = 5001m, cash = 5001m, feesPaid = 0m } });
+        _env.Write(Trading.Accounts.AccountAllowlist.Variable, "900003193");
+        await status.RefreshAsync();
+        Assert.Equal([true, false, false, false, false, false, false, false, false, false], status.GateDots);
+        Assert.Equal("1 of 10 clean Paper days", status.GateProgress);
+        Assert.Equal(("***193", "live"), (status.LiveAccountText, status.LiveAccountTone)); // masked
+
+        _env.Write(Trading.Accounts.AccountAllowlist.Variable, "900003193 700001987");
+        shell.KillCommand.Execute(null);
+        await status.RefreshAsync();
+        Assert.Equal(("Not usable", "FAIL"), (status.LiveAccountText, status.LiveAccountTone));
+        Assert.Equal(("ON", "FAIL"), (status.KillText, status.KillTone));
+    }
+
+    [Theory]
+    [InlineData(-60, "now")]
+    [InlineData(0.5, "now")]
+    [InlineData(5, "in 5 min")]
+    [InlineData(21 * 60 + 10, "in 21 h 10 min")]
+    [InlineData(51 * 60 + 30, "in 2 d 3 h")]
+    public void TheCountdown_IsShortAndPlain(double minutes, string expected) =>
+        Assert.Equal(expected, StatusViewModel.Until(TimeSpan.FromMinutes(minutes)));
 
     // ---- Strategy ---------------------------------------------------------------------------------------------
 
@@ -125,7 +227,7 @@ public sealed class ViewModelTests : IDisposable
         StrategyViewModel s = shell.Strategy;
         await s.RefreshAsync();
         Assert.StartsWith("none", s.Saved, StringComparison.Ordinal);
-        Assert.Equal(["buy-and-hold", "ma-cross", "random-targets"], s.Options.Select(o => o.Name));
+        Assert.Equal(["buy-and-hold", "ma-cross", "inverse-vol", "risk-parity", "random-targets"], s.Options.Select(o => o.Name)); // plan 27; the null model last
         Assert.Equal("ma-cross", s.Selected.Name);
         Assert.Equal(["fast", "slow"], s.Selected.Fields.Select(f => f.Key));
         Assert.All(s.Selected.Fields, f => Assert.Equal("required", f.Hint));
@@ -251,28 +353,116 @@ public sealed class ViewModelTests : IDisposable
         var monday = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 9, 28, 15, 32, 0, TimeSpan.Zero));
         var audit = new AuditLog(_ws.Workspace.AuditDir, monday);
         audit.Append("session-start", new { mode = "Paper" });
+        audit.Append("risk", new { passed = true, checks = Array.Empty<object>() });
+        audit.Append("oms-new", new { clientOrderId = "o1", orderbookId = "5240", ticker = "ERIC B", side = "Buy", volume = 10, limitPrice = 70m });
+        audit.Append("close-mark", new { orderbookId = "5240", last = 70.7m, dayHigh = 71m, dayLow = 69.8m, sekPerUnit = 1m });
+        audit.Append("oms-state", new { clientOrderId = "o1", to = "Cancelled" });
         audit.Append("end-of-day", new { day = new { startOfDayValue = 5000m, accountValue = 5001m, cash = 5001m, feesPaid = 0m } });
 
         await shell.Reports.RefreshAsync();
         ReportRow day = Assert.Single(shell.Reports.Days);
+        Assert.Contains("limit Buy 10 ERIC B @ 70: filled 0/10 (Cancelled); day low 69.8, high 71, close 70.7: the backtest fills it; missed +7.00 SEK (+100.0 bps)", day.Details); // plan 19
         Assert.Equal("2026-09-28 Mon", day.DateText);
         Assert.Equal("CLEAN", day.State);
         Assert.Same(day, shell.Reports.Selected);
         Assert.Equal("1 of 10 clean Paper days", shell.Reports.GateProgress);
         Assert.False(shell.Reports.GateMet);
         Assert.NotEmpty(shell.Reports.GateLines);
+        Assert.Equal(10, shell.Reports.GateDots.Count); // one dot per day the gate needs
+        Assert.Equal(shell.Reports.CleanDays, shell.Reports.GateDots.Count(d => d));
         Assert.False(Directory.Exists(_ws.Workspace.ReportsDir)); // read-only: nothing saved
+    }
+
+    /// <summary>Plan 20: a Paper day's end-of-day values in the workspace's audit log.</summary>
+    private void PaperDay(int september, decimal start, decimal end, decimal cash)
+    {
+        var audit = new AuditLog(_ws.Workspace.AuditDir, new Microsoft.Extensions.Time.Testing.FakeTimeProvider(new DateTimeOffset(2026, 9, september, 16, 0, 0, TimeSpan.Zero)));
+        audit.Append("session-start", new { mode = "Paper" });
+        audit.Append("end-of-day", new { day = new { startOfDayValue = start, accountValue = end, cash, feesPaid = 0m } });
+    }
+
+    [Fact]
+    public async Task Reports_ShowTheWeekOfTheSelectedDay_AgainstTheRecordedBacktest()
+    {
+        _ws.Time.SetUtcNow(new DateTimeOffset(2026, 10, 3, 10, 0, 0, TimeSpan.Zero)); // the Saturday after week 40
+        SaveMaCross();
+        new Analytics.Backtesting.TrialLedger(_ws.Workspace.Ledger).Append(new Analytics.Backtesting.TrialRecord
+        {
+            Id = "-",
+            RecordedAtUtc = _ws.Time.GetUtcNow(),
+            Runner = "owner",
+            Study = "s",
+            Strategy = "ma-cross",
+            Parameters = new Dictionary<string, string> { ["fast"] = "20", ["slow"] = "100" },
+            Universe = ["ERIC B"],
+            DataSource = AvanzaChartImporter.AvanzaPriceChart.Name,
+            PointInTime = false,
+            SurvivorshipFree = false,
+            From = new DateOnly(2016, 1, 4),
+            To = new DateOnly(2026, 9, 25),
+            Seed = 1,
+            CostModel = "avanza-start",
+            CostsVerified = true,
+            HoldoutTouched = false,
+            Status = Analytics.Backtesting.TrialStatus.Ok,
+            Metrics = new Analytics.Backtesting.TrialMetrics(500, 0.05, 0.79, 0, 3, 0.1, 0.05, 0.16, 0.2, 1, 100, 0.9, null, 1, null),
+        });
+        PaperDay(25, 5000m, 5005m, 5005m); // Friday of week 39
+        PaperDay(28, 5005m, 5015m, 2500m);
+        PaperDay(29, 5015m, 4995m, 2490m);
+
+        ShellViewModel shell = Shell();
+        await shell.Reports.RefreshAsync();
+        WeekCard week = shell.Reports.Week!;
+        Assert.Equal("WEEK 2026-W40 · MON 28 SEP – SUN 4 OCT", week.Title); // the newest day's week
+        Assert.Equal(("-0.20%", "down"), (week.Return, week.ReturnMark));
+        Assert.Equal(("within the backtest's range", "ok"), (week.ThisWeek, week.ThisWeekMark));
+        Assert.Equal(("within the backtest's range", "ok"), (week.SinceStart, week.SinceStartMark));
+        Assert.Equal("2 of 5 trading day(s) clean, 3 without a session", week.Days);
+        Assert.Equal(("from the second Paper day", "none"), (week.Hold, week.HoldMark)); // these days have no close marks
+        Assert.Contains(week.Lines, l => l.StartsWith("Against the backtest T000001, ma-cross(fast=20, slow=100) on ERIC B", StringComparison.Ordinal));
+        Assert.Empty(shell.Reports.WeekNote);
+
+        // Selecting a day of the week before shows that week.
+        shell.Reports.Selected = shell.Reports.Days.Single(d => d.Date == new DateOnly(2026, 9, 25));
+        await shell.Reports.ShowWeekAsync();
+        Assert.StartsWith("WEEK 2026-W39", shell.Reports.Week!.Title, StringComparison.Ordinal);
+        Assert.Equal("1 of 5 trading day(s) clean, 4 without a session", shell.Reports.Week.Days);
+        Assert.False(Directory.Exists(Path.Combine(_ws.Root, "reports", "week"))); // the page never writes
+    }
+
+    [Fact]
+    public async Task Reports_WithoutABacktest_OrWhileTheStoreIsInUse_SayWhatIsMissing()
+    {
+        PaperDay(25, 5000m, 5005m, 2500m);
+        ShellViewModel shell = Shell();
+        await shell.Reports.RefreshAsync();
+        Assert.Equal(("no backtest to compare", "none"), (shell.Reports.Week!.ThisWeek, shell.Reports.Week.ThisWeekMark));
+
+        // While a command runs the page does not open the price store; the rest of the week still shows.
+        IReadOnlyList<string> lines = Cli.Commands.TradingCommands.BuildWeek(_ws.Workspace.WeekPaths, new DateOnly(2026, 9, 25), _ws.Time.GetUtcNow(), readStore: false).Lines();
+        Assert.Equal("Intraday bars: shown when nothing else runs (the price store is in use).", lines[^1]);
+
+        // Plan 24: the chip against holding the list is coloured only once the difference is more than noise.
+        Assert.Equal(("0.31 points ahead over 3 day(s), noise so far", "info"), WeekCard.HoldVerdict(new Trading.Reports.PaperVsList(3, 0.02m, 0.03m, 0.5m, 0.0169m, null)));
+        Assert.Equal(("1.20 points behind over 30 day(s)", "FAIL"), WeekCard.HoldVerdict(new Trading.Reports.PaperVsList(30, 0.01m, 0.05m, 0.44m, 0.022m, -2.4)));
+        Assert.Equal(("1.20 points ahead over 30 day(s)", "ok"), WeekCard.HoldVerdict(new Trading.Reports.PaperVsList(30, 0.034m, 0.05m, 0.44m, 0.022m, 2.1)));
+
+        Assert.Equal(("below the backtest's range", "FAIL"), WeekCard.Verdict(new Trading.Reports.PaperVsBacktest(5, -0.1m, 0.5m, 0, -0.02, 0.02, "BELOW the range: …"), true));
+        Assert.Equal(("above the backtest's range", "info"), WeekCard.Verdict(new Trading.Reports.PaperVsBacktest(5, 0.1m, 0.5m, 0, -0.02, 0.02, "above the range"), true));
+        Assert.Equal(("not invested", "none"), WeekCard.Verdict(new Trading.Reports.PaperVsBacktest(5, 0m, 0m, 0, 0, 0, "not invested: nothing to compare"), true));
+        Assert.Equal(("no Paper day yet", "none"), WeekCard.Verdict(null, true));
     }
 
     // ---- Shell ------------------------------------------------------------------------------------------------
 
     [Fact]
-    public void TheShell_HasFivePages_APaperBanner_AndAValidLoginMethod()
+    public void TheShell_HasItsPages_APaperChip_AndAValidLoginMethod()
     {
         ShellViewModel shell = Shell();
-        Assert.Equal(["Status", "Instruments", "Strategy", "Paper session", "Reports"], shell.Pages.Select(p => p.Title));
+        Assert.Equal(["Overview", "Trading", "Charts", "Accounts", "Instruments", "Strategy", "Reports"], shell.Pages.Select(p => p.Title));
         Assert.Equal(PageKind.Status, shell.SelectedPage.Kind);
-        Assert.StartsWith("PAPER MODE", shell.ModeBanner, StringComparison.Ordinal);
+        Assert.StartsWith("PAPER", shell.ModeBanner, StringComparison.Ordinal);
 
         shell.LoginMethod = "password";
         Assert.Contains(shell.LoginMethod, shell.LoginMethods);

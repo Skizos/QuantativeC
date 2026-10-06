@@ -29,4 +29,17 @@ public sealed record InstrumentSearchHit(
     string MarketPlaceName,
     bool Tradeable,
     decimal? LastPrice,
-    string? Currency);
+    string? Currency)
+{
+    /// <summary>Gets the ticker when the broker shows one, e.g. "ERIC B" (from "Ericsson B (ERIC B)").</summary>
+    public string? Ticker { get; init; }
+
+    /// <summary>Gets the listing's country, e.g. "SE" or "FI".</summary>
+    public string? FlagCode { get; init; }
+
+    /// <summary>Gets today's change in percent, e.g. 0.66 for +0.66 %.</summary>
+    public decimal? TodayChangePercent { get; init; }
+
+    /// <summary>Gets the top-level sector in English, e.g. "Technology".</summary>
+    public string? Sector { get; init; }
+}

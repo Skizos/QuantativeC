@@ -10,13 +10,13 @@ public sealed class CalendarConfigException(string message, Exception? inner = n
 
 /// <summary>
 /// Loads <c>config/market-calendar.&lt;MIC&gt;.&lt;year&gt;.json</c> (format <c>qa-market-calendar/1</c>) strictly: unknown or
-/// missing fields, a file name that disagrees with its content, a time zone other than Europe/Stockholm, or any entry
-/// <see cref="MarketCalendar"/> rejects (weekend, duplicate, wrong year) fail the load.
+/// missing fields, a file name that disagrees with its content, a market the program does not trade on, a time zone other
+/// than the market's (Europe/Stockholm for XSTO, America/New_York for XNYS, America/Toronto for XTSE; ADR 0005), or any
+/// entry <see cref="MarketCalendar"/> rejects (weekend, duplicate, wrong year) fail the load.
 /// </summary>
 public static class MarketCalendarLoader
 {
     public const string Format = "qa-market-calendar/1";
-    public const string TimeZone = "Europe/Stockholm";
 
     public static string FileName(string mic, int year) => string.Create(CultureInfo.InvariantCulture, $"market-calendar.{mic}.{year}.json");
 
@@ -74,9 +74,11 @@ public static class MarketCalendarLoader
             throw new CalendarConfigException($"{name}: the content says {dto.Mic} {dto.Year}; the file must be named {FileName(dto.Mic, dto.Year)}.");
         }
 
-        if (dto.TimeZone != TimeZone)
+        MarketInfo market = Markets.ForMic(dto.Mic)
+            ?? throw new CalendarConfigException($"{name}: {dto.Mic} is not a market the program trades on ({string.Join(", ", Markets.All.Select(m => m.Mic))}).");
+        if (dto.TimeZone != market.TimeZoneId)
         {
-            throw new CalendarConfigException($"{name}: timeZone must be {TimeZone} (session times are Stockholm local time).");
+            throw new CalendarConfigException($"{name}: timeZone must be {market.TimeZoneId} (session times are {market.Name} local time).");
         }
 
         if (string.IsNullOrWhiteSpace(dto.SourceUrl) || !Uri.TryCreate(dto.SourceUrl, UriKind.Absolute, out _))
@@ -94,7 +96,10 @@ public static class MarketCalendarLoader
             [.. dto.Closed.Select(e => Entry(e, name))],
             [.. dto.HalfDays.Select(e => Entry(e, name))],
             dto.SourceUrl,
-            dto.VerifiedOn is null ? null : Date(dto.VerifiedOn, name));
+            dto.VerifiedOn is null ? null : Date(dto.VerifiedOn, name))
+        {
+            TimeZoneId = market.TimeZoneId,
+        };
         try
         {
             _ = new MarketCalendar([year]); // per-file validation with a file-specific message

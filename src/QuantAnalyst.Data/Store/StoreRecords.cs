@@ -30,7 +30,9 @@ public sealed record InstrumentRecord(
 {
     /// <summary>
     /// Builds the master row from the broker's orderbook parameters. Nasdaq Stockholm main market (XSTO) trades
-    /// continuously; anything else stays <see cref="TradingModel.Unknown"/> until classified.
+    /// continuously, and so do the US and Canadian shares Avanza offers (ADR 0005: USD and CAD, listed on exchanges with
+    /// continuous trading); anything else stays <see cref="TradingModel.Unknown"/> until measured
+    /// (<see cref="History.TradingModelCheck"/>, plan 22).
     /// </summary>
     public static InstrumentRecord FromTradingParams(InstrumentTradingParams p) => new(
         p.OrderbookId,
@@ -40,7 +42,7 @@ public sealed record InstrumentRecord(
         p.Currency,
         p.MarketPlace,
         p.InstrumentType,
-        string.Equals(p.MarketPlace, "XSTO", StringComparison.Ordinal) ? TradingModel.Continuous : TradingModel.Unknown,
+        History.TradingModelCheck.KnownContinuous(p.MarketPlace, p.Currency) ? TradingModel.Continuous : TradingModel.Unknown,
         p.VolumeFactor,
         CanonicalTickTable(p.TickSizes),
         DateOnly.FromDateTime(MarketTime.ToStockholm(p.KnownAtUtc).DateTime));
@@ -66,6 +68,22 @@ public sealed record InstrumentRecord(
 public sealed record StoredInstrument(InstrumentRecord Instrument, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
 
 public sealed record StoredBar(DailyBar Bar, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
+
+/// <summary>One stored FX rate (ADR 0005) and when it became known.</summary>
+public sealed record StoredFxRate(string Currency, FxRate Rate, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
+
+/// <summary>One stored intraday bar (plan 17): its resolution and when it became known.</summary>
+public sealed record StoredIntradayBar(Bar Bar, ChartResolution Resolution, DateTimeOffset KnownAtUtc, string Source, string SourceVersion);
+
+/// <summary>
+/// The best bid and ask of one instrument at one moment, as a running session saw them (plan 17: the backtest's spread
+/// cost comes from these, not from a guess).
+/// </summary>
+public sealed record SpreadSample(OrderbookId OrderbookId, DateTimeOffset AtUtc, decimal Bid, decimal Ask, decimal BidVolume, decimal AskVolume)
+{
+    /// <summary>Gets the spread as a share of the mid (0.001 = 10 bps).</summary>
+    public decimal RelativeSpread => (Ask - Bid) / ((Ask + Bid) / 2m);
+}
 
 /// <summary>What an append-only write did: rows new to the store, rows that changed (restatements) and unchanged rows.</summary>
 public sealed record WriteCounts(int New, int Restated, int Unchanged);

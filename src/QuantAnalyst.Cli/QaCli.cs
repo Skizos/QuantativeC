@@ -49,7 +49,7 @@ internal static class QaCli
         root.Subcommands.Add(PriceCommand.Create());
         root.Subcommands.Add(RiskCommand.Create());
         root.Subcommands.Add(OptimizeCommand.Create());
-        foreach (Command command in AvanzaCommands.Create(avanza).Concat(DataCommands.Create()).Concat(BacktestCommands.Create()).Concat(TradingCommands.Create(avanza)))
+        foreach (Command command in AvanzaCommands.Create(avanza).Concat(DataCommands.Create()).Concat([FxCommands.Create(avanza)]).Concat(BacktestCommands.Create()).Concat(TradingCommands.Create(avanza)))
         {
             root.Subcommands.Add(command);
         }

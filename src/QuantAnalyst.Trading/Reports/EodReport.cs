@@ -63,6 +63,140 @@ public sealed record EodExecution(
 }
 
 /// <summary>
+/// One limit order that reached the market, how much of it filled, and what the rest missed (plan 19). Prices are in the
+/// share's currency; values in SEK at the day's rate.
+/// </summary>
+/// <param name="State">The order's last state: Filled, Cancelled (expired at the close, or stopped), Working, …</param>
+/// <param name="Close">The last price the session saw at the close (the mid without a last trade).</param>
+/// <param name="BacktestFills">
+/// Whether the daily backtest would have filled it: the day traded through the limit (a buy's limit above the day's low, a
+/// sell's below its high). Null without the day's range.
+/// </param>
+/// <param name="MissedSek">
+/// What the unfilled volume missed to the close: a buy's unfilled × (close − limit), a sell's unfilled × (limit − close).
+/// Positive is a cost (the price moved away); null when it all filled or there is no close price.
+/// </param>
+/// <param name="MissedBps">The same, in basis points of the unfilled value at the limit.</param>
+public sealed record EodLimitOrder(
+    string Ticker,
+    string Side,
+    long Volume,
+    long Filled,
+    decimal Limit,
+    decimal? DecisionPrice,
+    string State,
+    decimal? Close,
+    decimal? DayLow,
+    decimal? DayHigh,
+    bool? BacktestFills,
+    decimal UnfilledValueSek,
+    decimal? MissedSek,
+    decimal? MissedBps)
+{
+    public long Unfilled => Volume - Filled;
+
+    /// <summary>E.g. "Buy 782 FASTAT @ 0.642: filled 0/782 (Cancelled); day low 0.636, high 0.655, close 0.65: the backtest fills it; missed +6.26 SEK (+124.7 bps)".</summary>
+    public string Describe()
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        static string P(decimal? p) => p is { } v ? v.ToString("0.####", CultureInfo.InvariantCulture) : "-";
+        string backtest = BacktestFills switch
+        {
+            true => "the backtest fills it",
+            false => "the backtest does not fill it either",
+            null => "no day range",
+        };
+        string missed = MissedSek is { } m
+            ? string.Create(c, $"; missed {m:+0.00;-0.00;0.00} SEK{(MissedBps is { } b ? $" ({b:+0.0;-0.0;0.0} bps)" : string.Empty)}")
+            : string.Empty;
+        return string.Create(c,
+            $"{Side} {Volume} {Ticker} @ {P(Limit)}: filled {Filled}/{Volume} ({State}); day low {P(DayLow)}, high {P(DayHigh)}, close {P(Close)}: {backtest}{missed}");
+    }
+}
+
+/// <summary>
+/// How often the day's limit orders filled, and what the unfilled ones missed against the backtest (plan 19). The
+/// backtest fills a limit whole when the day trades through it; Paper fills a resting order only from trades printed
+/// through it after it was placed, 10 % of their volume at most. <see cref="MissedVsBacktestSek"/> is the missed value
+/// of the orders the backtest would have filled: the part of the gap that is the fill model's, not the market's.
+/// </summary>
+public sealed record EodFillRate(
+    IReadOnlyList<EodLimitOrder> Orders,
+    int Sent,
+    int FilledFully,
+    int FilledPartly,
+    int Unfilled,
+    decimal VolumeFilled,
+    int BacktestFills,
+    int BacktestUnknown,
+    decimal UnfilledValueVsBacktestSek,
+    decimal? MissedVsBacktestSek,
+    decimal? MissedVsBacktestBps)
+{
+    /// <summary>The totals over <paramref name="orders"/>; null when there are none.</summary>
+    public static EodFillRate? From(IReadOnlyList<EodLimitOrder> orders)
+    {
+        ArgumentNullException.ThrowIfNull(orders);
+        if (orders.Count == 0)
+        {
+            return null;
+        }
+
+        long volume = orders.Sum(o => o.Volume);
+        EodLimitOrder[] missedByPaper = [.. orders.Where(o => o.BacktestFills == true && o.Unfilled > 0)];
+        decimal unfilledValue = missedByPaper.Sum(o => o.UnfilledValueSek);
+        decimal? missed = missedByPaper.Length == 0 ? 0m
+            : missedByPaper.All(o => o.MissedSek is null) ? null
+            : decimal.Round(missedByPaper.Sum(o => o.MissedSek ?? 0m), 2);
+        decimal priced = missedByPaper.Where(o => o.MissedSek is not null).Sum(o => o.UnfilledValueSek);
+        return new EodFillRate(
+            orders,
+            orders.Count,
+            orders.Count(o => o.Unfilled == 0),
+            orders.Count(o => o.Filled > 0 && o.Unfilled > 0),
+            orders.Count(o => o.Filled == 0),
+            volume > 0 ? decimal.Round((decimal)orders.Sum(o => o.Filled) / volume, 4) : 0m,
+            orders.Count(o => o.BacktestFills == true),
+            orders.Count(o => o.BacktestFills is null),
+            decimal.Round(unfilledValue, 2),
+            missed,
+            missed is { } m && priced > 0 ? decimal.Round(m / priced * 10_000m, 1) : null);
+    }
+
+    /// <summary>The totals over every order of <paramref name="reports"/>: the evidence across days.</summary>
+    public static EodFillRate? Combine(IEnumerable<EodReport> reports)
+    {
+        ArgumentNullException.ThrowIfNull(reports);
+        return From([.. reports.SelectMany(r => r.FillRate?.Orders ?? [])]);
+    }
+
+    /// <summary>E.g. "3 limit order(s): 1 filled, 1 partly, 1 not (45 % of the volume); the backtest fills 3; missed vs the backtest +12.30 SEK (+85.0 bps)".</summary>
+    public string Describe()
+    {
+        CultureInfo c = CultureInfo.InvariantCulture;
+        string unknown = BacktestUnknown > 0 ? string.Create(c, $" ({BacktestUnknown} without the day's range)") : string.Empty;
+        string missed = MissedVsBacktestSek switch
+        {
+            null => "missed vs the backtest: no close price",
+            0m when UnfilledValueVsBacktestSek == 0m => "nothing missed vs the backtest",
+            { } m => string.Create(c, $"missed vs the backtest {m:+0.00;-0.00;0.00} SEK{(MissedVsBacktestBps is { } b ? $" ({b:+0.0;-0.0;0.0} bps)" : string.Empty)}"),
+        };
+        return string.Create(c,
+            $"{Sent} limit order(s): {FilledFully} filled, {FilledPartly} partly, {Unfilled} not ({VolumeFilled:P0} of the volume); the backtest fills {BacktestFills}{unknown}; {missed}");
+    }
+}
+
+/// <summary>A dividend, split or accepted price move the Paper book applied that day (plan 21), from its audit record.</summary>
+/// <param name="Kind"><c>dividend</c>, <c>split</c> or <c>price-accepted</c>.</param>
+/// <param name="CashSek">The cash it brought: the dividend, or a reverse split's fraction.</param>
+public sealed record EodCorporateAction(string Kind, string Ticker, string Text, decimal CashSek);
+
+/// <summary>A listed share's price at a market's close (plan 19's <c>close-mark</c> record; plan 24 compares with holding the list).</summary>
+/// <param name="Close">The last trade, else the mid; null without a price at the close.</param>
+/// <param name="SekPerUnit">SEK per unit of <paramref name="Currency"/> (1 for SEK).</param>
+public sealed record EodCloseMark(string OrderbookId, string Ticker, string Currency, decimal? Close, decimal SekPerUnit);
+
+/// <summary>
 /// The end-of-day report (ADR 0003 §3 and §8). It is rebuilt from the day's audit file alone, the tamper-evident
 /// record, never from session memory, so it can be regenerated and checked at any time (<c>qa report eod</c>) and the
 /// promotion gate can trust it.
@@ -121,8 +255,27 @@ public sealed record EodReport
     /// <summary>Gets the Confirm orders and their execution quality, or null on a day without any.</summary>
     public EodExecution? Live { get; init; }
 
+    /// <summary>Gets how often the day's limit orders filled and what the rest missed (plan 19); null without orders.</summary>
+    public EodFillRate? FillRate { get; init; }
+
     /// <summary>Gets how many orders were still Unknown when the day's audit ended (each is also a violation).</summary>
     public int UnknownAtEnd { get; init; }
+
+    /// <summary>Gets the dividends and splits the Paper book applied at the day's start (plan 21); the day's return includes them.</summary>
+    public IReadOnlyList<EodCorporateAction> CorporateActions { get; init; } = [];
+
+    /// <summary>Gets the owner's manual requests finished that day (plan 23), one line each, e.g. "[M261001-7f3a] Buy 7 ERIC B (at the ask): sent".</summary>
+    public IReadOnlyList<string> ManualOrders { get; init; } = [];
+
+    /// <summary>Gets how many manual orders the gateway accepted that day (plan 23): the day is then not the strategy's alone.</summary>
+    public int ManualOrdersSent { get; init; }
+
+    /// <summary>Gets every listed share's price at its market's close (plan 19), by orderbook id; empty before plan 19 or without a close.</summary>
+    public IReadOnlyList<EodCloseMark> CloseMarks { get; init; } = [];
+
+    /// <summary>Gets the dividends credited that day, in SEK (plan 21).</summary>
+    [JsonIgnore]
+    public decimal DividendsSek => CorporateActions.Where(a => a.Kind == "dividend").Sum(a => a.CashSek);
 
     public required bool AuditChainValid { get; init; }
 
@@ -195,8 +348,13 @@ public sealed record EodReport
         string live = Live is { } l
             ? string.Create(c, $" Live: {l.Sent} confirmed order(s), {l.Filled} filled{(l.MeanSlippageVsArrivalBps is { } m ? $", slippage {m:+0.0;-0.0} bps vs the arrival mid" : string.Empty)}{(l.CostAssumptionBps is { } assumed ? $" (the backtest assumes {assumed:0.#})" : string.Empty)}.")
             : string.Empty;
+        string fillRate = FillRate is { } f ? $" Limits: {f.Describe()}." : string.Empty;
+        int dividends = CorporateActions.Count(x => x.Kind == "dividend"), splits = CorporateActions.Count(x => x.Kind == "split");
+        string corporate = dividends + splits == 0 ? string.Empty
+            : string.Create(c, $" Corporate actions: {(dividends > 0 ? $"{dividends} dividend(s), {DividendsSek:N2} SEK" : string.Empty)}{(dividends > 0 && splits > 0 ? ", " : string.Empty)}{(splits > 0 ? $"{splits} split(s)" : string.Empty)}.");
+        string manual = ManualOrders.Count == 0 ? string.Empty : string.Create(c, $" Manual: {ManualOrders.Count} request(s), {ManualOrdersSent} sent.");
         return string.Create(c,
-            $"{Date:yyyy-MM-dd} {state}: {Submitted} sent, {Accepted} accepted, {RiskRejected} risk-rejected, {Fills.Count} fill(s) ({FillSanityOutliers} outside ±{SanityLimitBps:0} bps), reconciliation {ReconciliationRuns - ReconciliationMismatchRuns}/{ReconciliationRuns} clean, {Violations.Count} violation(s); {account}.{live}");
+            $"{Date:yyyy-MM-dd} {state}: {Submitted} sent, {Accepted} accepted, {RiskRejected} risk-rejected, {Fills.Count} fill(s) ({FillSanityOutliers} outside ±{SanityLimitBps:0} bps), reconciliation {ReconciliationRuns - ReconciliationMismatchRuns}/{ReconciliationRuns} clean, {Violations.Count} violation(s); {account}.{corporate}{manual}{fillRate}{live}");
     }
 
     private sealed class Builder
@@ -215,6 +373,12 @@ public sealed record EodReport
         private readonly Dictionary<string, LiveOrder> _live = [];
         private LiveOrder? _pendingLive;
         private decimal? _costAssumption;
+        private decimal? _pendingDecisionPrice;
+        private readonly Dictionary<string, SentOrder> _orders = [];
+        private readonly Dictionary<string, CloseMark> _marks = [];
+        private readonly List<EodCorporateAction> _corporate = [];
+        private readonly List<string> _manual = [];
+        private int _manualSent;
 
         public List<string> Violations { get; } = [];
 
@@ -254,6 +418,7 @@ public sealed record EodReport
                     break;
                 case "intent":
                     _intents++;
+                    _pendingDecisionPrice = Num(d, "decisionPrice");
                     break;
                 case "risk":
                     _lastRiskPassed = d.GetProperty("passed").GetBoolean();
@@ -296,6 +461,9 @@ public sealed record EodReport
                     string newId = Str(d, "clientOrderId")!;
                     _limits[newId] = d.GetProperty("limitPrice").GetDecimal();
                     _tickers[newId] = Str(d, "ticker") ?? "?";
+                    _orders[newId] = new SentOrder(
+                        Str(d, "orderbookId") ?? "?", _tickers[newId], Str(d, "side") ?? "?", Long(d, "volume") ?? 0, _limits[newId], _pendingDecisionPrice);
+                    _pendingDecisionPrice = null;
                     if (_pendingLive is { } live)
                     {
                         _live[newId] = live with
@@ -339,6 +507,10 @@ public sealed record EodReport
                 case "oms-fill":
                     string filledId = Str(d, "clientOrderId")!;
                     _lastState[filledId] = Str(d, "to")!;
+                    if (_orders.TryGetValue(filledId, out SentOrder? sent))
+                    {
+                        sent.Filled += Long(d, "volume") ?? 0;
+                    }
                     if (_live.TryGetValue(filledId, out LiveOrder? order))
                     {
                         order.Filled += d.GetProperty("volume").GetInt64();
@@ -350,8 +522,29 @@ public sealed record EodReport
                 case "sim-fill":
                     AddFill(d);
                     break;
+                case "close-mark":
+                    if (Str(d, "orderbookId") is { } marked)
+                    {
+                        _marks[marked] = new CloseMark(
+                            Num(d, "last") ?? (Num(d, "bid") is { } bid && Num(d, "ask") is { } ask ? (bid + ask) / 2 : null),
+                            Num(d, "dayLow"), Num(d, "dayHigh"), Num(d, "sekPerUnit") ?? 1m, Str(d, "ticker") ?? marked, Str(d, "currency") ?? "SEK");
+                    }
+
+                    break;
                 case "fill-refused":
                     Violations.Add("fill refused by the OMS: " + Str(d, "reason"));
+                    break;
+                case "dividend":
+                case "split":
+                case "price-accepted":
+                    _corporate.Add(Corporate(kind, d));
+                    break;
+                case "manual-order":
+                    string outcome = Str(d, "outcome") ?? "?";
+                    _manualSent += outcome == "sent" ? 1 : 0;
+                    string quantity = Long(d, "quantity") is > 0 and var q ? $" {q}" : string.Empty;
+                    string limit = Num(d, "limit") is { } l ? string.Create(CultureInfo.InvariantCulture, $" limit {l:0.####}") : string.Empty;
+                    _manual.Add($"[{Str(d, "id")}] {Str(d, "action")}{quantity} {Str(d, "ticker")}{limit}: {outcome} ({Str(d, "message")})");
                     break;
                 case "halt":
                     string reason = Str(d, "reason") ?? "?";
@@ -444,7 +637,12 @@ public sealed record EodReport
                 ReconciliationCleanAtEnd = _reconCleanAtEnd,
                 Account = _account,
                 Live = _live.Count == 0 ? null : Execution(),
+                FillRate = EodFillRate.From(LimitOrders()),
                 UnknownAtEnd = unknownAtEnd,
+                CorporateActions = _corporate,
+                CloseMarks = [.. _marks.OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => new EodCloseMark(m.Key, m.Value.Ticker, m.Value.Currency, m.Value.Close, m.Value.SekPerUnit))],
+                ManualOrders = _manual,
+                ManualOrdersSent = _manualSent,
                 AuditChainValid = chainValid,
                 Violations = Violations,
                 Events = Events,
@@ -471,6 +669,56 @@ public sealed record EodReport
                 orders.Count(o => o.AvanzaFee is { } fee && Math.Abs(fee - o.ModelFee) > Pipeline.FeeComparison.FlagAboveSek));
         }
 
+        /// <summary>Plan 19: every order that reached the market (not one refused by the broker or never sent).</summary>
+        private List<EodLimitOrder> LimitOrders()
+        {
+            var result = new List<EodLimitOrder>();
+            foreach ((string id, SentOrder o) in _orders)
+            {
+                string state = _lastState.GetValueOrDefault(id, "New");
+                if (state is "New" or "Rejected" || o.Volume <= 0)
+                {
+                    continue;
+                }
+
+                CloseMark? mark = _marks.GetValueOrDefault(o.OrderbookId);
+                bool buy = o.Side == "Buy";
+                bool? backtest = (buy ? mark?.DayLow : mark?.DayHigh) is { } extreme ? (buy ? extreme < o.Limit : extreme > o.Limit) : null;
+                long unfilled = o.Volume - o.Filled;
+                decimal rate = mark?.SekPerUnit ?? 1m;
+                decimal unfilledValue = decimal.Round(unfilled * o.Limit * rate, 2);
+                decimal? missed = unfilled > 0 && mark?.Close is { } close
+                    ? decimal.Round(unfilled * (buy ? close - o.Limit : o.Limit - close) * rate, 2)
+                    : null;
+                decimal? bps = missed is { } m && unfilledValue > 0 ? decimal.Round(m / unfilledValue * 10_000m, 1) : null;
+                result.Add(new EodLimitOrder(o.Ticker, o.Side, o.Volume, o.Filled, o.Limit, o.DecisionPrice, state, mark?.Close, mark?.DayLow, mark?.DayHigh,
+                    backtest, unfilledValue, missed, bps));
+            }
+
+            return result;
+        }
+
+        /// <summary>Plan 21: a <c>dividend</c>, <c>split</c> or <c>price-accepted</c> record, as one line.</summary>
+        private static EodCorporateAction Corporate(string kind, JsonElement d)
+        {
+            CultureInfo c = CultureInfo.InvariantCulture;
+            string ticker = Str(d, "ticker") ?? "?";
+            switch (kind)
+            {
+                case "dividend":
+                    decimal cash = Num(d, "cashSek") ?? 0m;
+                    return new EodCorporateAction(kind, ticker, string.Create(c,
+                        $"{ticker}: dividend {Num(d, "amountPerShare")} {Str(d, "currency")} × {Long(d, "quantity")} (ex-date {Str(d, "exDate")}) = {cash:N2} SEK, gross"), cash);
+                case "split":
+                    decimal fraction = Num(d, "cashForFraction") ?? 0m;
+                    string ratio = Num(d, "ratio") is { } r && r > 0 ? Paper.CorporateActions.Describe(r) : "?";
+                    return new EodCorporateAction(kind, ticker, string.Create(c,
+                        $"{ticker}: split {ratio} ({(Str(d, "source") == "owner" ? "by hand" : "from Avanza's share count")}), {Long(d, "before")} → {Long(d, "after")} shares{(fraction > 0 ? $", {fraction:N2} SEK for the fraction" : string.Empty)}"), fraction);
+                default:
+                    return new EodCorporateAction(kind, ticker, $"{ticker}: its big move taken as real by hand (not a split)", 0m);
+            }
+        }
+
         private void AddFill(JsonElement d)
         {
             string side = Str(d, "side") ?? "?";
@@ -490,6 +738,15 @@ public sealed record EodReport
                 : null;
             _fills.Add(new EodFill(ticker, side, d.GetProperty("volume").GetInt64(), price, limit, Str(d, "how") ?? string.Empty, reference, kind, deviation));
         }
+
+        /// <summary>Any order that reached the market, while its day's audit is read (plan 19).</summary>
+        private sealed record SentOrder(string OrderbookId, string Ticker, string Side, long Volume, decimal Limit, decimal? DecisionPrice)
+        {
+            public long Filled { get; set; }
+        }
+
+        /// <summary>A share's prices at the close (plan 19).</summary>
+        private sealed record CloseMark(decimal? Close, decimal? DayLow, decimal? DayHigh, decimal SekPerUnit, string Ticker, string Currency);
 
         /// <summary>A Confirm order while its day's audit is read.</summary>
         private sealed record LiveOrder
@@ -535,5 +792,8 @@ public sealed record EodReport
 
         private static decimal? Num(JsonElement d, string name) =>
             d.ValueKind == JsonValueKind.Object && d.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.Number ? v.GetDecimal() : null;
+
+        private static long? Long(JsonElement d, string name) =>
+            d.ValueKind == JsonValueKind.Object && d.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt64(out long n) ? n : null;
     }
 }

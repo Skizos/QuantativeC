@@ -13,7 +13,9 @@ public sealed class AbiTests
     }
 
     [Theory]
-    [InlineData(1, 2, true)]
+    [InlineData(1, 4, true)]
+    [InlineData(1, 3, false)] // 1.4 adds qe_bt_set_fill_mode and qe_bt_set_half_spread (plan 17)
+    [InlineData(1, 2, false)]
     [InlineData(1, 7, true)]
     [InlineData(1, 1, false)]
     [InlineData(1, 0, false)]

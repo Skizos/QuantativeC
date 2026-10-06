@@ -84,14 +84,39 @@ public sealed class QuoteComposerTests
     }
 
     [Fact]
+    public async Task WithoutTheDepthStream_PollsAloneKeepTheQuoteFresh_AndItGoesStaleOnlyWhenTheyStop()
+    {
+        // Paper since 2026-09-30: Avanza refuses the order-depth stream, so the composer never opens it.
+        _gateway.Poll = id => FakeGateway.Snapshot(id, 94.96m, 94.98m, 94.96m, _time.GetUtcNow());
+        var composer = new QuoteComposer(_gateway, Eric, new QuoteComposerOptions { DepthStream = false }, _time, _log);
+        using var cts = new CancellationTokenSource();
+        Task run = composer.RunAsync(cts.Token);
+        _gateway.Push(State(StreamState.Reconnecting, "HTTP 429")); // never read: no stream is opened
+
+        await Eventually.True(() => composer.Current is { IsStale: false, Bid: 94.96m, Ask: 94.98m, Last: 94.96m }, "fresh from the first poll");
+        Assert.Equal(QuoteSource.Poll, composer.Current!.BidAskSource);
+        await Advance(TimeSpan.FromSeconds(20)); // a poll every 5 s
+        Assert.False(composer.Current!.IsStale);
+
+        _gateway.Poll = _ => throw new BrokerUnavailableException("marketdata", "HTTP 503", 503);
+        await Advance(TimeSpan.FromSeconds(11));
+        await Eventually.True(() => composer.Current!.IsStale, "stale when the polls stop");
+        Assert.StartsWith("no poll update for 1", composer.Current!.StaleReason, StringComparison.Ordinal);
+
+        await cts.CancelAsync();
+        await run;
+    }
+
+    [Fact]
     public async Task TheNewerSourceProvidesBidAsk_LastTradeAlwaysFromThePoll()
     {
-        _gateway.Poll = id => FakeGateway.Snapshot(id, 90m, 91m, 90.5m, _time.GetUtcNow());
+        _gateway.Poll = id => FakeGateway.Snapshot(id, 90m, 91m, 90.5m, _time.GetUtcNow()) with { High = 91.4m, Low = 89.9m };
         QuoteComposer composer = Composer();
         using var cts = new CancellationTokenSource();
         Task run = composer.RunAsync(cts.Token);
         _gateway.Push(State(StreamState.Connected));
         await Eventually.True(() => composer.Current is { BidAskSource: QuoteSource.Poll }, "poll quote");
+        Assert.Equal((91.4m, 89.9m), (composer.Current!.DayHigh, composer.Current.DayLow)); // plan 19: the day's range, from the poll
 
         _time.Advance(TimeSpan.FromMilliseconds(200));
         _gateway.Push(FakeGateway.Depth(Eric, 92m, 93m, _time.GetUtcNow()));
@@ -99,6 +124,7 @@ public sealed class QuoteComposerTests
         Quote q = composer.Current!;
         Assert.Equal((92m, 500m, 93m, 600m), (q.Bid, q.BidVolume, q.Ask, q.AskVolume));
         Assert.Equal(90.5m, q.Last);
+        Assert.Equal((91.4m, 89.9m), (q.DayHigh, q.DayLow));
         Assert.Equal(q.DepthAtUtc, q.AsOfUtc);
 
         await Advance(TimeSpan.FromSeconds(5)); // next poll is newer again

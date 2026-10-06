@@ -1,3 +1,5 @@
+using System.Text.Json;
+using QuantAnalyst.Avanza.Http;
 using QuantAnalyst.Cli;
 using QuantAnalyst.Cli.Commands;
 
@@ -149,6 +151,87 @@ public sealed class CliDataTests : IDisposable
     }
 
     [Fact]
+    public void HistoryImport_StoresTheDividends_AndHistoryDividendsChecksTheHistoryOnTheExDates()
+    {
+        // Plan 21: a 1.45 SEK dividend goes ex on 2026-09-25, and that day opens at 69.00 after a 70.44 close: price-only.
+        _server.Always(AvanzaRoutes.StockDetails, _ => FakeAvanza.Json(Fixtures.Mutate("stock-details-5240.json", n =>
+        {
+            n["dividends"]!["pastEvents"]![0]!["exDate"] = "2026-09-25";
+            n["dividends"]!["pastEvents"]![0]!["paymentDate"] = "2026-09-30";
+        })));
+        _server.Always(AvanzaRoutes.PriceChart, _ => FakeAvanza.Json(Fixtures.Mutate("price-chart-5240.json", n =>
+        {
+            n["ohlc"]![1]!["open"] = 69.0;
+            n["ohlc"]![1]!["low"] = 68.9;
+        })));
+
+        (int code, string output, string error) = Qa(true, "history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store);
+        Assert.True(code == 0, output + error);
+        Assert.Contains("stored; share count 3,334,151,735 (check the history against them with 'qa history dividends').", output, StringComparison.Ordinal);
+
+        int requests = _server.Requests.Count;
+        (code, output, error) = Qa(false, "history", "dividends", "ERIC-B", "--store", Store);
+        Assert.True(code == 0, error);
+        string[] rows = output.ReplaceLineEndings("\n").Split('\n'); // Windows writes \r\n
+        Assert.Equal(["2026-09-25", "1.45", "SEK", "2026-09-30", "70.44", "69", "2.06%", "-2.04%", "price-only"],
+            rows.Single(l => l.StartsWith("2026-09-25", StringComparison.Ordinal)).Split(' ', StringSplitOptions.RemoveEmptyEntries));
+        Assert.EndsWith("no bars around it", rows.Single(l => l.StartsWith("2025-03-27", StringComparison.Ordinal)).TrimEnd(), StringComparison.Ordinal);
+        Assert.EndsWith("not yet in the history", rows.Single(l => l.StartsWith("2026-10-22", StringComparison.Ordinal)).TrimEnd(), StringComparison.Ordinal);
+        Assert.Contains("Share count 3,334,151,735", output, StringComparison.Ordinal);
+        Assert.Contains("The stored history is price-only", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa(false, "history", "dividends", "ERIC-B", "--store", Store, "--json");
+        Assert.Equal(0, code);
+        using JsonDocument json = JsonDocument.Parse(output);
+        Assert.Equal("PriceOnly", json.RootElement.GetProperty("verdict").GetString());
+        Assert.Equal(4, json.RootElement.GetProperty("dividends").GetArrayLength());
+        Assert.Equal(requests, _server.Requests.Count); // offline
+    }
+
+    [Fact]
+    public void HistoryImport_WithoutTheStockDetails_StillImportsTheBars()
+    {
+        _server.Always(AvanzaRoutes.StockDetails, _ => FakeAvanza.Status(System.Net.HttpStatusCode.OK, """{ "stock": {} }"""));
+
+        (int code, string output, string error) = Qa(true, "history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store);
+
+        Assert.True(code == 0, output + error);
+        Assert.Contains("Daily bars 2026-09-24..2026-09-25: 2 new", output, StringComparison.Ordinal);
+        Assert.Contains("warning: dividends and the share count were not stored (", output, StringComparison.Ordinal);
+        Assert.Contains("No dividends stored. 'qa history import ERIC-B' stores them", Qa(false, "history", "dividends", "ERIC-B", "--store", Store).Output, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true, "Trading model (plan 22): Continuous — it traded outside the auction times on 3 of 3 days last week.", null)]
+    [InlineData(false, "Trading model (plan 22): PeriodicAuction — it traded only at the auction times", "trades only in auctions")]
+    public void HistoryImport_OfAFirstNorthShare_MeasuresHowItTrades_AndTheListFollows(bool continuous, string measured, string? refused)
+    {
+        // Plan 22: the same share as if listed on First North; last week's 10-minute bars tell how it trades.
+        _server.Always(AvanzaRoutes.Orderbook, _ => FakeAvanza.Json(Fixtures.Mutate("orderbook-5240.json", n => n["marketPlace"] = "FNSE")));
+        _server.Always(AvanzaRoutes.PriceChart, r => r.RequestUri!.Query.Contains("ten_minutes", StringComparison.Ordinal)
+            ? ChartAnswers.TenMinuteWeek(continuous)
+            : FakeAvanza.Json(Fixtures.Bytes("price-chart-5240.json")));
+
+        (int code, string output, string error) = Qa(true, "history", "import", "ERIC-B", "--from", "2026-09-24", "--to", "2026-09-25", "--store", Store);
+        Assert.True(code == 0, output + error);
+        Assert.Contains(measured, output, StringComparison.Ordinal);
+        Assert.Contains(_server.Requests, r => r.PathAndQuery.EndsWith("?timePeriod=one_week&resolution=ten_minutes", StringComparison.Ordinal));
+
+        string config = Path.Combine(_root, "config");
+        Directory.CreateDirectory(config);
+        (code, output, error) = Qa(false, "universe", "add", "ERIC-B", "--config-dir", config, "--store", Store);
+        if (refused is null)
+        {
+            Assert.True(code == 0, error);
+        }
+        else
+        {
+            Assert.Equal(1, code);
+            Assert.Contains(refused, error, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void StoreThatCannotBeOpened_IsAReadableError_NotACrash()
     {
         string directory = Path.Combine(_root, "a-folder-not-a-file");
@@ -189,6 +272,26 @@ public sealed class CliDataTests : IDisposable
         (code, _, error) = Qa(false, "calendar", "--date", "2031-01-02", "--config-dir", config);
         Assert.Equal(1, code);
         Assert.Contains("No XSTO calendar is loaded for 2031", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Calendar_ShowsTheUsAndCanadianMarkets_InTheirOwnTime_AndInStockholmTime()
+    {
+        string config = Path.Combine(AppContext.BaseDirectory, "config");
+        (int code, string output, string error) = Qa(false, "calendar", "--market", "XNYS", "--date", "2026-11-27", "--config-dir", config);
+        Assert.True(code == 0, error);
+        Assert.Contains("2026-11-27 (Friday): Half trading day, 09:30–13:00 New York (Day after Thanksgiving) (15:30–19:00 Stockholm).", output, StringComparison.Ordinal);
+
+        (code, output, _) = Qa(false, "calendar", "--market", "xtse", "--year", "2026", "--config-dir", config);
+        Assert.Equal(0, code);
+        Assert.Contains("XTSE 2026: ", output, StringComparison.Ordinal);
+        Assert.Contains("regular session 09:30–16:00 Toronto.", output, StringComparison.Ordinal);
+        Assert.Contains("Boxing Day (observed)", output, StringComparison.Ordinal);
+        Assert.Contains("NOT VERIFIED", output, StringComparison.Ordinal);
+
+        (code, _, error) = Qa(false, "calendar", "--market", "XOSL", "--config-dir", config);
+        Assert.Equal(1, code);
+        Assert.Contains("XOSL is not a market the program trades on; use XSTO, XNYS, XTSE.", error, StringComparison.Ordinal);
     }
 
     [Theory]

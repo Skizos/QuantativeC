@@ -1,47 +1,131 @@
 <UserControl x:Class="QuantAnalyst.Desktop.Views.StatusView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:c="clr-namespace:QuantAnalyst.Desktop.Controls">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel>
+        <!-- At a glance: the next session, the Confirm gate, the live-trading account and the kill switch. -->
+        <!-- Four tiles in a wide pane, two in half of it, one in a narrow one. -->
+        <c:AdaptiveGrid MinItemWidth="210" Spacing="12" Margin="0,0,0,16">
+            <Border Style="{StaticResource Tile}" Margin="0">
+                <StackPanel>
+                    <TextBlock Text="NEXT SESSION" Style="{StaticResource Overline}" />
+                    <TextBlock Text="{Binding NextSessionText}" Style="{StaticResource KpiValue}" FontSize="17" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding NextSessionIn}" Style="{StaticResource Caption}" Margin="0,2,0,0" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Tile}" Margin="0">
+                <StackPanel>
+                    <TextBlock Text="CONFIRM GATE" Style="{StaticResource Overline}" />
+                    <ItemsControl ItemsSource="{Binding GateDots}" Margin="0,8,0,6">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Ellipse Width="12" Height="12" Margin="0,0,5,0">
+                                    <Ellipse.Style>
+                                        <Style TargetType="Ellipse">
+                                            <Setter Property="Fill" Value="{StaticResource LineBrush}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding}" Value="True">
+                                                    <Setter Property="Fill" Value="{StaticResource PositiveBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Ellipse.Style>
+                                </Ellipse>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="{Binding GateProgress}" Style="{StaticResource Caption}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Tile}" Margin="0">
+                <StackPanel>
+                    <TextBlock Text="LIVE TRADING ACCOUNT" Style="{StaticResource Overline}" />
+                    <Border Style="{StaticResource Chip}" Margin="0,8,0,0" Background="{Binding LiveAccountTone, Converter={StaticResource MarkToSoftBrush}}">
+                        <TextBlock Text="{Binding LiveAccountText}" Style="{StaticResource ChipText}" FontSize="13"
+                                   Foreground="{Binding LiveAccountTone, Converter={StaticResource MarkToBrush}}" />
+                    </Border>
+                    <TextBlock Text="Chosen on the Accounts page" Style="{StaticResource Caption}" Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource Tile}" Margin="0">
+                <StackPanel>
+                    <TextBlock Text="KILL SWITCH" Style="{StaticResource Overline}" />
+                    <Border Style="{StaticResource Chip}" Margin="0,8,0,0" Background="{Binding KillTone, Converter={StaticResource MarkToSoftBrush}}">
+                        <TextBlock Text="{Binding KillText}" Style="{StaticResource ChipText}" FontSize="13"
+                                   Foreground="{Binding KillTone, Converter={StaticResource MarkToBrush}}" />
+                    </Border>
+                    <TextBlock Text="The red KILL button stops everything" Style="{StaticResource Caption}" Margin="0,6,0,0" />
+                </StackPanel>
+            </Border>
+        </c:AdaptiveGrid>
+
+        <!-- The account and the checklist beside the next steps; in a narrow pane the next steps go below. -->
+        <c:AdaptiveSplit FirstShare="0.6" Breakpoint="820">
+            <StackPanel>
+            <!-- The paper account's value, day by day. -->
             <Border Style="{StaticResource Card}">
                 <StackPanel>
-                    <TextBlock Text="{Binding Heading}" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,10" />
+                    <TextBlock Text="PAPER ACCOUNT" Style="{StaticResource Overline}" />
+                    <WrapPanel Margin="0,4,0,0">
+                        <TextBlock Text="{Binding PaperValue}" Style="{StaticResource Hero}" Margin="0,0,14,0" />
+                        <TextBlock Text="{Binding PaperChange}" FontWeight="SemiBold" FontSize="14" VerticalAlignment="Bottom" Margin="0,0,0,6"
+                                   Foreground="{Binding PaperDirection, Converter={StaticResource MarkToBrush}}" />
+                    </WrapPanel>
+                    <c:SeriesChart Data="{Binding PaperChart}" Height="170" Margin="0,12,0,0" EmptyText="The chart starts after the first Paper session" />
+                    <TextBlock Text="{Binding PaperNote}" Style="{StaticResource Caption}" Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- The setup, one line per thing a trading day depends on. -->
+            <Border Style="{StaticResource Card}" VerticalAlignment="Top">
+                <StackPanel>
+                    <TextBlock Text="{Binding Heading}" Style="{StaticResource H2}" Margin="0,0,0,12" />
                     <ItemsControl ItemsSource="{Binding Lines}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <Grid Margin="0,3">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="56" />
-                                        <ColumnDefinition Width="130" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Grid.Column="0" Background="{Binding Mark, Converter={StaticResource MarkToBrush}}" CornerRadius="3"
-                                            Padding="6,1" HorizontalAlignment="Left" VerticalAlignment="Top">
-                                        <TextBlock Text="{Binding Mark}" Foreground="White" FontWeight="SemiBold" FontSize="11" />
-                                    </Border>
-                                    <TextBlock Grid.Column="1" Text="{Binding Label}" FontWeight="SemiBold" />
-                                    <TextBlock Grid.Column="2" Text="{Binding Text}" TextWrapping="Wrap" />
-                                </Grid>
+                                <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1" Padding="0,10">
+                                    <!-- Mark and label, the finding beside them; in a narrow card the finding goes under them. -->
+                                    <c:AdaptiveRow FillMinWidth="200" Spacing="0" RowSpacing="4">
+                                        <StackPanel Orientation="Horizontal" Width="204" HorizontalAlignment="Left" VerticalAlignment="Top">
+                                            <Border Width="64" HorizontalAlignment="Left" VerticalAlignment="Top">
+                                                <Border Style="{StaticResource Chip}" Background="{Binding Mark, Converter={StaticResource MarkToSoftBrush}}">
+                                                    <TextBlock Text="{Binding Mark}" Style="{StaticResource ChipText}" Foreground="{Binding Mark, Converter={StaticResource MarkToBrush}}" />
+                                                </Border>
+                                            </Border>
+                                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" Width="128" Margin="0,1,12,0" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <TextBlock c:AdaptiveRow.Fill="True" Text="{Binding Text}" TextWrapping="Wrap" Foreground="{StaticResource InkSecondaryBrush}" Margin="0,1,0,0" />
+                                    </c:AdaptiveRow>
+                                </Border>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                 </StackPanel>
             </Border>
+            </StackPanel>
 
-            <Border Style="{StaticResource Card}">
+            <!-- What to do next, and one button for it. -->
+            <Border Style="{StaticResource Card}" VerticalAlignment="Top">
                 <StackPanel>
-                    <TextBlock Text="Next steps" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="Next steps" Style="{StaticResource H2}" Margin="0,0,0,12" />
                     <ItemsControl ItemsSource="{Binding Steps}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,3" />
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" Margin="0,0,0,10" LineHeight="20" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                     <Button Style="{StaticResource Primary}" Content="{Binding NextActionLabel}" Command="{Binding NextActionCommand}"
-                            HorizontalAlignment="Left" Margin="0,12,0,0" />
+                            HorizontalAlignment="Stretch" Margin="0,8,0,0" />
                 </StackPanel>
             </Border>
+        </c:AdaptiveSplit>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

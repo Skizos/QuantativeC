@@ -52,8 +52,87 @@ public sealed record HoldoutPolicy(bool Locked, DateOnly Start, string Path)
 }
 
 /// <summary>
-/// A cost model (config/costs.&lt;name&gt;.json): courtage, FX fee, spread, slippage and participation cap. Money
-/// amounts stay decimal here and become double only for the engine.
+/// The intraday research's final holdout (config/holdout.intraday.json, ADR 0006): the last <see cref="Days"/> trading
+/// days with collected intraday bars, locked until the owner unlocks it. It rolls with the collection, so the newest
+/// days are never read by a locked run. The daily holdout (config/holdout.json) keeps guarding the daily bars; intraday
+/// bars exist only from plan 17's collection on, all after its start. Only the owner edits the file.
+/// </summary>
+public sealed record IntradayHoldout(bool Locked, int Days, string Path)
+{
+    public const string FileName = "holdout.intraday.json";
+
+    /// <summary>Reads the policy. A missing or malformed file is an error (fail closed), as for the daily holdout.</summary>
+    public static IntradayHoldout Load(string path)
+    {
+        if (!File.Exists(path))
+        {
+            throw new BacktestConfigException($"Intraday holdout policy {path} not found. Intraday backtests do not run without it.");
+        }
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(path));
+            JsonElement root = doc.RootElement;
+            if (root.GetProperty("format").GetString() != "qa-intraday-holdout/1")
+            {
+                throw new BacktestConfigException($"{path}: format must be qa-intraday-holdout/1.");
+            }
+
+            bool locked = root.GetProperty("locked").GetBoolean();
+            int days = root.GetProperty("days").GetInt32();
+            if (days is < 1 or > 250)
+            {
+                throw new BacktestConfigException($"{path}: days must be 1..250, got {days}.");
+            }
+
+            if (!locked && (Text(root, "unlocked_by") is null || Text(root, "unlocked_on") is null || Text(root, "reason") is null))
+            {
+                throw new BacktestConfigException($"{path}: an unlocked holdout needs unlocked_by, unlocked_on and reason.");
+            }
+
+            return new IntradayHoldout(locked, days, path);
+        }
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
+        {
+            throw new BacktestConfigException($"{path} is not a valid intraday holdout policy: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// The policy for the runner over the collected trading days (any order): the holdout starts at the
+    /// <see cref="Days"/>-th last of them. Null when fewer days than that are collected (then every day is held out).
+    /// </summary>
+    public HoldoutPolicy? For(IEnumerable<DateOnly> collectedDays)
+    {
+        ArgumentNullException.ThrowIfNull(collectedDays);
+        DateOnly[] days = [.. collectedDays.Distinct().OrderDescending()];
+        return days.Length < Days ? null : new HoldoutPolicy(Locked, days[Days - 1], Path);
+    }
+
+    private static string? Text(JsonElement root, string name) =>
+        root.TryGetProperty(name, out JsonElement e) && e.ValueKind == JsonValueKind.String && e.GetString() is { Length: > 0 } s ? s : null;
+}
+
+/// <summary>A courtage class's courtage for shares in a foreign currency, in that currency (ADR 0005): max(min, rate × value).</summary>
+public sealed record ForeignCourtage(decimal Min, decimal Rate);
+
+/// <summary>
+/// A courtage class's courtage for Swedish shares on a marketplace other than Nasdaq Stockholm's main market (plan 22:
+/// First North), in SEK: max(min, rate × value).
+/// </summary>
+public sealed record MarketplaceCourtage(decimal Min, decimal Rate);
+
+/// <summary>
+/// A class that is free for its first trades (plan 17 A4; Avanza Start: 500 trades per 12 months, then Mini,
+/// UNVERIFIED): trades on Swedish shares past <see cref="Trades"/> within <see cref="Months"/> pay <see cref="Then"/>'s
+/// courtage.
+/// </summary>
+public sealed record FreeTradeAllowance(int Trades, int Months, CostModel Then, string? SourceUrl, DateOnly? VerifiedOn);
+
+/// <summary>
+/// A cost model (config/costs.&lt;name&gt;.json): courtage, FX fee, spread, slippage and participation cap, and the courtage
+/// for US and Canadian shares (<c>foreign_courtage</c>, ADR 0005). Money amounts stay decimal here and become double only
+/// for the engine.
 /// </summary>
 public sealed record CostModel(
     string Name,
@@ -79,8 +158,68 @@ public sealed record CostModel(
     /// <summary>Gets a value indicating whether the owner checked the courtage and FX fee against Avanza's price list.</summary>
     public bool Verified => VerifiedOn is not null;
 
+    /// <summary>Gets the courtage for shares in each foreign currency (USD, CAD), in that currency; empty when the file has none.</summary>
+    public IReadOnlyDictionary<string, ForeignCourtage> Foreign { get; init; } = new Dictionary<string, ForeignCourtage>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets the courtage for SEK shares on other Swedish marketplaces (plan 22), by Avanza's marketplace code (e.g.
+    /// "FNSE"); <see cref="CourtageMin"/>/<see cref="CourtageRate"/> are Nasdaq Stockholm's main market (XSTO).
+    /// </summary>
+    public IReadOnlyDictionary<string, MarketplaceCourtage> Marketplaces { get; init; } = new Dictionary<string, MarketplaceCourtage>(StringComparer.Ordinal);
+
+    /// <summary>Gets when the owner checked the marketplace courtage against Avanza's price list; null until then.</summary>
+    public DateOnly? MarketplaceVerifiedOn { get; init; }
+
+    /// <summary>The main market, whose courtage is the class's own.</summary>
+    public const string MainMarket = "XSTO";
+
+    /// <summary>Gets the free-trade allowance (Start's 500 trades a year), or null when every trade pays the courtage.</summary>
+    public FreeTradeAllowance? FreeTrades { get; init; }
+
+    /// <summary>Gets where the foreign courtage comes from.</summary>
+    public string? ForeignSourceUrl { get; init; }
+
+    /// <summary>Gets when the owner checked the foreign courtage against Avanza's price list; null until then.</summary>
+    public DateOnly? ForeignVerifiedOn { get; init; }
+
     /// <summary>Courtage for one order of <paramref name="notional"/> SEK: max(min, rate × notional).</summary>
     public decimal Courtage(decimal notional) => Math.Max(CourtageMin, CourtageRate * notional);
+
+    /// <summary>
+    /// Courtage for one order of <paramref name="notional"/> in <paramref name="currency"/>, in that currency: the Swedish
+    /// courtage for SEK, the class's foreign courtage for USD and CAD (ADR 0005). Throws when the file has none for it.
+    /// </summary>
+    /// <param name="marketPlace">Plan 22: a SEK share's marketplace; one other than XSTO pays its own courtage (<see cref="MarketplaceFor"/>).</param>
+    public decimal CourtageIn(string currency, decimal notional, string? marketPlace = null) =>
+        string.Equals(currency, Currency, StringComparison.Ordinal)
+            ? MarketplaceFor(marketPlace) is { } m ? Math.Max(m.Min, m.Rate * notional) : Courtage(notional)
+            : ForeignFor(currency) is { } f
+                ? Math.Max(f.Min, f.Rate * notional)
+                : throw new BacktestConfigException($"The courtage class {Name} has no courtage for {currency} shares; add foreign_courtage.{currency} to costs.{Name}.json (ADR 0005).");
+
+    /// <summary>
+    /// Plan 22: the courtage of a Swedish marketplace other than the main market, or null for the main market (or none
+    /// given). Throws for a marketplace the class has no courtage for: its trades are never charged the main market's.
+    /// </summary>
+    public MarketplaceCourtage? MarketplaceFor(string? marketPlace) =>
+        string.IsNullOrEmpty(marketPlace) || string.Equals(marketPlace, MainMarket, StringComparison.Ordinal)
+            ? null
+            : Marketplaces.TryGetValue(marketPlace, out MarketplaceCourtage? c)
+                ? c
+                : throw new BacktestConfigException($"The courtage class {Name} has no courtage for shares on {marketPlace}; add marketplace_courtage.{marketPlace} to costs.{Name}.json (plan 22).");
+
+    /// <summary>
+    /// Plan 22: the own courtage of a Swedish panel share on another marketplace (First North), or null when it pays the
+    /// class's main-market courtage (or is foreign: <see cref="ForeignFor"/>).
+    /// </summary>
+    public MarketplaceCourtage? MarketplaceFor(PanelInstrument instrument)
+    {
+        ArgumentNullException.ThrowIfNull(instrument);
+        return instrument.ForeignCurrency ? null : MarketplaceFor(instrument.MarketPlace);
+    }
+
+    /// <summary>The foreign courtage for <paramref name="currency"/>, or null.</summary>
+    public ForeignCourtage? ForeignFor(string currency) => Foreign.GetValueOrDefault(currency);
 
     /// <summary>Every cost model in a folder (costs.*.json), cheapest minimum first.</summary>
     public static IReadOnlyList<CostModel> LoadAll(string directory)
@@ -112,7 +251,10 @@ public sealed record CostModel(
         ParticipationCap = (double)ParticipationCap,
     };
 
-    public static CostModel Load(string path)
+    public static CostModel Load(string path) => Load(path, allowFreeTrades: true);
+
+    /// <param name="allowFreeTrades">False for the class an allowance turns into: it may not have one itself.</param>
+    private static CostModel Load(string path, bool allowFreeTrades)
     {
         if (!File.Exists(path))
         {
@@ -158,6 +300,36 @@ public sealed record CostModel(
                     : (null, null),
                 EligibleBelowCapital = OptionalDecimal(root, "eligible_below_capital_sek"),
             };
+            if (root.TryGetProperty("foreign_courtage", out JsonElement foreign))
+            {
+                model = model with
+                {
+                    Foreign = ReadForeign(foreign, path),
+                    ForeignSourceUrl = OptionalString(foreign, "source_url"),
+                    ForeignVerifiedOn = foreign.GetProperty("verified_on") is { ValueKind: JsonValueKind.String } fv
+                        ? DateOnly.ParseExact(fv.GetString()!, "yyyy-MM-dd", CultureInfo.InvariantCulture)
+                        : null,
+                };
+            }
+
+            if (root.TryGetProperty("marketplace_courtage", out JsonElement marketplaces))
+            {
+                model = model with
+                {
+                    Marketplaces = ReadMarketplaces(marketplaces, path),
+                    MarketplaceVerifiedOn = marketplaces.TryGetProperty("verified_on", out JsonElement mv) && mv.ValueKind == JsonValueKind.String
+                        ? DateOnly.ParseExact(mv.GetString()!, "yyyy-MM-dd", CultureInfo.InvariantCulture)
+                        : null,
+                };
+            }
+
+            if (root.TryGetProperty("free_trades", out JsonElement free))
+            {
+                model = allowFreeTrades
+                    ? model with { FreeTrades = ReadFreeTrades(free, model.Name, path) }
+                    : throw new BacktestConfigException($"{path}: this class is what another's free trades turn into, and has an allowance of its own; one step only.");
+            }
+
             if (model.CourtageMin < 0 || model.CourtageRate < 0 || model.FxFeeRate < 0 || model.SlippageBps < 0 || model.HalfSpreadBps < 0
                 || model.ParticipationCap <= 0 || model.ParticipationCap > 1)
             {
@@ -181,6 +353,110 @@ public sealed record CostModel(
         {
             throw new BacktestConfigException($"{path} is not a valid cost model: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// <c>marketplace_courtage</c> (plan 22): <c>{"FNSE": {"min", "rate"}, "source_url", "verified_on", "basis"}</c>, by
+    /// Avanza's marketplace code; not the main market (its courtage is the class's own). Every value ≥ 0, the rate below 10 %.
+    /// </summary>
+    private static Dictionary<string, MarketplaceCourtage> ReadMarketplaces(JsonElement marketplaces, string path)
+    {
+        var result = new Dictionary<string, MarketplaceCourtage>(StringComparer.Ordinal);
+        foreach (JsonProperty p in marketplaces.EnumerateObject())
+        {
+            if (p.Name is "source_url" or "verified_on" or "basis")
+            {
+                continue;
+            }
+
+            if (p.Name == MainMarket)
+            {
+                throw new BacktestConfigException($"{path}: marketplace_courtage.{MainMarket} is the main market, whose courtage is the file's own 'courtage'.");
+            }
+
+            var c = new MarketplaceCourtage(p.Value.GetProperty("min").GetDecimal(), p.Value.GetProperty("rate").GetDecimal());
+            if (c.Min < 0 || c.Rate < 0 || c.Rate >= 0.1m)
+            {
+                throw new BacktestConfigException($"{path}: marketplace_courtage.{p.Name} needs min >= 0 and rate in [0, 0.1).");
+            }
+
+            result[p.Name] = c;
+        }
+
+        if (marketplaces.TryGetProperty("verified_on", out JsonElement v) && v.ValueKind == JsonValueKind.String
+            && !DateOnly.TryParseExact(v.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+        {
+            throw new BacktestConfigException($"{path}: marketplace_courtage.verified_on must be null or a yyyy-MM-dd date.");
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// <c>foreign_courtage</c>: <c>{"USD": {"min", "rate"}, "CAD": {…}, "source_url", "verified_on", "basis"}</c>. Only the
+    /// currencies of the markets the program trades may appear (ADR 0005); every value must be ≥ 0 and the rate below 10 %.
+    /// </summary>
+    private static Dictionary<string, ForeignCourtage> ReadForeign(JsonElement foreign, string path)
+    {
+        var result = new Dictionary<string, ForeignCourtage>(StringComparer.Ordinal);
+        foreach (JsonProperty p in foreign.EnumerateObject())
+        {
+            if (p.Name is "source_url" or "verified_on" or "basis")
+            {
+                continue;
+            }
+
+            if (Core.Market.Markets.ForCurrency(p.Name) is null || !Core.Market.Markets.IsForeign(p.Name))
+            {
+                throw new BacktestConfigException($"{path}: foreign_courtage.{p.Name} is not a foreign currency the program trades ({string.Join(", ", Core.Market.Markets.All.Where(m => Core.Market.Markets.IsForeign(m.Currency)).Select(m => m.Currency))}).");
+            }
+
+            var c = new ForeignCourtage(p.Value.GetProperty("min").GetDecimal(), p.Value.GetProperty("rate").GetDecimal());
+            if (c.Min < 0 || c.Rate < 0 || c.Rate >= 0.1m)
+            {
+                throw new BacktestConfigException($"{path}: foreign_courtage.{p.Name} needs min >= 0 and rate in [0, 0.1).");
+            }
+
+            result[p.Name] = c;
+        }
+
+        if (foreign.TryGetProperty("verified_on", out JsonElement v) && v.ValueKind == JsonValueKind.String
+            && !DateOnly.TryParseExact(v.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+        {
+            throw new BacktestConfigException($"{path}: foreign_courtage.verified_on must be null or a yyyy-MM-dd date.");
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// <c>free_trades</c>: <c>{"trades": 500, "months": 12, "then": "avanza-mini", "source_url", "verified_on", "basis"}</c>.
+    /// The class it turns into is read from its own file beside this one and may not have an allowance itself.
+    /// </summary>
+    private static FreeTradeAllowance ReadFreeTrades(JsonElement free, string name, string path)
+    {
+        int trades = free.GetProperty("trades").GetInt32();
+        int months = free.GetProperty("months").GetInt32();
+        string then = free.GetProperty("then").GetString()!;
+        if (trades < 1 || months < 1 || months > 60)
+        {
+            throw new BacktestConfigException($"{path}: free_trades needs trades >= 1 and months in 1..60.");
+        }
+
+        if (then == name)
+        {
+            throw new BacktestConfigException($"{path}: free_trades.then must be another courtage class, not {name} itself.");
+        }
+
+        string thenPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, $"costs.{then}.json");
+        CostModel next = Load(thenPath, allowFreeTrades: false); // refuses a chain before it could loop
+
+        DateOnly? verified = free.TryGetProperty("verified_on", out JsonElement v) && v.ValueKind == JsonValueKind.String
+            ? DateOnly.TryParseExact(v.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateOnly d)
+                ? d
+                : throw new BacktestConfigException($"{path}: free_trades.verified_on must be null or a yyyy-MM-dd date.")
+            : null;
+        return new FreeTradeAllowance(trades, months, next, OptionalString(free, "source_url"), verified);
     }
 
     private static string? OptionalString(JsonElement e, string name) =>

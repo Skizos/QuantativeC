@@ -101,6 +101,12 @@ public sealed class OrderManager(AuditLog audit, HaltController halts, TimeProvi
     private readonly Lock _lock = new();
     private readonly Dictionary<Guid, OmsOrder> _orders = [];
 
+    /// <summary>
+    /// Raised after every change of an order (created, moved, filled), outside the book's lock, for observers such as
+    /// the Windows app's charts. A handler's exception is swallowed: watching must never change the order flow.
+    /// </summary>
+    public event Action<OmsOrder>? Changed;
+
     public static bool IsAllowed(OmsState from, OmsState to) => Allowed[from].Contains(to);
 
     public IReadOnlyList<OmsOrder> All
@@ -145,6 +151,7 @@ public sealed class OrderManager(AuditLog audit, HaltController halts, TimeProvi
         }
 
         audit.Append("oms-new", new { clientOrderId, orderbookId = orderbookId.Value, ticker, side = side.ToString(), volume, limitPrice });
+        Notify(order);
         return order;
     }
 
@@ -168,6 +175,7 @@ public sealed class OrderManager(AuditLog audit, HaltController halts, TimeProvi
         }
 
         audit.Append("oms-state", new { clientOrderId, from = from.ToString(), to = to.ToString(), why, brokerOrderId = brokerOrderId?.Value });
+        Notify(order);
     }
 
     /// <summary>
@@ -198,6 +206,7 @@ public sealed class OrderManager(AuditLog audit, HaltController halts, TimeProvi
         }
 
         audit.Append("oms-state", new { clientOrderId, from = was.ToString(), to = to.ToString(), why, brokerOrderId = brokerOrderId?.Value });
+        Notify(order);
         return true;
     }
 
@@ -241,6 +250,19 @@ public sealed class OrderManager(AuditLog audit, HaltController halts, TimeProvi
         }
 
         audit.Append("oms-fill", new { clientOrderId, volume, price = decimal.Round(price, 6), value, fees, source, from = from.ToString(), to = to.ToString(), filled = order.FilledVolume, of = order.Volume });
+        Notify(order);
+    }
+
+    private void Notify(OmsOrder order)
+    {
+        try
+        {
+            Changed?.Invoke(order);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // An observer's failure is its own; the order flow goes on exactly as it would without one.
+        }
     }
 
     private OmsOrder Get(Guid clientOrderId) =>

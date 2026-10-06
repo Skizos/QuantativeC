@@ -419,6 +419,27 @@ public sealed class OrderGatewayTests : IDisposable
     }
 
     [Fact]
+    public async Task NextActionAt_SaysWhenR11AndR12WouldPass()
+    {
+        // A pacing hint for the Paper session (plan 23 review): R12 per share (cancels count), R11 across all shares.
+        using var gateway = new OrderGateway(_channel, Env(TradingMode.Paper), new PreTradeRiskEngine(RiskLimits.AdrDefaults with { MaxActionsPerMinute = 2 }), _oms, _halts, _audit, _time);
+        DateTimeOffset t0 = _time.GetUtcNow();
+        Assert.Equal(t0, gateway.NextActionAt(RiskEngineTests.Eric)); // nothing done yet
+
+        Assert.Equal(SubmitStatus.Accepted, (await gateway.SubmitAsync(Intent(), CancellationToken.None)).Status);
+        Assert.Equal(t0.AddSeconds(5), gateway.NextActionAt(RiskEngineTests.Eric)); // R12: 5 s on the same share
+        Assert.Equal(t0, gateway.NextActionAt(Test)); // another share: free
+
+        _time.Advance(TimeSpan.FromSeconds(10));
+        Assert.Equal(SubmitStatus.Accepted, (await gateway.SubmitAsync(Intent(id: Test), CancellationToken.None)).Status);
+        Assert.Equal(t0.AddSeconds(60), gateway.NextActionAt(RiskEngineTests.Eric)); // R11: 2 a minute, the first leaves at t0 + 60 s
+
+        _time.Advance(TimeSpan.FromSeconds(50));
+        Assert.Equal(t0.AddSeconds(60), gateway.NextActionAt(RiskEngineTests.Eric));
+        Assert.Equal(SubmitStatus.Accepted, (await gateway.SubmitAsync(Intent(qty: 5), CancellationToken.None)).Status); // and then it passes
+    }
+
+    [Fact]
     public async Task RateAndDuplicateChecks_SeeWhatTheGatewaySent()
     {
         Assert.Equal(SubmitStatus.Accepted, (await Submit()).Status);
