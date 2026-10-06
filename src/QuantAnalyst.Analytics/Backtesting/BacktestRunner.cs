@@ -223,6 +223,7 @@ public static class BacktestRunner
         }
 
         IStrategy strategy = request.Strategy.Factory(data);
+        using IDisposable? owned = strategy as IDisposable; // plan 27: risk-parity owns a native engine
         var window = new BarWindow(data);
         var bars = new BacktestBar[n];
         var fills = new BacktestFill[n];
@@ -528,6 +529,7 @@ public static class BacktestRunner
         {
             MarketPanel truncated = data.Truncate(t + 1);
             IStrategy fresh = request.Strategy.Factory(truncated);
+            using IDisposable? owned = fresh as IDisposable;
             var window = new BarWindow(truncated);
             for (int u = 0; u <= t; u++)
             {

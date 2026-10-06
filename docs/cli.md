@@ -192,7 +192,11 @@ Plan, fill model and formulas: `docs/plans/05-phase5-backtesting.md`. Every run 
 **Strategies:**
 - `buy-and-hold [entry=5]`: equal weight, bought during the first `entry` bars, then held.
 - `ma-cross fast=… slow=…`: long an instrument while its fast SMA is above the slow one; a fixed 1/N slice each.
+- `inverse-vol [lookback=63] [rebalance=21]` (plan 27): always invested; weight ∝ 1 / the volatility of the last `lookback` daily returns, recomputed every `rebalance` bars and stated every bar (the no-trade band keeps drift from trading). A share without `lookback` returns gets 0.
+- `risk-parity [lookback=126] [rebalance=21]` (plan 27): always invested; equal risk contribution from the covariance of the last `lookback` daily returns (Ledoit-Wolf), solved by the native engine (`qe_optimize`, risk parity), so two shares that move together share one share's risk. A share without a close on each of those days gets 0; without convergence the weights fall back to inverse volatility.
 - `random-targets seed=… [rebalance=21] [p=0.5]`: random long-only weights. This is the null model for deflation tests.
+
+In Paper and Confirm a strategy is replayed over the whole history and its last bar's targets are traded. A share the strategy leaves as "hold" (NaN) on that bar gets the last target it set during the replay (plan 27): `buy-and-hold` on a year of history therefore buys a new book into equal weights once, instead of never buying.
 
 **Orders and costs:**
 - `--order limit|moo|moc` (default `limit`).

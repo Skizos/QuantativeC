@@ -162,13 +162,15 @@ public sealed record StrategyParameter(string Key, string? Default, string Descr
 /// <summary>The built-in strategies by name, with parameter parsing and validation. Defaults are written into the spec, so the ledger shows every effective value.</summary>
 public static class StrategyCatalog
 {
-    public static IReadOnlyList<string> Names { get; } = ["buy-and-hold", "ma-cross", "random-targets"];
+    public static IReadOnlyList<string> Names { get; } = ["buy-and-hold", "ma-cross", "inverse-vol", "risk-parity", "random-targets"];
 
     /// <summary>A one-line description of a strategy, for help and the Windows app.</summary>
     public static string Summary(string name) => name switch
     {
         "buy-and-hold" => "Equal weight in every instrument, bought during the first bars and then held.",
         "ma-cross" => "Holds an instrument while its fast moving average is above its slow one; a fixed equal slice each.",
+        "inverse-vol" => "Always invested; each share weighted by 1 / its recent volatility, so calm shares get more. Rebalanced monthly.",
+        "risk-parity" => "Always invested; each share contributes the same risk, counting how they move together (the native engine). Rebalanced monthly.",
         "random-targets" => "Random long-only weights: the null model, to see what luck alone looks like.",
         _ => throw new ArgumentException($"Unknown strategy '{name}'. Known: {string.Join(", ", Names)}."),
     };
@@ -178,6 +180,8 @@ public static class StrategyCatalog
     {
         "buy-and-hold" => [new("entry", "5", "bars over which the position is bought")],
         "ma-cross" => [new("fast", null, "fast moving average, in bars"), new("slow", null, "slow moving average, in bars (more than fast)")],
+        "inverse-vol" => [new("lookback", "63", "days of returns behind each volatility"), new("rebalance", "21", "bars between new weights")],
+        "risk-parity" => [new("lookback", "126", "days of returns behind the covariance"), new("rebalance", "21", "bars between new weights")],
         "random-targets" =>
         [
             new("seed", null, "random seed (any whole number)"), new("rebalance", "21", "bars between new random weights"),
@@ -256,6 +260,20 @@ public static class StrategyCatalog
                     break;
                 }
 
+            case "inverse-vol":
+            case "risk-parity":
+                {
+                    bool parity = name == "risk-parity";
+                    int lookback = Int("lookback", parity ? 126 : 63), rebalance = Int("rebalance", 21);
+                    if (lookback is < 20 or > 1_000 || rebalance is < 1 or > 252)
+                    {
+                        throw new ArgumentException($"{name}: need 20 <= lookback <= 1000 and 1 <= rebalance <= 252, got lookback={lookback}, rebalance={rebalance}.");
+                    }
+
+                    factory = parity ? _ => new RiskParity(lookback, rebalance) : _ => new InverseVolatility(lookback, rebalance);
+                    break;
+                }
+
             case "random-targets":
                 {
                     ulong seed = UInt64("seed");
@@ -287,9 +305,24 @@ public static class StrategyCatalog
 /// Paper and live use of a strategy (Phase 6): the decision at the close of the panel's last bar, after replaying every
 /// earlier bar in order (stateful strategies such as <see cref="MovingAverageCross"/> need the whole history). The
 /// window is the same look-ahead-safe <see cref="BarWindow"/> the backtest uses.
+/// <para>
+/// An instrument the strategy leaves as "hold" (NaN) on the last bar gets the last target it set during the replay (plan
+/// 27 review): in a backtest "hold" keeps the position that target built, but a Paper or live book did not live through
+/// the replay. Without this, <see cref="BuyAndHold"/> on a year of history (targets only in its first bars) would never
+/// buy into a new book. An instrument never given a target stays NaN.
+/// </para>
 /// </summary>
 public static class StrategyReplay
 {
+    /// <summary>Creates the strategy for <paramref name="data"/>, decides at its last bar, and disposes the strategy if it owns anything (plan 27).</summary>
+    public static double[] DecideAtLastBar(MarketPanel data, StrategyFactory factory)
+    {
+        ArgumentNullException.ThrowIfNull(factory);
+        IStrategy strategy = factory(data);
+        using IDisposable? owned = strategy as IDisposable;
+        return DecideAtLastBar(data, strategy);
+    }
+
     public static double[] DecideAtLastBar(MarketPanel data, IStrategy strategy)
     {
         ArgumentNullException.ThrowIfNull(data);
@@ -301,12 +334,23 @@ public static class StrategyReplay
 
         var window = new BarWindow(data);
         var targets = new double[data.InstrumentCount];
+        var lastSet = new double[data.InstrumentCount];
+        Array.Fill(lastSet, double.NaN);
         for (int t = 0; t < data.Periods; t++)
         {
             window.MoveTo(t);
             Array.Fill(targets, double.NaN);
             strategy.Decide(window, targets);
+            for (int i = 0; i < targets.Length; i++)
+            {
+                if (!double.IsNaN(targets[i]))
+                {
+                    lastSet[i] = targets[i];
+                }
+            }
         }
+
+        targets = lastSet;
 
         double sum = 0;
         foreach (double w in targets)

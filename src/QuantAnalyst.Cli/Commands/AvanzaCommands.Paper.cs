@@ -375,7 +375,7 @@ internal static partial class AvanzaCommands
                                 $"the history ends {last:yyyy-MM-dd}, not on the last trading day {yesterday:yyyy-MM-dd}; run 'qa history import' for {names} first. No orders today.");
                         }
 
-                        double[] decided = StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
+                        double[] decided = StrategyReplay.DecideAtLastBar(panel, definition.Factory);
                         for (int k = 0; k < inPanel.Length; k++)
                         {
                             targets[inPanel[k]] = decided[k];

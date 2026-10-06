@@ -416,7 +416,7 @@ internal static partial class AvanzaCommands
                 $"the history ends {panel.Dates[^1]:yyyy-MM-dd}, not on the last trading day {yesterday:yyyy-MM-dd}; run 'qa history import' for {string.Join(", ", tickers)} first. No orders today.");
         }
 
-        return StrategyReplay.DecideAtLastBar(panel, definition.Factory(panel));
+        return StrategyReplay.DecideAtLastBar(panel, definition.Factory);
     }
 
     private static DateTimeOffset StopAt(double? seconds, PaperSetup setup, DateTimeOffset start, string command) =>

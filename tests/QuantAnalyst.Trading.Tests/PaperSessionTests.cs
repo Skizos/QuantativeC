@@ -273,7 +273,11 @@ public sealed class StrategyReplayTests
     {
         MarketPanel panel = SyntheticMarket.Generate(new SyntheticMarketOptions { Instruments = 2, Periods = 30, Seed = 7 });
         Assert.Equal([0.5, 0.5], StrategyReplay.DecideAtLastBar(panel.Truncate(3), new BuyAndHold(5)));
-        Assert.All(StrategyReplay.DecideAtLastBar(panel, new BuyAndHold(5)), w => Assert.True(double.IsNaN(w)));
+
+        // Plan 27 review: after its entry bars buy-and-hold says "hold" (NaN), which a new Paper book can't follow (it
+        // holds nothing): the replay gives it the last target the strategy set, so the book buys in once.
+        Assert.Equal([0.5, 0.5], StrategyReplay.DecideAtLastBar(panel, new BuyAndHold(5)));
+        Assert.All(StrategyReplay.DecideAtLastBar(panel, new Never()), w => Assert.True(double.IsNaN(w))); // never set: still "hold"
 
         // A stateful strategy must see every bar in order; replaying makes that true.
         double[] ma = StrategyReplay.DecideAtLastBar(panel, new MovingAverageCross(3, 10));
@@ -286,6 +290,13 @@ public sealed class StrategyReplayTests
         MarketPanel panel = SyntheticMarket.Generate(new SyntheticMarketOptions { Instruments = 2, Periods = 5, Seed = 7 });
         Assert.Throws<StrategyException>(() => StrategyReplay.DecideAtLastBar(panel, new Fixed(0.7, 0.7)));
         Assert.Throws<StrategyException>(() => StrategyReplay.DecideAtLastBar(panel, new Fixed(-0.1, 0.1)));
+    }
+
+    private sealed class Never : IStrategy
+    {
+        public void Decide(BarWindow window, Span<double> targets)
+        {
+        }
     }
 
     private sealed class Fixed(double a, double b) : IStrategy

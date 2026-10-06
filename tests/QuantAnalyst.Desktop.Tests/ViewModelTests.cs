@@ -227,7 +227,7 @@ public sealed class ViewModelTests : IDisposable
         StrategyViewModel s = shell.Strategy;
         await s.RefreshAsync();
         Assert.StartsWith("none", s.Saved, StringComparison.Ordinal);
-        Assert.Equal(["buy-and-hold", "ma-cross", "random-targets"], s.Options.Select(o => o.Name));
+        Assert.Equal(["buy-and-hold", "ma-cross", "inverse-vol", "risk-parity", "random-targets"], s.Options.Select(o => o.Name)); // plan 27; the null model last
         Assert.Equal("ma-cross", s.Selected.Name);
         Assert.Equal(["fast", "slow"], s.Selected.Fields.Select(f => f.Key));
         Assert.All(s.Selected.Fields, f => Assert.Equal("required", f.Hint));

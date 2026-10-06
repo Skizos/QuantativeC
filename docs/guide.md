@@ -151,6 +151,11 @@ or Auto, or promote the mode: those are your commands.
    ```
    - The output gives return, Sharpe and the **Deflated Sharpe**. The Deflated Sharpe discounts for how many variants you tried, so trying fewer is better.
    - To compare several parameter sets at once, use `qa backtest sweep`. It also reports the probability that the best one is overfitted (PBO).
+   - Strategies: `buy-and-hold`, `ma-cross`, and (plan 27) `inverse-vol` and `risk-parity`, which stay invested and weigh
+     each share by its risk (calm shares get more; shares that move together share one share's risk). **Choose two or
+     three to compare before you start**, backtest those, and keep one only if it beats `buy-and-hold` on the same list
+     after costs: every run is in the trial ledger, and the more you try, the less the best result means (the Deflated
+     Sharpe and the PBO say how much less).
    - The last year (the holdout, from 2025-10-01) stays locked, so you can test on it once at the end.
 5. **Save the strategy Paper will trade:**
    ```powershell
