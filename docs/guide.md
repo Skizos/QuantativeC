@@ -247,13 +247,26 @@ A day is **clean** when it ran to the close with:
 
 **Events** are the rules doing their job and do not spoil a day. Examples: a risk check rejecting an order, your own kill.
 
-**Unattended mornings (optional):** BankID needs you at every login.
-1. To run without you, store TOTP credentials once with `.\qa secrets set` (see `docs/setup.md` §5).
-2. Then schedule the session with Windows Task Scheduler, e.g. at 08:55 on weekdays:
-   ```powershell
-   schtasks /Create /TN "QuantAnalyst Paper" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 08:55 /TR "pwsh -NoProfile -File C:\dev\QuantativeC\qa.ps1 paper run --login totp"
-   ```
-On an exchange holiday the command simply says there is no session today.
+**The morning start (plan 26).** Paper trades only on days a session runs, and a missed morning is a missed Confirm
+gate day. Let Windows remind you (or start it for you):
+```powershell
+.\qa schedule            # shows the tasks; nothing is registered
+.\qa schedule --install  # registers them with Task Scheduler (weekdays; your PC on, you logged in)
+```
+- **The morning reminder** (08:50): on a trading day without a running session, a notification "Paper has not
+  started today: start it before 09:10". Weekends, holidays and a running session are quiet; a kill switch still on is a
+  warning instead.
+- **The evening import** (18:05): `qa intraday import`, as in the intraday section below (the same task name, so an
+  older one is replaced).
+- **Unattended (optional, your choice):** BankID needs you at every login. To run without you, store your Avanza
+  username, password and TOTP secret once with `.\qa secrets set` (see `docs/setup.md` §5), then
+  `.\qa schedule --install --unattended`: the session starts by itself at 08:50 (`--start` to change it) with the TOTP
+  login, its window shows and its output also goes to `data\paper-run.log`; the reminder moves to 09:03 and fires only
+  if it did not start. The trade-off: anyone who can use your Windows account could then log in to Avanza as you
+  (read-only in this program, but still your account). A failed start is a critical alert (plan 25); it never retries.
+- A task missed while the PC was off runs when it is on again; a late session still decides at once.
+- `.\qa schedule --remove` takes them away. On an exchange holiday the session says there is no session today (no
+  alert).
 
 ### Alerts and backups (plan 25)
 
@@ -352,8 +365,9 @@ says whether an intraday strategy is worth trying on paper. What you do:
 3. **Every trading day:** nothing new. `.\qa paper run` stores the spreads it saw and, after 17:30, the day's bars.
    On a day without a session, run `.\qa intraday import` in the evening (or schedule it, e.g. 18:05 on weekdays).
    **A missed day can't be fetched later:** Avanza gives 1- and 5-minute bars for today only (your probe,
-   2026-09-29). Run the import the same evening, between 17:30 and midnight; a scheduled task is safest. Paste this
-   once into PowerShell 7 (it runs weekdays at 18:05 while you are logged in, or as soon as the PC is on again, and
+   2026-09-29). Run the import the same evening, between 17:30 and midnight; a scheduled task is safest.
+   `.\qa schedule --install` registers it (with the morning reminder, plan 26); by hand it is this, pasted once into
+   PowerShell 7 (it runs weekdays at 18:05 while you are logged in, or as soon as the PC is on again, and
    appends to `data\intraday-import.log`; a second import the same evening changes nothing):
 
    ```powershell

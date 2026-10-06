@@ -37,6 +37,12 @@ Volatility guards and trading halts are not modelled in v1. When a halt occurs, 
 
 - Holidays: closed on Swedish public holidays plus exchange-specific days such as Christmas Eve, Midsummer Eve and New Year's Eve. A search extract says 2026 has about 10 weekday closures and several half days (UNVERIFIED). Christmas Eve 2026 (Thu 24 Dec) is a closed day per the same extract.
 - **I did not transcribe a date list**, because no primary source could be read. Plan: Phase 4 adds `config/market-calendar.XSTO.2026.json` and `…2027.json`. You fill them from Nasdaq's official calendar (<https://www.nasdaq.com/european-market-activity/trading-hours>) or a vendor, and a test checks every weekday of the year is classified as full, half or closed.
+- **Cross-check 2026-10-06 (not a verification):** nasdaq.com, avanza.se and the calendar sites are blocked from the
+  development container, so only web-search summaries could be read. They agree with both drafts: 2026 closed
+  01-01, 01-06, 04-03, 04-06, 05-01, 05-14, 06-19, 12-24, 12-25, 12-31 and half days (13:00) 01-05, 04-02, 04-30,
+  05-13, 10-30; 2027 closed 03-26, 03-29, 05-06, 06-25 among the others and half days 03-25, 04-30, 05-05, 11-05. The
+  summaries cite markethoursnow.com and bellhour.com, not Nasdaq. `verified_on` stays empty: the owner checks the
+  dates against Nasdaq's page (it gates Confirm).
 
 ## 3. Tick sizes (MiFID II RTS 11)
 
@@ -97,6 +103,10 @@ Rörligt courtage (variable rate) / lägsta courtage (minimum) per order:
   for it (as `FNSE` is First North's), which the program has not seen yet; until then such shares are refused.
 - **Not on the screenshot:** the Start footnote (the 50,000 SEK limit and the 500 free trades a year), and whether
   First North trades count towards those 500 (the program assumes they don't and charges them First North's courtage).
+  A web search on 2026-10-06 (avanza.se blocked from the container; summaries of third-party pages such as
+  sparacash.se and enpassivinkomst.se) agrees: Start is free on the Stockholm exchange until the account has had
+  50,000 SEK or more than 500 free trades in 12 months, then it moves to Mini for good. Not a verification: the
+  footnote on Avanza's own price list decides.
 
 - **Currency exchange fee** for non-SEK instruments: **0.25 %** per a search extract (UNVERIFIED).
 - **Switching class:** free and immediate, per Avanza help pages (extract).

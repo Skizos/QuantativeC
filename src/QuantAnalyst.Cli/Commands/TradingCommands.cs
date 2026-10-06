@@ -35,6 +35,10 @@ internal static partial class TradingCommands
         yield return PromoteCommand(services);
         yield return AlertCommands.Create(services);
         yield return BackupCommands.Create(services);
+        foreach (Command morning in MorningCommands.Create(services))
+        {
+            yield return morning;
+        }
     }
 
     public static Option<string?> ConfigDirOption() =>

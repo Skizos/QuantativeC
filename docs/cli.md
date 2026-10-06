@@ -321,6 +321,13 @@ Exit codes of `qa paper run`: 0 ok, 1 error, 3 halted (the kill switch fired, or
 `qa status` shows the last day's warning and critical alerts (a critical one is a FAIL with a next step) and the last
 backup (none set up, none made, incomplete, or over 3 days old are warnings).
 
+## The morning start (plan 26)
+
+| Command | What it does |
+|---|---|
+| `qa morning` | The morning reminder (Task Scheduler runs it): on a trading day (Stockholm, or a US/Canadian market on the list) whose session window is still open and no session running, an info alert, a Windows notification, "Paper has not started today: start it before 09:10". Quiet on a weekend, a holiday, after the close and while a session runs; with the kill switch still on, a warning instead. Offline. |
+| `qa schedule [--install \| --remove] [--unattended] [--reminder HH:mm] [--import HH:mm] [--start HH:mm]` | The Windows scheduled tasks, weekdays, started when available (a run missed while the PC was off comes when it is on again), as you: **QuantAnalyst morning reminder** (`qa morning`, 08:50), **QuantAnalyst intraday import** (`qa intraday import`, 18:05), and only with `--unattended` **QuantAnalyst Paper** (`qa paper run --login totp`, 08:50; the reminder then moves to 09:03 and must come after it). `--unattended --install` needs the Avanza login and TOTP secret in Windows Credential Manager (`qa secrets set`) and refuses without them. Without `--install` it shows the tasks and the Windows PowerShell it would run; `--install` runs it (Register-ScheduledTask, replacing tasks of the same name); `--remove` unregisters them. Output goes to `data\morning.log`, `data\intraday-import.log` and `data\paper-run.log`. |
+
 ## Promotion (your command, ADR 0003 §3)
 
 `qa promote` raises (or lowers) the highest mode the program may run in. It is **yours**: Claude's hook and settings block it, and block any write to `promotion/state.json`.
