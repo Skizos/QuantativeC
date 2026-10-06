@@ -81,7 +81,18 @@ solution run (its US share's line read "(store busy)": the Instruments page coul
 store). A first guess, a race with the Status page's first refresh, was wrong: the shell starts no refresh when it is
 built, and each test has its own store, so that change was taken back. The test failed once in 9 full runs after it
 and never alone; a diagnostic build that put the exception into the text ran 6 full runs without a failure, so the
-cause is not known yet. Next time it fails, the run's output is what to keep.
+cause is not known yet.
+
+Second look (2026-10-06), still no failure to learn from:
+- It has never failed on CI (Linux and Windows).
+- 600 parallel cycles of the test's pattern passed, writing a store, closing it, then opening it on another thread
+  and reading. So did 300 parallel runs of the test itself.
+- With exception logging on, 6 runs of the Desktop tests and 6 full solution runs passed too.
+- DuckDB.NET shares one database per file within a process and reference-counts it, and nothing else in the test
+  touches its store. A lock race inside the test is therefore unlikely.
+
+The test now asserts `InstrumentsViewModel.StoreError` first, which holds why the last refresh could not read the
+store. The next failure prints the exception instead of "(store busy)".
 
 ## Not in this plan
 

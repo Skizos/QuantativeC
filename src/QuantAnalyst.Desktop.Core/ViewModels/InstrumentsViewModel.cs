@@ -225,6 +225,12 @@ public sealed class InstrumentsViewModel : PageViewModel
         private set => Set(ref _chartNote, value);
     }
 
+    /// <summary>
+    /// Gets why the last refresh could not read the price store (its rows then say "(store busy)"), or null. Kept for
+    /// tests: a test that finds "(store busy)" where it expected history says why.
+    /// </summary>
+    internal string? StoreError { get; private set; }
+
     public override async Task RefreshAsync()
     {
         try
@@ -692,6 +698,7 @@ public sealed class InstrumentsViewModel : PageViewModel
     private Dictionary<string, string> HistoryOf(Universe universe)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        StoreError = null;
         if (!File.Exists(_workspace.Store) || universe.Entries.Count == 0 || !StoreFree)
         {
             string text = !StoreFree ? "(shown when idle)" : "none yet";
@@ -718,6 +725,7 @@ public sealed class InstrumentsViewModel : PageViewModel
         }
         catch (Exception ex) when (ex is HistoryStoreException or IOException || Cli.Commands.DataCommands.IsStoreFailure(ex))
         {
+            StoreError = $"{ex.GetType().Name}: {ex.Message}";
             foreach (UniverseEntry e in universe.Entries)
             {
                 result[e.OrderbookId.Value] = "(store busy)";

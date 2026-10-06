@@ -63,6 +63,7 @@ public sealed class ForeignSharesAppTests : IDisposable
     {
         ShellViewModel shell = Shell();
         await shell.Instruments.RefreshAsync();
+        Assert.Null(shell.Instruments.StoreError); // fails now and then in a full solution run (plan 23): this says why
         Assert.Equal("none yet", shell.Instruments.Rows.Single(r => r.Ticker == "ERIC B").History);
         Assert.Equal("USD · US (NYSE, Nasdaq), paper only · none yet", shell.Instruments.Rows.Single(r => r.Ticker == "AAPL").History);
     }
