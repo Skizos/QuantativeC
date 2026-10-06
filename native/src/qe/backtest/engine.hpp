@@ -23,9 +23,9 @@ enum class OrderType : std::int32_t { Limit = 0, MarketOnOpen = 1, MarketOnClose
 //   Daily   : the bar's open is the opening auction: a limit marketable there fills at the open;
 //             otherwise it fills at its limit on a trade-through during continuous trading.
 //   Intraday: a bar's open is just its first trade, not an auction: a limit fills only at its own
-//             limit, and only when the bar trades through it (buy: low < limit; sell: high > limit).
-//             Prices sit on the tick grid, so "through" is at least one tick; a touch is no fill,
-//             and a better open is never given.
+//             limit, and only when the bar trades through it (buy: low < limit; sell: high >
+//             limit). Prices sit on the tick grid, so "through" is at least one tick; a touch is no
+//             fill, and a better open is never given.
 enum class FillMode : std::int32_t { Daily = 0, Intraday = 1 };
 
 struct Config {
@@ -41,7 +41,8 @@ struct Config {
 struct Instrument {
     std::int64_t lot_size{1};
     bool foreign_currency{false};
-    // ABI 1.3 (ADR 0005): an instrument's own courtage, max(min, rate * notional), instead of the config's.
+    // ABI 1.3 (ADR 0005): an instrument's own courtage, max(min, rate * notional), instead of the
+    // config's.
     bool own_courtage{false};
     double courtage_min{0};
     double courtage_rate{0};
@@ -90,8 +91,9 @@ class Engine {
   public:
     Engine(const Config& config, std::span<const Instrument> instruments);
 
-    /// Gives one instrument its own courtage (a foreign share pays its market's). Only before the first step; throws
-    /// qe::InvalidArgument otherwise, or for an index out of range or a negative / non-finite / >= 10 % value.
+    /// Gives one instrument its own courtage (a foreign share pays its market's). Only before the
+    /// first step; throws qe::InvalidArgument otherwise, or for an index out of range or a negative
+    /// / non-finite / >= 10 % value.
     void set_courtage(std::size_t instrument, double courtage_min, double courtage_rate);
 
     /// Sets how limit orders fill (see FillMode). Only before the first step.
@@ -117,7 +119,8 @@ class Engine {
     enum class Phase { Open, Continuous, Close };
 
     [[nodiscard]] double courtage(const Instrument& instrument, double notional) const noexcept;
-    [[nodiscard]] std::int64_t affordable(double price, const Instrument& instrument) const noexcept;
+    [[nodiscard]] std::int64_t affordable(double price,
+                                          const Instrument& instrument) const noexcept;
     bool try_fill(const Order& order, std::int32_t index, const Bar& bar, Phase phase, Fill& fill);
 
     Config config_;

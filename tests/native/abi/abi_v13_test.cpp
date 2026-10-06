@@ -36,7 +36,8 @@ class Abi13 : public ::testing::Test {
     qe_status Step(const std::vector<qe_bt_order>& orders) {
         const std::vector<qe_bt_bar> bars{Bar(100, 102, 98, 101), Bar(50, 51, 49, 50)};
         fills_.assign(orders.size(), qe_bt_fill{});
-        return qe_bt_step(bt_, bars.data(), 2, orders.data(), static_cast<std::int64_t>(orders.size()), fills_.data(),
+        return qe_bt_step(bt_, bars.data(), 2, orders.data(),
+                          static_cast<std::int64_t>(orders.size()), fills_.data(),
                           static_cast<std::int64_t>(fills_.size()), &fill_count_, &state_);
     }
 
@@ -64,9 +65,9 @@ TEST_F(Abi13, AForeignShareWithItsOwnCourtage_PaysIt_TheOthersPayTheConfigs) {
                     {1, QE_BT_BUY, QE_BT_MARKET_ON_OPEN, 0, 100, 0.0}}),
               QE_OK);
     ASSERT_EQ(fill_count_, 3);
-    EXPECT_DOUBLE_EQ(fills_[0].courtage, 0.0);                   // the config's: free
-    EXPECT_DOUBLE_EQ(fills_[1].courtage, 9.40);                  // 500 SEK: the minimum
-    EXPECT_DOUBLE_EQ(fills_[2].courtage, 0.0025 * 100 * 50.0);   // 5 000 SEK: 0.25 % = 12.50
+    EXPECT_DOUBLE_EQ(fills_[0].courtage, 0.0);                 // the config's: free
+    EXPECT_DOUBLE_EQ(fills_[1].courtage, 9.40);                // 500 SEK: the minimum
+    EXPECT_DOUBLE_EQ(fills_[2].courtage, 0.0025 * 100 * 50.0); // 5 000 SEK: 0.25 % = 12.50
     EXPECT_NEAR(state_.courtage, 9.40 + 12.50, 1e-9);
 }
 
@@ -80,7 +81,9 @@ TEST_F(Abi13, TheCashCheckCountsTheInstrumentsOwnCourtage) {
     const std::vector<qe_bt_bar> bars{Bar(50, 51, 49, 50)};
     const std::vector<qe_bt_order> orders{{0, QE_BT_BUY, QE_BT_MARKET_ON_OPEN, 0, 20, 0.0}};
     fills_.assign(1, qe_bt_fill{});
-    ASSERT_EQ(qe_bt_step(bt_, bars.data(), 1, orders.data(), 1, fills_.data(), 1, &fill_count_, &state_), QE_OK);
+    ASSERT_EQ(
+        qe_bt_step(bt_, bars.data(), 1, orders.data(), 1, fills_.data(), 1, &fill_count_, &state_),
+        QE_OK);
     ASSERT_EQ(fill_count_, 1);
     EXPECT_EQ(fills_[0].quantity, 18); // 18 * 50 + 100 = 1 000; 19 would not fit
     EXPECT_GE(state_.cash, 0.0);

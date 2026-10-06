@@ -172,7 +172,7 @@ public sealed class CliDataTests : IDisposable
         int requests = _server.Requests.Count;
         (code, output, error) = Qa(false, "history", "dividends", "ERIC-B", "--store", Store);
         Assert.True(code == 0, error);
-        string[] rows = output.Split('\n');
+        string[] rows = output.ReplaceLineEndings("\n").Split('\n'); // Windows writes \r\n
         Assert.Equal(["2026-09-25", "1.45", "SEK", "2026-09-30", "70.44", "69", "2.06%", "-2.04%", "price-only"],
             rows.Single(l => l.StartsWith("2026-09-25", StringComparison.Ordinal)).Split(' ', StringSplitOptions.RemoveEmptyEntries));
         Assert.EndsWith("no bars around it", rows.Single(l => l.StartsWith("2025-03-27", StringComparison.Ordinal)).TrimEnd(), StringComparison.Ordinal);

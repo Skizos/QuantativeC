@@ -57,7 +57,8 @@ Engine::Engine(const Config& config, std::span<const Instrument> instruments)
 void Engine::set_courtage(std::size_t instrument, double courtage_min, double courtage_rate) {
     require(!stepped_, "set_courtage must come before the first step");
     require(instrument < instruments_.size(), "instrument out of range");
-    require(std::isfinite(courtage_min) && courtage_min >= 0.0, "courtage_min must be finite and >= 0");
+    require(std::isfinite(courtage_min) && courtage_min >= 0.0,
+            "courtage_min must be finite and >= 0");
     require(std::isfinite(courtage_rate) && courtage_rate >= 0.0 && courtage_rate < 0.1,
             "courtage_rate must be in [0, 0.1)");
     Instrument& i = instruments_[instrument];
@@ -68,7 +69,8 @@ void Engine::set_courtage(std::size_t instrument, double courtage_min, double co
 
 void Engine::set_fill_mode(FillMode mode) {
     require(!stepped_, "set_fill_mode must come before the first step");
-    require(mode == FillMode::Daily || mode == FillMode::Intraday, "fill mode must be DAILY or INTRADAY");
+    require(mode == FillMode::Daily || mode == FillMode::Intraday,
+            "fill mode must be DAILY or INTRADAY");
     fill_mode_ = mode;
 }
 
@@ -161,7 +163,8 @@ bool Engine::try_fill(const Order& order, std::int32_t index, const Bar& bar, Ph
             (order.type == OrderType::MarketOnOpen) ? phase == Phase::Open : phase == Phase::Close;
         if (mine) {
             reference = order.type == OrderType::MarketOnOpen ? bar.open : bar.close;
-            const double half_spread = instrument.own_spread ? instrument.half_spread_bps : config_.half_spread_bps;
+            const double half_spread =
+                instrument.own_spread ? instrument.half_spread_bps : config_.half_spread_bps;
             const double bps = (half_spread + config_.slippage_bps) / 10000.0;
             price = reference * (buy ? 1.0 + bps : 1.0 - bps);
         }

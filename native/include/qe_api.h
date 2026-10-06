@@ -40,7 +40,9 @@ extern "C" {
 /* ---- Versioning --------------------------------------------------------------------------- */
 
 #define QE_ABI_MAJOR 1
-#define QE_ABI_MINOR 4 /* 1.1: pricing, risk and portfolio batch APIs; 1.2: backtest engine; 1.3: per-instrument courtage; 1.4: intraday fills, per-instrument spread */
+/* 1.1: pricing, risk and portfolio batch APIs; 1.2: backtest engine; 1.3: per-instrument courtage;
+ * 1.4: intraday fills, per-instrument spread */
+#define QE_ABI_MINOR 4
 
 /* ---- Status codes ------------------------------------------------------------------------- */
 
@@ -478,9 +480,10 @@ QE_API qe_status QE_CALL qe_bt_set_courtage(qe_backtest* backtest, int64_t instr
 
 /* ---- ABI 1.4: intraday fills and per-instrument spread (plan 17) ----------------------------- */
 
-/* qe_bt_set_fill_mode mode */
-#define QE_BT_FILL_DAILY 0    /* the bar's open is the opening auction (the default) */
-#define QE_BT_FILL_INTRADAY 1 /* a limit fills only at its limit, on a trade-through; never at a better open */
+/* qe_bt_set_fill_mode mode. DAILY: the bar's open is the opening auction (the default).
+ * INTRADAY: a limit fills only at its limit, on a trade-through; never at a better open. */
+#define QE_BT_FILL_DAILY 0
+#define QE_BT_FILL_INTRADAY 1
 
 /*
  * How limit orders fill. QE_BT_FILL_INTRADAY is for bars of minutes, whose open is not an auction:

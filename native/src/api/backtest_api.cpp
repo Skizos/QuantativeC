@@ -106,7 +106,8 @@ QE_API qe_status QE_CALL qe_bt_set_fill_mode(qe_backtest* backtest, std::int32_t
         require_backtest(backtest);
         require(mode == QE_BT_FILL_DAILY || mode == QE_BT_FILL_INTRADAY,
                 "mode must be QE_BT_FILL_DAILY or QE_BT_FILL_INTRADAY");
-        backtest->engine.set_fill_mode(static_cast<qe::backtest::FillMode>(mode)); // before the first step
+        backtest->engine.set_fill_mode(
+            static_cast<qe::backtest::FillMode>(mode)); // before the first step
         return QE_OK;
     });
 }

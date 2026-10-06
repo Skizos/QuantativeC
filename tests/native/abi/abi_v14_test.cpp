@@ -1,4 +1,5 @@
-// ABI 1.4 (intraday fills and per-instrument spread, plan 17) through the shared library only (qe_api.h).
+// ABI 1.4 (intraday fills and per-instrument spread, plan 17) through the shared library only
+// (qe_api.h).
 #include "qe_api.h"
 
 #include <cmath>
@@ -61,15 +62,18 @@ TEST(Abi14Version, MinorIsFour) {
 
 TEST_F(Abi14, Daily_ALimitMarketableAtTheOpen_FillsAtTheOpen) {
     // Unchanged behaviour: the open is the opening auction.
-    ASSERT_EQ(Step({Bar(99.0, 101.0, 98.0, 100.0), Bar(50, 50, 50, 50)}, {Limit(0, QE_BT_BUY, 10, 100.0)}), QE_OK);
+    ASSERT_EQ(Step({Bar(99.0, 101.0, 98.0, 100.0), Bar(50, 50, 50, 50)},
+                   {Limit(0, QE_BT_BUY, 10, 100.0)}),
+              QE_OK);
     ASSERT_EQ(fill_count_, 1);
     EXPECT_DOUBLE_EQ(fills_[0].price, 99.0);
 }
 
 TEST_F(Abi14, Intraday_ALimitFillsOnlyAtItsLimit_OnATradeThrough_NeverAtABetterOpen) {
     ASSERT_EQ(qe_bt_set_fill_mode(bt_, QE_BT_FILL_INTRADAY), QE_OK);
-    // Buy 100.00: the bar opens at 99.00 (below the limit) and trades down to 98.00: filled at 100.00, not 99.00.
-    // Sell 50.00 on the other share: its bar trades up to 50.50: filled at 50.00.
+    // Buy 100.00: the bar opens at 99.00 (below the limit) and trades down to 98.00: filled at
+    // 100.00, not 99.00. Sell 50.00 on the other share: its bar trades up to 50.50: filled
+    // at 50.00.
     ASSERT_EQ(Step({Bar(99.0, 101.0, 98.0, 100.0), Bar(49.8, 50.5, 49.7, 50.2)},
                    {Limit(0, QE_BT_BUY, 10, 100.0), Limit(1, QE_BT_SELL, 5, 50.0)}),
               QE_OK);
@@ -80,17 +84,25 @@ TEST_F(Abi14, Intraday_ALimitFillsOnlyAtItsLimit_OnATradeThrough_NeverAtABetterO
 
 TEST_F(Abi14, Intraday_ATouchIsNoFill) {
     ASSERT_EQ(qe_bt_set_fill_mode(bt_, QE_BT_FILL_INTRADAY), QE_OK);
-    ASSERT_EQ(Step({Bar(100.5, 101.0, 100.0, 100.5), Bar(50, 50, 50, 50)}, {Limit(0, QE_BT_BUY, 10, 100.0)}), QE_OK);
+    ASSERT_EQ(Step({Bar(100.5, 101.0, 100.0, 100.5), Bar(50, 50, 50, 50)},
+                   {Limit(0, QE_BT_BUY, 10, 100.0)}),
+              QE_OK);
     EXPECT_EQ(fill_count_, 0); // the low only touched 100.00
 
-    ASSERT_EQ(Step({Bar(100.5, 101.0, 99.9, 100.5), Bar(50, 50, 50, 50)}, {Limit(0, QE_BT_BUY, 10, 100.0)}), QE_OK);
+    ASSERT_EQ(Step({Bar(100.5, 101.0, 99.9, 100.5), Bar(50, 50, 50, 50)},
+                   {Limit(0, QE_BT_BUY, 10, 100.0)}),
+              QE_OK);
     ASSERT_EQ(fill_count_, 1); // one tick through
     EXPECT_DOUBLE_EQ(fills_[0].price, 100.0);
 
     // Sell side: a touch at the high is no fill, a print above is.
-    ASSERT_EQ(Step({Bar(100.0, 100.5, 99.5, 100.0), Bar(50, 50, 50, 50)}, {Limit(0, QE_BT_SELL, 10, 100.5)}), QE_OK);
+    ASSERT_EQ(Step({Bar(100.0, 100.5, 99.5, 100.0), Bar(50, 50, 50, 50)},
+                   {Limit(0, QE_BT_SELL, 10, 100.5)}),
+              QE_OK);
     EXPECT_EQ(fill_count_, 0);
-    ASSERT_EQ(Step({Bar(100.0, 100.6, 99.5, 100.0), Bar(50, 50, 50, 50)}, {Limit(0, QE_BT_SELL, 10, 100.5)}), QE_OK);
+    ASSERT_EQ(Step({Bar(100.0, 100.6, 99.5, 100.0), Bar(50, 50, 50, 50)},
+                   {Limit(0, QE_BT_SELL, 10, 100.5)}),
+              QE_OK);
     ASSERT_EQ(fill_count_, 1);
     EXPECT_DOUBLE_EQ(fills_[0].price, 100.5);
 }
@@ -107,11 +119,12 @@ TEST_F(Abi14, Intraday_MarketOrdersStillFillAtTheOpenAndClose_WithSpreadAndSlipp
 TEST_F(Abi14, AnInstrumentsOwnHalfSpread_ReplacesTheConfigs) {
     ASSERT_EQ(qe_bt_set_half_spread(bt_, 1, 20.0), QE_OK);
     ASSERT_EQ(Step({Bar(100.0, 101.0, 99.0, 100.0), Bar(50, 51, 49, 50)},
-                   {{0, QE_BT_BUY, QE_BT_MARKET_ON_OPEN, 0, 10, 0.0}, {1, QE_BT_BUY, QE_BT_MARKET_ON_OPEN, 0, 10, 0.0}}),
+                   {{0, QE_BT_BUY, QE_BT_MARKET_ON_OPEN, 0, 10, 0.0},
+                    {1, QE_BT_BUY, QE_BT_MARKET_ON_OPEN, 0, 10, 0.0}}),
               QE_OK);
     ASSERT_EQ(fill_count_, 2);
-    EXPECT_NEAR(fills_[0].price, 100.0 * (1 + 7e-4), 1e-9);  // the config's 5 + 2 bps
-    EXPECT_NEAR(fills_[1].price, 50.0 * (1 + 22e-4), 1e-9);  // its own 20 + 2 bps
+    EXPECT_NEAR(fills_[0].price, 100.0 * (1 + 7e-4), 1e-9); // the config's 5 + 2 bps
+    EXPECT_NEAR(fills_[1].price, 50.0 * (1 + 22e-4), 1e-9); // its own 20 + 2 bps
     EXPECT_NEAR(fills_[1].spread_slippage_cost, 10 * 50.0 * 22e-4, 1e-9);
 }
 
@@ -128,9 +141,10 @@ TEST_F(Abi14, BadInputIsRefused_AndOnlyBeforeTheFirstStep) {
     EXPECT_EQ(qe_bt_set_half_spread(bt_, 0, nan), QE_E_INVALID_ARG);
 
     // Nothing changed: still daily fills (at the better open) and the config's spread.
-    ASSERT_EQ(Step({Bar(99.0, 101.0, 98.0, 100.0), Bar(50, 51, 49, 50)},
-                   {Limit(0, QE_BT_BUY, 10, 100.0), {1, QE_BT_BUY, QE_BT_MARKET_ON_OPEN, 0, 10, 0.0}}),
-              QE_OK);
+    ASSERT_EQ(
+        Step({Bar(99.0, 101.0, 98.0, 100.0), Bar(50, 51, 49, 50)},
+             {Limit(0, QE_BT_BUY, 10, 100.0), {1, QE_BT_BUY, QE_BT_MARKET_ON_OPEN, 0, 10, 0.0}}),
+        QE_OK);
     ASSERT_EQ(fill_count_, 2);
     EXPECT_DOUBLE_EQ(fills_[0].price, 99.0);
     EXPECT_NEAR(fills_[1].price, 50.0 * (1 + 7e-4), 1e-9);
