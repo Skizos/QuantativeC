@@ -41,6 +41,16 @@ jobs:
       - name: dotnet format
         run: dotnet format QuantAnalyst.sln --verify-no-changes -v q
 
+  m4l:
+    # The Gross Warp Max for Live device (m4l/gross-warp): DSP, editor and device-file tests in plain Node, no Max.
+    name: Gross Warp (Max for Live)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Node tests
+        working-directory: m4l/gross-warp
+        run: node --version && node --test test/*.test.js
+
   build-test:
     name: build + test (${{ matrix.os }})
     strategy:

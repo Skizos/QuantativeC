@@ -1,0 +1,13 @@
+{
+  "name": "gross-warp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gross Beat-style time and volume envelopes for Ableton Live (Max for Live audio effect).",
+  "scripts": {
+    "build": "node tools/build.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

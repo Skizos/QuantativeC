@@ -1,0 +1,389 @@
+// Gross Warp: tempo-locked time and volume envelopes (gen~ DSP core).
+//
+// in1, in2    audio L, R
+// in3         bar phase 0..1 from [phasor~ 1n @lock 1] (follows Live's transport)
+// out1, out2  audio L, R
+// out3        pattern phase 0..1, or -1 while the transport is stopped
+// out4        the pattern now playing (0..7)
+//
+// Envelopes arrive in buffer~ gwenv (one channel, written by gw_ui.js):
+//   block b = pattern * 2 + env (env 0 = time, 1 = volume), base = b * 385;
+//   [base] = point count n (2..128), then n points (x, u, curve) at base + 1 + 3 * i.
+//   x: 0..1 across the pattern, sorted; u: 0 at the top of the editor, 1 at the bottom;
+//   curve: -1..1, the bend of the segment that starts at that point.
+// Time:   read offset = u * depth * pattern length (u = 1 plays a whole pattern late).
+// Volume: gain = 1 - u * depth.
+//
+// House rules for this file (gen~ is unforgiving and silent about some of them):
+//   - peek() only as the whole right-hand side of an assignment, on its own line;
+//   - no break and no compound assignment; loops stop through their condition;
+//   - every variable is first set at top level, before any block that sets it;
+//   - History is read into a local at the top and written at the end, nowhere else.
+
+hermite(ym, y0, y1, y2, fr) {
+    c1 = 0.5 * (y1 - ym);
+    c2 = ym - 2.5 * y0 + 2 * y1 - 0.5 * y2;
+    c3 = 0.5 * (y2 - ym) + 1.5 * (y0 - y1);
+    return ((c3 * fr + c2) * fr + c1) * fr + y0;
+}
+
+Buffer gwenv("gwenv");
+Buffer gwpeaks("gwpeaks");
+Data gwring(1048576, 2);
+
+Param pattern(0);
+Param quant(3);
+Param patlen(2);
+Param smoothms(4);
+Param depth(100);
+Param wet(100);
+
+History hWpos(0);
+History hPrevPh(0);
+History hInc(0);
+History hStill(100000);
+History hAct(0);
+History hSegT(0);
+History hSegV(0);
+History hPrevTgt(0);
+History hOldOff(0);
+History hXf(1);
+History hGain(1);
+History hBin(0);
+History hPkIn(0);
+History hPkOut(0);
+
+ringLen = 1048576;
+blockLen = 385;
+
+// ---- state from the previous sample ----
+wpos = hWpos;
+prevPh = hPrevPh;
+incEst = hInc;
+stillN = hStill;
+actPat = hAct;
+segT = hSegT;
+segV = hSegV;
+prevTgt = hPrevTgt;
+oldOff = hOldOff;
+xfNow = hXf;
+gainNow = hGain;
+binNow = hBin;
+pkIn = hPkIn;
+pkOut = hPkOut;
+
+// ---- transport: is the bar phase moving, and by how much per sample ----
+barPh = in3;
+dPh = barPh - prevPh;
+wrapped = 0;
+if (dPh < -0.5) {
+    dPh = dPh + 1;
+    wrapped = 1;
+}
+moving = 0;
+if (dPh > 0.00000001 && dPh < 0.01) {
+    moving = 1;
+}
+if (moving > 0) {
+    if (incEst <= 0 || stillN >= 4096) {
+        incEst = dPh;
+    } else {
+        incEst = incEst + (dPh - incEst) * 0.001;
+    }
+    stillN = 0;
+} else {
+    stillN = min(stillN + 1, 100000);
+}
+playing = 0;
+if (stillN < 4096 && incEst > 0) {
+    playing = 1;
+}
+
+// ---- pattern length and phase ----
+lenSel = clamp(floor(patlen + 0.5), 0, 2);
+lenBars = 1;
+if (lenSel == 0) {
+    lenBars = 0.25;
+}
+if (lenSel == 1) {
+    lenBars = 0.5;
+}
+perBar = 1 / lenBars;
+patPh = fract(barPh * perBar);
+barSamps = 0;
+if (incEst > 0) {
+    barSamps = 1 / incEst;
+}
+patSamps = barSamps * lenBars;
+
+// ---- pattern switching, quantized to the chosen grid (a bar wrap is a boundary of every grid) ----
+reqPat = clamp(floor(pattern + 0.5), 0, 7);
+qMode = clamp(floor(quant + 0.5), 0, 3);
+qGrid = perBar;
+if (qMode == 1) {
+    qGrid = 16;
+}
+if (qMode == 2) {
+    qGrid = 4;
+}
+cellNow = floor(barPh * qGrid);
+cellPrev = floor(prevPh * qGrid);
+crossed = 0;
+if (cellNow != cellPrev || wrapped > 0) {
+    crossed = 1;
+}
+if (playing == 0 || qMode == 0) {
+    actPat = reqPat;
+}
+if (playing > 0 && qMode > 0 && crossed > 0) {
+    actPat = reqPat;
+}
+
+// ---- time envelope of the active pattern ----
+baseT = actPat * 2 * blockLen;
+nT = peek(gwenv, baseT, 0);
+nT = floor(nT);
+uT = 0;
+xs = 0;
+xn = 0;
+adv = 0;
+k = 0;
+x0 = 0;
+u0 = 0;
+c0 = 0;
+x1 = 0;
+u1 = 0;
+segW = 0;
+tt = 0;
+expo = 1;
+fv = 0;
+if (nT >= 2 && nT <= 128) {
+    if (segT > nT - 2) {
+        segT = 0;
+    }
+    xs = peek(gwenv, baseT + 1 + segT * 3, 0);
+    if (patPh < xs) {
+        segT = 0;
+    }
+    adv = 1;
+    for (k = 0; adv > 0 && k < 128; k = k + 1) {
+        adv = 0;
+        if (segT < nT - 2) {
+            xn = peek(gwenv, baseT + 4 + segT * 3, 0);
+            if (patPh >= xn) {
+                segT = segT + 1;
+                adv = 1;
+            }
+        }
+    }
+    x0 = peek(gwenv, baseT + 1 + segT * 3, 0);
+    u0 = peek(gwenv, baseT + 2 + segT * 3, 0);
+    c0 = peek(gwenv, baseT + 3 + segT * 3, 0);
+    x1 = peek(gwenv, baseT + 4 + segT * 3, 0);
+    u1 = peek(gwenv, baseT + 5 + segT * 3, 0);
+    segW = x1 - x0;
+    tt = 1;
+    if (segW > 0.0000001) {
+        tt = clamp((patPh - x0) / segW, 0, 1);
+    }
+    expo = 1 + 3 * abs(c0);
+    fv = pow(tt, expo);
+    if (c0 < 0) {
+        fv = 1 - pow(1 - tt, expo);
+    }
+    uT = clamp(u0 + (u1 - u0) * fv, 0, 1);
+}
+
+// ---- volume envelope of the active pattern (same evaluation, its own cache) ----
+baseV = (actPat * 2 + 1) * blockLen;
+nV = peek(gwenv, baseV, 0);
+nV = floor(nV);
+uV = 0;
+xsV = 0;
+xnV = 0;
+advV = 0;
+kV = 0;
+x0V = 0;
+u0V = 0;
+c0V = 0;
+x1V = 0;
+u1V = 0;
+segWV = 0;
+ttV = 0;
+expoV = 1;
+fvV = 0;
+if (nV >= 2 && nV <= 128) {
+    if (segV > nV - 2) {
+        segV = 0;
+    }
+    xsV = peek(gwenv, baseV + 1 + segV * 3, 0);
+    if (patPh < xsV) {
+        segV = 0;
+    }
+    advV = 1;
+    for (kV = 0; advV > 0 && kV < 128; kV = kV + 1) {
+        advV = 0;
+        if (segV < nV - 2) {
+            xnV = peek(gwenv, baseV + 4 + segV * 3, 0);
+            if (patPh >= xnV) {
+                segV = segV + 1;
+                advV = 1;
+            }
+        }
+    }
+    x0V = peek(gwenv, baseV + 1 + segV * 3, 0);
+    u0V = peek(gwenv, baseV + 2 + segV * 3, 0);
+    c0V = peek(gwenv, baseV + 3 + segV * 3, 0);
+    x1V = peek(gwenv, baseV + 4 + segV * 3, 0);
+    u1V = peek(gwenv, baseV + 5 + segV * 3, 0);
+    segWV = x1V - x0V;
+    ttV = 1;
+    if (segWV > 0.0000001) {
+        ttV = clamp((patPh - x0V) / segWV, 0, 1);
+    }
+    expoV = 1 + 3 * abs(c0V);
+    fvV = pow(ttV, expoV);
+    if (c0V < 0) {
+        fvV = 1 - pow(1 - ttV, expoV);
+    }
+    uV = clamp(u0V + (u1V - u0V) * fvV, 0, 1);
+}
+
+// ---- targets: read offset in samples and gain; neutral while stopped ----
+dep = clamp(depth, 0, 100) * 0.01;
+tgtOff = 0;
+gainTgt = 1;
+if (playing > 0) {
+    tgtOff = clamp(uT * dep * patSamps, 0, ringLen - 8);
+    gainTgt = 1 - uV * dep;
+}
+
+// ---- a jump in the offset starts an equal-power cross-fade from the old read head ----
+smS = max(mstosamps(clamp(smoothms, 0.1, 100)), 1);
+if (abs(tgtOff - prevTgt) > 16) {
+    if (xfNow >= 0.5) {
+        oldOff = prevTgt;
+    }
+    xfNow = 0;
+}
+
+// ---- record, then read ----
+poke(gwring, in1, wpos, 0);
+poke(gwring, in2, wpos, 1);
+
+posN = wpos - tgtOff;
+ipN = floor(posN);
+frN = posN - ipN;
+iN0 = (ipN + ringLen) % ringLen;
+iNm = (ipN - 1 + ringLen) % ringLen;
+iN1 = (ipN + 1 + ringLen) % ringLen;
+iN2 = (ipN + 2 + ringLen) % ringLen;
+nLm = peek(gwring, iNm, 0);
+nL0 = peek(gwring, iN0, 0);
+nL1 = peek(gwring, iN1, 0);
+nL2 = peek(gwring, iN2, 0);
+nRm = peek(gwring, iNm, 1);
+nR0 = peek(gwring, iN0, 1);
+nR1 = peek(gwring, iN1, 1);
+nR2 = peek(gwring, iN2, 1);
+wetNL = nL0 + (nL1 - nL0) * frN;
+wetNR = nR0 + (nR1 - nR0) * frN;
+if (tgtOff >= 1) {
+    wetNL = hermite(nLm, nL0, nL1, nL2, frN);
+    wetNR = hermite(nRm, nR0, nR1, nR2, frN);
+}
+
+wetL = wetNL;
+wetR = wetNR;
+posO = 0;
+ipO = 0;
+frO = 0;
+iO0 = 0;
+iOm = 0;
+iO1 = 0;
+iO2 = 0;
+oLm = 0;
+oL0 = 0;
+oL1 = 0;
+oL2 = 0;
+oRm = 0;
+oR0 = 0;
+oR1 = 0;
+oR2 = 0;
+wetOL = 0;
+wetOR = 0;
+aOld = 0;
+aNew = 1;
+if (xfNow < 1) {
+    posO = wpos - oldOff;
+    ipO = floor(posO);
+    frO = posO - ipO;
+    iO0 = (ipO + ringLen) % ringLen;
+    iOm = (ipO - 1 + ringLen) % ringLen;
+    iO1 = (ipO + 1 + ringLen) % ringLen;
+    iO2 = (ipO + 2 + ringLen) % ringLen;
+    oLm = peek(gwring, iOm, 0);
+    oL0 = peek(gwring, iO0, 0);
+    oL1 = peek(gwring, iO1, 0);
+    oL2 = peek(gwring, iO2, 0);
+    oRm = peek(gwring, iOm, 1);
+    oR0 = peek(gwring, iO0, 1);
+    oR1 = peek(gwring, iO1, 1);
+    oR2 = peek(gwring, iO2, 1);
+    wetOL = oL0 + (oL1 - oL0) * frO;
+    wetOR = oR0 + (oR1 - oR0) * frO;
+    if (oldOff >= 1) {
+        wetOL = hermite(oLm, oL0, oL1, oL2, frO);
+        wetOR = hermite(oRm, oR0, oR1, oR2, frO);
+    }
+    aOld = cos(xfNow * 1.5707963267948966);
+    aNew = sin(xfNow * 1.5707963267948966);
+    wetL = wetOL * aOld + wetNL * aNew;
+    wetR = wetOR * aOld + wetNR * aNew;
+}
+xfNext = min(xfNow + 1 / smS, 1);
+
+// ---- volume, slewed over the same Smooth time ----
+gCoef = 1 - exp(-3 / smS);
+gainNow = gainNow + (gainTgt - gainNow) * gCoef;
+
+// ---- mix ----
+wetAmt = clamp(wet, 0, 100) * 0.01;
+outL = in1 * (1 - wetAmt) + wetL * gainNow * wetAmt;
+outR = in2 * (1 - wetAmt) + wetR * gainNow * wetAmt;
+out1 = outL;
+out2 = outR;
+
+// ---- peaks per 1/256 of the pattern for the editor's waveform ----
+pkIn = max(pkIn, max(abs(in1), abs(in2)));
+pkOut = max(pkOut, max(abs(outL), abs(outR)));
+binNew = clamp(floor(patPh * 256), 0, 255);
+if (binNew != binNow) {
+    poke(gwpeaks, pkIn, binNow, 0);
+    poke(gwpeaks, pkOut, binNow + 256, 0);
+    pkIn = 0;
+    pkOut = 0;
+}
+
+phOut = -1;
+if (playing > 0) {
+    phOut = patPh;
+}
+out3 = phOut;
+out4 = actPat;
+
+// ---- state for the next sample ----
+hWpos = (wpos + 1) % ringLen;
+hPrevPh = barPh;
+hInc = incEst;
+hStill = stillN;
+hAct = actPat;
+hSegT = segT;
+hSegV = segV;
+hPrevTgt = tgtOff;
+hOldOff = oldOff;
+hXf = xfNext;
+hGain = gainNow;
+hBin = binNew;
+hPkIn = pkIn;
+hPkOut = pkOut;

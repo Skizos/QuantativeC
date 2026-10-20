@@ -9,3 +9,4 @@
 *.pdf binary
 *.dll binary
 *.so binary
+*.amxd binary
