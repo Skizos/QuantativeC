@@ -10,3 +10,4 @@
 *.dll binary
 *.so binary
 *.amxd binary
+*.zip binary

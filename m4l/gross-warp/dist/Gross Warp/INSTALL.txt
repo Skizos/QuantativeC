@@ -1,0 +1,72 @@
+GROSS WARP for Ableton Live (Max for Live)
+==========================================
+
+Half time, tape stops, stutters, rolls, scratches, reverses and gates, drawn as two
+envelopes and locked to your song.
+
+In this folder
+--------------
+  Gross Warp.amxd        the effect (a Max audio effect)
+  Gross Warp MIDI.amxd   optional: plays Gross Warp's patterns from MIDI notes (a Max MIDI effect)
+  gw_ui.js               the effect's editor - keep it in the same folder as Gross Warp.amxd
+  INSTALL.txt            this file
+
+You need Ableton Live 12 Suite, or Live 12 Standard with the Max for Live add-on.
+
+
+Install
+-------
+1. Unzip GrossWarp.zip. You get a folder called "Gross Warp".
+
+2. Put the folder where Live can see it - either way works:
+   a) Move it into your User Library:
+        macOS:    ~/Music/Ableton/User Library/
+        Windows:  C:\Users\<you>\Documents\Ableton\User Library\
+      (Live > Settings > Library shows where your User Library is.)
+   b) Or leave it anywhere and, in Live's browser, click "Add Folder..." under Places
+      and choose the "Gross Warp" folder.
+
+3. In Live's browser open User Library (or the folder you added) > Gross Warp, and drag
+   "Gross Warp" onto an audio track, a drum rack, a group or the Master.
+
+4. Press Play. Gross Warp follows Live's transport; while Live is stopped it passes the
+   sound through untouched.
+
+Keep the three files together: Gross Warp.amxd loads gw_ui.js from its own folder. To
+make one self-contained file for sharing, click the wrench in the device's title bar
+(opens Max), click the snowflake (Freeze), and save it under a new name.
+
+
+Play
+----
+- Pattern 1-8 picks the pattern (automate it in a clip or the arrangement).
+- Time / Volume picks the envelope you draw. Blue = time: top is normal, lower plays
+  later; a fall at 45 degrees stops, steeper plays backwards, steps repeat a slice.
+  Orange = volume.
+- < preset > loads shapes (1/16 Roll, Tape Stop, Reverse, Gates, Pump...).
+- Click to add points, drag them, Alt-click (Option-click on Mac) or double-click to
+  delete, drag the small circles to bend a line. Shift = no snapping. Draw paints steps.
+- Switch: when a new pattern starts (Instant, 1/16, Beat, Bar, end of Pattern).
+- Length: 1 beat to 4 bars. Any time signature.
+- Pitch: Lock keeps the pitch while the time envelope slows, stops or reverses the
+  sound (Grain sets the grain size: short for drums, long for pads).
+
+
+Trigger patterns from MIDI (optional)
+-------------------------------------
+1. Make a MIDI track and drag "Gross Warp MIDI" onto it.
+2. Set its Link (A) and, on Gross Warp, set MIDI to the same letter.
+3. Notes from Base (C1) up: C1 = pattern 1, C#1 = 2, ... G1 = 8.
+   Mode Hold: the pattern plays while the note is held, then Pattern takes over again.
+   Mode Latch: a note switches to its pattern; the same note again releases it.
+4. Draw the notes in a MIDI clip, or arm the track and play them. They follow Switch.
+Several Gross Warps on the same link all follow the same notes.
+
+
+If something is off
+-------------------
+Open Max's console: click the wrench in the device's title bar (Max opens), then
+Window > Max Console, and look for red lines.
+- "can't find file gw_ui.js": the script isn't next to Gross Warp.amxd.
+- A gen~ error: please send me the line.
+- Nothing happens while Live is stopped: that's by design.

@@ -143,8 +143,9 @@ function loadUi(options) {
 }
 
 // The device: buffers sized first, then their names handed to gen~ and the editor (the patcher's load order).
+// The transport feeds gen~ a quarter-note phase, like [phasor~ 4n @lock 1]; `startBeat` starts the song elsewhere.
 function makeRig(options) {
-    const opts = Object.assign({ sr: 48000, bpm: 120, chanBase: 1 }, options);
+    const opts = Object.assign({ sr: 48000, bpm: 120, chanBase: 1, signum: 4, sigden: 4, startBeat: 0 }, options);
     const buffers = makeMaxBuffers(opts.chanBase);
     buffers.create("101gwenv", ENV_FRAMES, 1);
     buffers.create("101gwpeaks", PEAK_FRAMES, 1);
@@ -152,18 +153,23 @@ function makeRig(options) {
     const gen = createGen(GEN_SRC, { samplerate: opts.sr, exposeLocals: opts.exposeLocals });
     gen.bindBuffer("gwenv", buffers.get("101gwenv"));
     gen.bindBuffer("gwpeaks", buffers.get("101gwpeaks"));
+    gen.setParam("signum", opts.signum);
+    gen.setParam("sigden", opts.sigden);
     ui.ctx.envbuf("101gwenv");
     ui.ctx.peakbuf("101gwpeaks");
-    const barSamples = Math.round((opts.sr * 60 * 4) / opts.bpm);
-    let clock = 0; // transport position in samples
+    ui.ctx.signum(opts.signum);
+    ui.ctx.sigden(opts.sigden);
+    const beatSamples = Math.round((opts.sr * 60) / opts.bpm);
+    const barSamples = Math.round((beatSamples * opts.signum * 4) / opts.sigden);
+    let clock = Math.round(opts.startBeat * beatSamples); // transport position in samples
 
-    // Run n samples; input(i) -> [L, R]; playing: transport running (the bar phase moves) or held.
+    // Run n samples; input(i) -> [L, R]; playing: transport running (the phase moves) or held.
     function run(n, input, playing) {
         const out = { L: new Float64Array(n), R: new Float64Array(n), phase: new Float64Array(n), active: [] };
         for (let i = 0; i < n; i++) {
-            const bar = (clock % barSamples) / barSamples;
+            const beat = (clock % beatSamples) / beatSamples;
             const [l, r] = input(i);
-            const o = gen.tick(l, r, bar);
+            const o = gen.tick(l, r, beat);
             out.L[i] = o[0];
             out.R[i] = o[1];
             out.phase[i] = o[2];
@@ -190,7 +196,18 @@ function makeRig(options) {
         ui.ctx.writeEnv(p, e);
     }
 
-    return { ui, gen, buffers, run, setEnv, usePreset, barSamples, sr: opts.sr };
+    return {
+        ui,
+        gen,
+        buffers,
+        run,
+        setEnv,
+        usePreset,
+        beatSamples,
+        barSamples,
+        sr: opts.sr,
+        clock: () => clock,
+    };
 }
 
 module.exports = { ROOT, UI_SRC, GEN_SRC, ENV_FRAMES, PEAK_FRAMES, plain, recorder, makeMaxBuffers, loadUi, makeRig };

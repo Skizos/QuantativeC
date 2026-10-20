@@ -11,7 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const { makeRig } = require("../test/helpers");
 
-const DEVICE_W = 474;
+const DEVICE_W = 540;
 const DEVICE_H = 169;
 
 function esc(s) {
@@ -131,8 +131,26 @@ function liveControls(selected) {
         `<text x="${x + 5}" y="161" font-size="9.5" fill="#ddd">${value}</text>` +
         `<path d="M${x + 57} 156 l3 4 l3 -4 Z" fill="#aaa"/>`;
     parts.push(menu(226, "Switch", "Pattern"), menu(340, "Length", "1 Bar"));
-    parts.push(dial(416, 4, "Smooth", "4.00 ms", 0.08), dial(416, 58, "Depth", "100 %", 1));
-    parts.push(dial(416, 112, "Dry/Wet", "100 %", 1));
+    parts.push(dial(414, 4, "Smooth", "4.00 ms", 0.08), dial(414, 58, "Depth", "100 %", 1));
+    parts.push(dial(414, 112, "Dry/Wet", "100 %", 1));
+    // the second column: Pitch Lock, Grain, MIDI link
+    const label = (x, y, t) => `<text x="${x}" y="${y}" font-size="9.5" fill="#bbb">${t}</text>`;
+    parts.push(label(476, 13, "Pitch"));
+    ["Off", "Lock"].forEach((t, i) => {
+        const x = 476 + i * 29;
+        const on = i === 0;
+        parts.push(
+            `<rect x="${x}" y="18" width="28" height="15" fill="${on ? "#73c7ff" : "#3b3b3b"}"/>`,
+            `<text x="${x + 14}" y="29" font-size="9" text-anchor="middle" fill="${on ? "#111" : "#ccc"}">${t}</text>`,
+        );
+    });
+    parts.push(dial(478, 40, "Grain", "60.0 ms", 0.35));
+    parts.push(label(476, 107, "MIDI"));
+    parts.push(
+        `<rect x="476" y="112" width="58" height="15" fill="#3b3b3b"/>` +
+            `<text x="481" y="123" font-size="9.5" fill="#ddd">A</text>` +
+            `<path d="M525 118 l3 4 l3 -4 Z" fill="#aaa"/>`,
+    );
     return parts.join("\n");
 }
 

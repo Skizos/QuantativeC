@@ -157,11 +157,11 @@ test("Depth 0 leaves the audio untouched", () => {
     }
 });
 
-function switchAt(quant, length, from) {
+function switchAt(quant, length, from, samples) {
     const rig = makeRig({ sr: SR });
     rig.gen.setParam("quant", quant);
     rig.gen.setParam("patlen", length);
-    const out = rig.run(2 * BAR, (i) => {
+    const out = rig.run(samples || 2 * BAR, (i) => {
         if (i === from) {
             rig.gen.setParam("pattern", 3);
         }
@@ -174,9 +174,18 @@ test("pattern changes wait for the Switch grid", () => {
     assert.equal(switchAt(0, 2, 10000), 10000); // Instant
     assert.equal(switchAt(1, 2, 10000), 10500); // next 1/16
     assert.equal(switchAt(2, 2, 10000), 12000); // next beat
-    assert.equal(switchAt(3, 2, 10000), 24000); // end of the 1-bar pattern
-    assert.equal(switchAt(3, 0, 10000), 12000); // end of a 1-beat pattern
-    assert.equal(switchAt(3, 1, 13000), 24000); // end of a 2-beat pattern
+    assert.equal(switchAt(3, 2, 10000), 24000); // next bar
+    assert.equal(switchAt(4, 2, 10000), 24000); // end of the 1-bar pattern
+    assert.equal(switchAt(4, 0, 10000), 12000); // end of a 1-beat pattern
+    assert.equal(switchAt(4, 1, 13000), 24000); // end of a 2-beat pattern
+    assert.equal(switchAt(4, 3, 10000, 3 * BAR), 2 * BAR); // end of a 2-bar pattern
+    assert.equal(switchAt(4, 4, 10000, 5 * BAR), 4 * BAR); // end of a 4-bar pattern
+    assert.equal(switchAt(3, 4, 10000), 24000); // Bar does not wait for a long pattern
+});
+
+test("a change just after a grid line still takes that line", () => {
+    assert.equal(switchAt(3, 2, BAR + 200), BAR + 200, "16 ms late: switches at once");
+    assert.equal(switchAt(3, 2, BAR + 800, 3 * BAR), 2 * BAR, "67 ms late: waits for the next bar");
 });
 
 test("a 1-beat pattern repeats every beat", () => {
@@ -265,4 +274,198 @@ test("without the editor's buffer gen~ stays neutral", () => {
         assert.equal(o[0], i);
         assert.equal(o[1], -i - 1);
     }
+});
+
+test("2-bar and 4-bar patterns stretch over their bars", () => {
+    for (const [len, bars] of [
+        [3, 2],
+        [4, 4],
+    ]) {
+        const rig = makeRig({ sr: SR });
+        rig.gen.setParam("pattern", 1); // Half Time over the whole pattern
+        rig.gen.setParam("patlen", len);
+        const span = bars * BAR;
+        const out = rig.run(2 * span, timecode());
+        for (const f of [0.25, 0.5, 0.75]) {
+            const i = span + Math.round(f * span);
+            // half speed from the pattern's start
+            assert.ok(Math.abs(out.L[i] - (span + (f * span) / 2)) < 1e-5, `${bars} bars at ${f}: ${out.L[i]}`);
+        }
+    }
+});
+
+test("time signatures: a bar of 3/4, 6/8 and 7/8", () => {
+    for (const [num, den, quarters] of [
+        [3, 4, 3],
+        [6, 8, 3],
+        [7, 8, 3.5],
+    ]) {
+        const rig = makeRig({ sr: SR, signum: num, sigden: den });
+        rig.gen.setParam("pattern", 1); // Half Time, 1 bar
+        const bar = (quarters * BAR) / 4;
+        assert.equal(rig.barSamples, bar);
+        const out = rig.run(3 * bar, timecode());
+        for (const b of [1, 2]) {
+            const i = b * bar + bar / 2;
+            assert.ok(Math.abs(out.L[i] - (b * bar + bar / 4)) < 1e-5, `${num}/${den} bar ${b}: ${out.L[i]}`);
+        }
+        assert.equal(switchAtMeter(num, den, 1000), bar, `${num}/${den}: Switch Bar lands on the bar`);
+    }
+});
+
+function switchAtMeter(num, den, from) {
+    const rig = makeRig({ sr: SR, signum: num, sigden: den });
+    rig.gen.setParam("quant", 3);
+    const out = rig.run(2 * BAR, (i) => {
+        if (i === from) {
+            rig.gen.setParam("pattern", 3);
+        }
+        return [0, 0];
+    });
+    return out.active.indexOf(3);
+}
+
+test("Live's song position puts a pattern in the right bar, even when it arrives late", () => {
+    // the transport starts at beat 13 (bar 4, beat 2); without the song position gen~ would count from 0
+    const rig = makeRig({ sr: SR, startBeat: 13, exposeLocals: true });
+    rig.gen.setParam("patlen", 3); // 2 bars = 8 beats
+    rig.run(100, () => [0, 0]);
+    assert.equal(rig.gen.state.songPos < 1, true, "no song position yet");
+    rig.gen.setParam("songbeats", 12.97); // measured a little before, delivered now
+    rig.run(1, () => [0, 0]);
+    const pos = rig.clock() / (BAR / 4);
+    assert.ok(Math.abs(rig.gen.state.songPos - (pos - 1 / (BAR / 4))) < 1e-9, `${rig.gen.state.songPos} vs ${pos}`);
+    assert.ok(Math.abs(rig.gen.state.patPh - (rig.gen.state.songPos / 8 - 1)) < 1e-9);
+    // a late value just after a beat line still rounds to the right beat
+    rig.run(Math.round(3.02 * (BAR / 4)) - 101, () => [0, 0]);
+    const now = rig.clock() / (BAR / 4);
+    rig.gen.setParam("songbeats", now - 0.04);
+    rig.run(1, () => [0, 0]);
+    assert.ok(Math.abs(rig.gen.state.songPos - now) < 1e-6, `${rig.gen.state.songPos} vs ${now}`);
+});
+
+function frequency(signal, from, to) {
+    let crossings = 0;
+    for (let i = from + 1; i < to; i++) {
+        if (signal[i - 1] < 0 && signal[i] >= 0) {
+            crossings++;
+        }
+    }
+    return (crossings * SR) / (to - from);
+}
+
+function sineRig(pattern, lock) {
+    const rig = makeRig({ sr: SR });
+    rig.gen.setParam("pattern", pattern);
+    rig.gen.setParam("pitchlock", lock ? 1 : 0);
+    const w = (2 * Math.PI * 480) / SR;
+    return { rig, out: rig.run(2 * BAR, (i) => [Math.sin(w * i), Math.sin(w * i)]) };
+}
+
+test("pitch lock: Half Time keeps the pitch (without it the pitch drops an octave)", () => {
+    const plain = sineRig(1, false).out;
+    const locked = sineRig(1, true).out;
+    const from = BAR + 2000;
+    const to = 2 * BAR - 2000;
+    assert.ok(Math.abs(frequency(plain.L, from, to) - 240) < 5, `plain ${frequency(plain.L, from, to)}`);
+    assert.ok(Math.abs(frequency(locked.L, from, to) - 480) < 8, `locked ${frequency(locked.L, from, to)}`);
+});
+
+test("pitch lock: reverse and tape stop keep the pitch; grains run backwards when reversing", () => {
+    const rev = makeRig({ sr: SR, exposeLocals: true });
+    rev.usePreset(0, 0, "Reverse 1/2");
+    rev.gen.setParam("pitchlock", 1);
+    const w = (2 * Math.PI * 480) / SR;
+    const out = rev.run(BAR + BAR * 0.8, (i) => [Math.sin(w * i), Math.sin(w * i)]);
+    assert.equal(rev.gen.state.gDA, -1, "grains read backwards");
+    const half = BAR + BAR / 2;
+    assert.ok(Math.abs(frequency(out.L, half + 1000, BAR + BAR * 0.8 - 10) - 480) < 8);
+    const stop = sineRig(3, true).out; // Tape Stop: speed falls to 0 over the second half
+    const end = 2 * BAR - 1;
+    assert.ok(Math.abs(frequency(stop.L, end - 3000, end) - 480) < 8, "still the same pitch near the stop");
+    let rms = 0;
+    for (let i = end - 3000; i < end; i++) {
+        rms += stop.L[i] * stop.L[i];
+    }
+    assert.ok(Math.sqrt(rms / 3000) > 0.5, "and still sounding");
+});
+
+test("pitch lock: Normal still passes audio through, and toggling it does not click", () => {
+    const rig = makeRig({ sr: SR });
+    rig.gen.setParam("pitchlock", 1);
+    const out = rig.run(BAR, timecode());
+    for (let i = 0; i < BAR; i++) {
+        assert.ok(Math.abs(out.L[i] - i) < 1e-6, `sample ${i}: ${out.L[i]}`);
+    }
+    const toggled = makeRig({ sr: SR });
+    toggled.gen.setParam("pattern", 1);
+    const w = (2 * Math.PI * 50) / SR;
+    const o = toggled.run(2 * BAR, (i) => {
+        if (i === BAR + 5000) {
+            toggled.gen.setParam("pitchlock", 1);
+        }
+        return [Math.sin(w * i), 0];
+    });
+    let m = 0;
+    for (let i = BAR + 100; i < 2 * BAR - 100; i++) {
+        m = Math.max(m, Math.abs(o.L[i] - o.L[i - 1]));
+    }
+    assert.ok(m < 0.1, `largest step ${m}`);
+});
+
+test("pitch lock: rolls still cross-fade without clicks", () => {
+    const rig = makeRig({ sr: SR });
+    rig.gen.setParam("pattern", 2);
+    rig.gen.setParam("pitchlock", 1);
+    const natural = (2 * Math.PI * 50) / SR;
+    assert.ok(maxStep(rig, 4, 50) < natural + 0.07);
+});
+
+// v = pattern + 8 * parity + 16 * mode, as Gross Warp MIDI sends it
+function midiRig() {
+    const rig = makeRig({ sr: SR });
+    rig.gen.setParam("quant", 0);
+    rig.gen.setParam("midien", 1);
+    const parity = { trigon: 0, trigoff: 0 };
+    let last = [0];
+    function note(kind, n, mode) {
+        parity[kind] = 1 - parity[kind];
+        rig.gen.setParam(kind, n + 8 * parity[kind] + 16 * (kind === "trigon" ? mode : 0));
+        last = rig.run(10, () => [0, 0]).active;
+        return last[last.length - 1];
+    }
+    return { rig, on: (n, mode) => note("trigon", n, mode || 0), off: (n) => note("trigoff", n, 0) };
+}
+
+test("MIDI hold: a pattern plays while its note is down", () => {
+    const m = midiRig();
+    m.rig.gen.setParam("pattern", 1);
+    assert.equal(m.on(3), 3);
+    assert.equal(m.on(5), 5, "a second note takes over");
+    assert.equal(m.off(3), 5, "releasing the first changes nothing");
+    assert.equal(m.off(5), 1, "back to the Pattern parameter");
+    assert.equal(m.on(5), 5, "the same note again is seen");
+    assert.equal(m.off(5), 1);
+});
+
+test("MIDI latch: a note switches, the same note again releases", () => {
+    const m = midiRig();
+    assert.equal(m.on(2, 1), 2);
+    assert.equal(m.off(2), 2, "note-offs do nothing");
+    assert.equal(m.on(4, 1), 4);
+    assert.equal(m.on(4, 1), 0, "released");
+    assert.equal(m.on(6, 1), 6);
+    m.rig.gen.setParam("midien", 0);
+    assert.equal(m.rig.run(10, () => [0, 0]).active[9], 0, "turning MIDI off clears it");
+    assert.equal(m.on(7, 1), 0, "and ignores notes");
+});
+
+test("MIDI triggers follow the Switch grid", () => {
+    const m = midiRig();
+    m.rig.gen.setParam("quant", 2); // Beat
+    const start = m.rig.clock() + 9960; // the note arrives at sample 9970, between beats 1 and 2
+    m.rig.run(9960, () => [0, 0]);
+    m.rig.gen.setParam("trigon", 3);
+    const out = m.rig.run(4000, () => [0, 0]);
+    assert.equal(start + out.active.indexOf(3), 12000);
 });

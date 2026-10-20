@@ -1,10 +1,14 @@
 // Gross Warp: tempo-locked time and volume envelopes (gen~ DSP core).
 //
 // in1, in2    audio L, R
-// in3         bar phase 0..1 from [phasor~ 1n @lock 1] (follows Live's transport)
+// in3         beat phase 0..1 from [phasor~ 4n @lock 1] (a quarter note of Live's transport)
 // out1, out2  audio L, R
 // out3        pattern phase 0..1, or -1 while the transport is stopped
 // out4        the pattern now playing (0..7)
+//
+// Params set by the patcher: pattern, quant, patlen, smoothms, depth, wet, pitchlock, grainms; from the Live API:
+// songbeats (song position in beats, arrives a little late), signum, sigden (time signature); from Gross Warp MIDI:
+// trigon, trigoff (pattern + 8 * parity + 16 * mode, the parity alternating per event so repeats are seen), midien.
 //
 // Envelopes arrive in buffer~ gwenv (one channel, written by gw_ui.js):
 //   block b = pattern * 2 + env (env 0 = time, 1 = volume), base = b * 385;
@@ -13,6 +17,8 @@
 //   curve: -1..1, the bend of the segment that starts at that point.
 // Time:   read offset = u * depth * pattern length (u = 1 plays a whole pattern late).
 // Volume: gain = 1 - u * depth.
+// Pitch lock: two grains (sin^2 windows, half a grain apart) play at normal speed from where the time envelope is,
+// so time warps without the pitch change.
 //
 // House rules for this file (gen~ is unforgiving and silent about some of them):
 //   - peek() only as the whole right-hand side of an assignment, on its own line;
@@ -29,31 +35,55 @@ hermite(ym, y0, y1, y2, fr) {
 
 Buffer gwenv("gwenv");
 Buffer gwpeaks("gwpeaks");
-Data gwring(1048576, 2);
+Data gwring(2097152, 2);
 
 Param pattern(0);
-Param quant(3);
+Param quant(4);
 Param patlen(2);
 Param smoothms(4);
 Param depth(100);
 Param wet(100);
+Param pitchlock(0);
+Param grainms(60);
+Param songbeats(-1);
+Param signum(4);
+Param sigden(4);
+Param trigon(-1);
+Param trigoff(-1);
+Param midien(0);
 
 History hWpos(0);
 History hPrevPh(0);
 History hInc(0);
 History hStill(100000);
+History hBeatCnt(0);
+History hSongPrev(-1);
+History hQIdx(0);
+History hSince(100000);
+History hReqPrev(0);
 History hAct(0);
+History hTrig(-1);
+History hTrigMode(0);
+History hOnPrev(-1);
+History hOffPrev(-1);
 History hSegT(0);
 History hSegV(0);
 History hPrevTgt(0);
 History hOldOff(0);
 History hXf(1);
+History hLock(0);
+History hDir(1);
+History hGPh(0);
+History hGSA(0);
+History hGSB(0);
+History hGDA(1);
+History hGDB(1);
 History hGain(1);
 History hBin(0);
 History hPkIn(0);
 History hPkOut(0);
 
-ringLen = 1048576;
+ringLen = 2097152;
 blockLen = 385;
 
 // ---- state from the previous sample ----
@@ -61,20 +91,36 @@ wpos = hWpos;
 prevPh = hPrevPh;
 incEst = hInc;
 stillN = hStill;
+beatCnt = hBeatCnt;
+songPrev = hSongPrev;
+qIdxPrev = hQIdx;
+sinceCross = hSince;
+reqPrev = hReqPrev;
 actPat = hAct;
+trigCur = hTrig;
+trigMode = hTrigMode;
+onPrev = hOnPrev;
+offPrev = hOffPrev;
 segT = hSegT;
 segV = hSegV;
 prevTgt = hPrevTgt;
 oldOff = hOldOff;
 xfNow = hXf;
+lockPrev = hLock;
+dirPrev = hDir;
+gPh = hGPh;
+gSA = hGSA;
+gSB = hGSB;
+gDA = hGDA;
+gDB = hGDB;
 gainNow = hGain;
 binNow = hBin;
 pkIn = hPkIn;
 pkOut = hPkOut;
 
-// ---- transport: is the bar phase moving, and by how much per sample ----
-barPh = in3;
-dPh = barPh - prevPh;
+// ---- transport: is the beat phase moving, how fast, and which beat of the song this is ----
+beatPh = in3;
+dPh = beatPh - prevPh;
 wrapped = 0;
 if (dPh < -0.5) {
     dPh = dPh + 1;
@@ -91,51 +137,116 @@ if (moving > 0) {
         incEst = incEst + (dPh - incEst) * 0.001;
     }
     stillN = 0;
+    if (wrapped > 0) {
+        beatCnt = beatCnt + 1;
+    }
 } else {
     stillN = min(stillN + 1, 100000);
+}
+// Live's song position arrives late; the nearest whole beat to (position - phase) is the right count either way.
+if (songbeats != songPrev) {
+    if (songbeats >= 0) {
+        beatCnt = floor(songbeats - beatPh + 0.5);
+    }
+    songPrev = songbeats;
 }
 playing = 0;
 if (stillN < 4096 && incEst > 0) {
     playing = 1;
 }
 
-// ---- pattern length and phase ----
-lenSel = clamp(floor(patlen + 0.5), 0, 2);
-lenBars = 1;
+// ---- meter, pattern length (in quarter notes) and phase ----
+qpb = clamp(floor(signum + 0.5), 1, 32) * 4 / clamp(floor(sigden + 0.5), 1, 32);
+lenSel = clamp(floor(patlen + 0.5), 0, 4);
+patQ = qpb;
 if (lenSel == 0) {
-    lenBars = 0.25;
+    patQ = 1;
 }
 if (lenSel == 1) {
-    lenBars = 0.5;
+    patQ = 2;
 }
-perBar = 1 / lenBars;
-patPh = fract(barPh * perBar);
-barSamps = 0;
+if (lenSel == 3) {
+    patQ = qpb * 2;
+}
+if (lenSel == 4) {
+    patQ = qpb * 4;
+}
+songPos = beatCnt + beatPh;
+patPos = songPos / patQ;
+patPh = patPos - floor(patPos);
+beatSamps = 0;
 if (incEst > 0) {
-    barSamps = 1 / incEst;
+    beatSamps = 1 / incEst;
 }
-patSamps = barSamps * lenBars;
+patSamps = beatSamps * patQ;
 
-// ---- pattern switching, quantized to the chosen grid (a bar wrap is a boundary of every grid) ----
+// ---- MIDI triggers: hold (0) plays a pattern while its note is down, latch (1) toggles it ----
+tOn = 0;
+tN = 0;
+tNew = 0;
+tOff = 0;
+fN = 0;
+if (trigon != onPrev) {
+    if (trigon >= 0) {
+        tOn = floor(trigon + 0.5);
+        tN = tOn % 8;
+        trigMode = floor(tOn / 16) % 2;
+        tNew = tN;
+        if (trigMode == 1 && trigCur == tN) {
+            tNew = -1;
+        }
+        trigCur = tNew;
+    }
+    onPrev = trigon;
+}
+if (trigoff != offPrev) {
+    if (trigoff >= 0) {
+        tOff = floor(trigoff + 0.5);
+        fN = tOff % 8;
+        if (trigMode == 0 && trigCur == fN) {
+            trigCur = -1;
+        }
+    }
+    offPrev = trigoff;
+}
+if (midien < 0.5) {
+    trigCur = -1;
+}
+
+// ---- pattern switching on the Switch grid (Instant, 1/16, Beat, Bar, Pattern) ----
 reqPat = clamp(floor(pattern + 0.5), 0, 7);
-qMode = clamp(floor(quant + 0.5), 0, 3);
-qGrid = perBar;
+if (trigCur >= 0) {
+    reqPat = trigCur;
+}
+qMode = clamp(floor(quant + 0.5), 0, 4);
+qUnit = patQ;
 if (qMode == 1) {
-    qGrid = 16;
+    qUnit = 0.25;
 }
 if (qMode == 2) {
-    qGrid = 4;
+    qUnit = 1;
 }
-cellNow = floor(barPh * qGrid);
-cellPrev = floor(prevPh * qGrid);
+if (qMode == 3) {
+    qUnit = qpb;
+}
+qIdx = floor(songPos / qUnit);
 crossed = 0;
-if (cellNow != cellPrev || wrapped > 0) {
+if (qIdx != qIdxPrev) {
     crossed = 1;
 }
+sinceCross = min(sinceCross + 1, 100000);
+if (crossed > 0) {
+    sinceCross = 0;
+}
+// A request that lands just after a grid line (a note on the beat, a little late) still takes that line.
+graceS = mstosamps(40);
 if (playing == 0 || qMode == 0) {
     actPat = reqPat;
 }
 if (playing > 0 && qMode > 0 && crossed > 0) {
+    actPat = reqPat;
+}
+if (playing > 0 && qMode > 0 && reqPat != reqPrev && sinceCross < graceS) {
     actPat = reqPat;
 }
 
@@ -250,47 +361,204 @@ if (nV >= 2 && nV <= 128) {
 }
 
 // ---- targets: read offset in samples and gain; neutral while stopped ----
+// Offsets stay under half the ring, so a grain's distance behind the write head is never ambiguous.
+lockOn = 0;
+if (pitchlock > 0.5) {
+    lockOn = 1;
+}
+grainS = max(mstosamps(clamp(grainms, 10, 250)), 16);
 dep = clamp(depth, 0, 100) * 0.01;
 tgtOff = 0;
 gainTgt = 1;
 if (playing > 0) {
-    tgtOff = clamp(uT * dep * patSamps, 0, ringLen - 8);
+    tgtOff = clamp(uT * dep * patSamps, 0, ringLen * 0.5 - grainS - 16);
     gainTgt = 1 - uV * dep;
 }
 
-// ---- a jump in the offset starts an equal-power cross-fade from the old read head ----
+// ---- a jump in the offset (or switching pitch lock) cross-fades from the old read head ----
 smS = max(mstosamps(clamp(smoothms, 0.1, 100)), 1);
-if (abs(tgtOff - prevTgt) > 16) {
+jumped = 0;
+if (abs(tgtOff - prevTgt) > 16 || lockOn != lockPrev) {
+    jumped = 1;
+}
+if (jumped > 0) {
     if (xfNow >= 0.5) {
         oldOff = prevTgt;
     }
     xfNow = 0;
 }
 
+// ---- pitch lock grains: restart at the target, playing forwards, or backwards where the envelope reverses ----
+dirNow = dirPrev;
+if (jumped == 0) {
+    dirNow = 1;
+    if (1 - (tgtOff - prevTgt) < -0.05) {
+        dirNow = -1;
+    }
+}
+posT = wpos - tgtOff;
+gPrev = gPh;
+if (jumped > 0) {
+    // both grains as if they had been reading towards the new position all along: the output starts exactly there
+    gPh = 0;
+    gSA = posT;
+    gDA = dirNow;
+    gSB = posT - dirNow * 0.5 * grainS;
+    gDB = dirNow;
+} else {
+    gPh = gPh + 1 / grainS;
+    if (gPh >= 1) {
+        gPh = gPh - 1;
+        gSA = posT - dirNow * gPh * grainS;
+        gDA = dirNow;
+    }
+    if (gPrev < 0.5 && gPh >= 0.5) {
+        gSB = posT - dirNow * (gPh - 0.5) * grainS;
+        gDB = dirNow;
+    }
+}
+gPhB = gPh + 0.5;
+if (gPhB >= 1) {
+    gPhB = gPhB - 1;
+}
+
 // ---- record, then read ----
 poke(gwring, in1, wpos, 0);
 poke(gwring, in2, wpos, 1);
 
-posN = wpos - tgtOff;
-ipN = floor(posN);
-frN = posN - ipN;
-iN0 = (ipN + ringLen) % ringLen;
-iNm = (ipN - 1 + ringLen) % ringLen;
-iN1 = (ipN + 1 + ringLen) % ringLen;
-iN2 = (ipN + 2 + ringLen) % ringLen;
-nLm = peek(gwring, iNm, 0);
-nL0 = peek(gwring, iN0, 0);
-nL1 = peek(gwring, iN1, 0);
-nL2 = peek(gwring, iN2, 0);
-nRm = peek(gwring, iNm, 1);
-nR0 = peek(gwring, iN0, 1);
-nR1 = peek(gwring, iN1, 1);
-nR2 = peek(gwring, iN2, 1);
-wetNL = nL0 + (nL1 - nL0) * frN;
-wetNR = nR0 + (nR1 - nR0) * frN;
-if (tgtOff >= 1) {
-    wetNL = hermite(nLm, nL0, nL1, nL2, frN);
-    wetNR = hermite(nRm, nR0, nR1, nR2, frN);
+wetNL = 0;
+wetNR = 0;
+posN = 0;
+ipN = 0;
+frN = 0;
+iN0 = 0;
+iNm = 0;
+iN1 = 0;
+iN2 = 0;
+nLm = 0;
+nL0 = 0;
+nL1 = 0;
+nL2 = 0;
+nRm = 0;
+nR0 = 0;
+nR1 = 0;
+nR2 = 0;
+if (lockOn == 0) {
+    posN = wpos - tgtOff;
+    ipN = floor(posN);
+    frN = posN - ipN;
+    iN0 = (ipN + ringLen) % ringLen;
+    iNm = (ipN - 1 + ringLen) % ringLen;
+    iN1 = (ipN + 1 + ringLen) % ringLen;
+    iN2 = (ipN + 2 + ringLen) % ringLen;
+    nLm = peek(gwring, iNm, 0);
+    nL0 = peek(gwring, iN0, 0);
+    nL1 = peek(gwring, iN1, 0);
+    nL2 = peek(gwring, iN2, 0);
+    nRm = peek(gwring, iNm, 1);
+    nR0 = peek(gwring, iN0, 1);
+    nR1 = peek(gwring, iN1, 1);
+    nR2 = peek(gwring, iN2, 1);
+    wetNL = nL0 + (nL1 - nL0) * frN;
+    wetNR = nR0 + (nR1 - nR0) * frN;
+    if (tgtOff >= 1) {
+        wetNL = hermite(nLm, nL0, nL1, nL2, frN);
+        wetNR = hermite(nRm, nR0, nR1, nR2, frN);
+    }
+}
+
+dA = 0;
+posA = 0;
+ipA = 0;
+frA = 0;
+iA0 = 0;
+iAm = 0;
+iA1 = 0;
+iA2 = 0;
+aLm = 0;
+aL0 = 0;
+aL1 = 0;
+aL2 = 0;
+aRm = 0;
+aR0 = 0;
+aR1 = 0;
+aR2 = 0;
+gAL = 0;
+gAR = 0;
+dB = 0;
+posB = 0;
+ipB = 0;
+frB = 0;
+iB0 = 0;
+iBm = 0;
+iB1 = 0;
+iB2 = 0;
+bLm = 0;
+bL0 = 0;
+bL1 = 0;
+bL2 = 0;
+bRm = 0;
+bR0 = 0;
+bR1 = 0;
+bR2 = 0;
+gBL = 0;
+gBR = 0;
+wA = 0;
+wB = 0;
+if (lockOn > 0) {
+    // distance behind the write head, taken modulo the ring to the nearest copy, never ahead of it
+    dA = wpos - (gSA + gDA * gPh * grainS);
+    dA = max(dA - ringLen * floor(dA / ringLen + 0.5), 0);
+    posA = wpos - dA;
+    ipA = floor(posA);
+    frA = posA - ipA;
+    iA0 = (ipA + ringLen) % ringLen;
+    iAm = (ipA - 1 + ringLen) % ringLen;
+    iA1 = (ipA + 1 + ringLen) % ringLen;
+    iA2 = (ipA + 2 + ringLen) % ringLen;
+    aLm = peek(gwring, iAm, 0);
+    aL0 = peek(gwring, iA0, 0);
+    aL1 = peek(gwring, iA1, 0);
+    aL2 = peek(gwring, iA2, 0);
+    aRm = peek(gwring, iAm, 1);
+    aR0 = peek(gwring, iA0, 1);
+    aR1 = peek(gwring, iA1, 1);
+    aR2 = peek(gwring, iA2, 1);
+    gAL = aL0 + (aL1 - aL0) * frA;
+    gAR = aR0 + (aR1 - aR0) * frA;
+    if (dA >= 1) {
+        gAL = hermite(aLm, aL0, aL1, aL2, frA);
+        gAR = hermite(aRm, aR0, aR1, aR2, frA);
+    }
+    dB = wpos - (gSB + gDB * gPhB * grainS);
+    dB = max(dB - ringLen * floor(dB / ringLen + 0.5), 0);
+    posB = wpos - dB;
+    ipB = floor(posB);
+    frB = posB - ipB;
+    iB0 = (ipB + ringLen) % ringLen;
+    iBm = (ipB - 1 + ringLen) % ringLen;
+    iB1 = (ipB + 1 + ringLen) % ringLen;
+    iB2 = (ipB + 2 + ringLen) % ringLen;
+    bLm = peek(gwring, iBm, 0);
+    bL0 = peek(gwring, iB0, 0);
+    bL1 = peek(gwring, iB1, 0);
+    bL2 = peek(gwring, iB2, 0);
+    bRm = peek(gwring, iBm, 1);
+    bR0 = peek(gwring, iB0, 1);
+    bR1 = peek(gwring, iB1, 1);
+    bR2 = peek(gwring, iB2, 1);
+    gBL = bL0 + (bL1 - bL0) * frB;
+    gBR = bR0 + (bR1 - bR0) * frB;
+    if (dB >= 1) {
+        gBL = hermite(bLm, bL0, bL1, bL2, frB);
+        gBR = hermite(bRm, bR0, bR1, bR2, frB);
+    }
+    // sin^2 windows half a grain apart sum to 1
+    wA = sin(3.141592653589793 * gPh);
+    wA = wA * wA;
+    wB = 1 - wA;
+    wetNL = gAL * wA + gBL * wB;
+    wetNR = gAR * wA + gBR * wB;
 }
 
 wetL = wetNL;
@@ -336,8 +604,10 @@ if (xfNow < 1) {
         wetOL = hermite(oLm, oL0, oL1, oL2, frO);
         wetOR = hermite(oRm, oR0, oR1, oR2, frO);
     }
+    // raised cosine: the gains sum to 1, so a fade between heads that carry the same sound does not bump
     aOld = cos(xfNow * 1.5707963267948966);
-    aNew = sin(xfNow * 1.5707963267948966);
+    aOld = aOld * aOld;
+    aNew = 1 - aOld;
     wetL = wetOL * aOld + wetNL * aNew;
     wetR = wetOR * aOld + wetNR * aNew;
 }
@@ -374,15 +644,31 @@ out4 = actPat;
 
 // ---- state for the next sample ----
 hWpos = (wpos + 1) % ringLen;
-hPrevPh = barPh;
+hPrevPh = beatPh;
 hInc = incEst;
 hStill = stillN;
+hBeatCnt = beatCnt;
+hSongPrev = songPrev;
+hQIdx = qIdx;
+hSince = sinceCross;
+hReqPrev = reqPat;
 hAct = actPat;
+hTrig = trigCur;
+hTrigMode = trigMode;
+hOnPrev = onPrev;
+hOffPrev = offPrev;
 hSegT = segT;
 hSegV = segV;
 hPrevTgt = tgtOff;
 hOldOff = oldOff;
 hXf = xfNext;
+hLock = lockOn;
+hDir = dirNow;
+hGPh = gPh;
+hGSA = gSA;
+hGSB = gSB;
+hGDA = gDA;
+hGDB = gDB;
 hGain = gainNow;
 hBin = binNew;
 hPkIn = pkIn;

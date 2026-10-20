@@ -387,6 +387,28 @@ test("grid follows the pattern length and swing moves the off-lines", () => {
     assert.equal(ctx.snapU(0.01, false), 0, "levels stick to the edges");
 });
 
+test("lengths up to 4 bars and any meter: grid cells, a shorter last cell, snapping to the end", () => {
+    const { ctx } = loadUi();
+    ctx.patlen(4);
+    assert.equal(ctx.patQuarters(), 16);
+    assert.equal(ctx.gridCells(), 64, "1/16 over 4 bars of 4/4");
+    ctx.signum(7);
+    ctx.sigden(8);
+    ctx.patlen(2);
+    assert.equal(ctx.quartersPerBar(), 3.5);
+    ctx.setgrid(1); // 1/4
+    assert.equal(ctx.gridCells(), 3.5);
+    assert.deepEqual(plain(ctx.cellAt(0.95)), { k: 3, a: 3 / 3.5, b: 1 }, "the last cell is half a beat");
+    assert.equal(ctx.snapX(0.97, false), 1);
+    assert.equal(ctx.snapX(0.3, false), 1 / 3.5);
+    ctx.signum(6);
+    ctx.sigden(8);
+    ctx.patlen(3);
+    assert.equal(ctx.patQuarters(), 6, "two bars of 6/8");
+    ctx.patlen(99);
+    assert.equal(ctx.view.patlen, 4);
+});
+
 test("messages from the patcher update the view", () => {
     const { ctx } = loadUi();
     ctx.pattern(5.0);
@@ -451,6 +473,12 @@ test("paint draws every state with real mgraphics calls only", () => {
             ctx.setgrid(4);
             ctx.patlen(0);
             ctx.view.hover = "pt:1";
+        },
+        () => {
+            ctx.patlen(4);
+            ctx.signum(7);
+            ctx.sigden(8);
+            ctx.setgrid(1);
         },
     ];
     for (const set of states) {

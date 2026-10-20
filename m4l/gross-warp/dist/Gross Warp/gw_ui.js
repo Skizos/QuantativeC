@@ -34,7 +34,7 @@ var GRIDS = [
     { name: "1/8T", div: 12 },
     { name: "1/16T", div: 24 }
 ];
-var LENGTH_BARS = [0.25, 0.5, 1];
+var LENGTH_NAMES = ["1 Beat", "2 Beats", "1 Bar", "2 Bars", "4 Bars"];
 var ENV_NAMES = ["Time", "Volume"];
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -374,7 +374,7 @@ function defaultState() {
 }
 
 var S = defaultState();
-var view = { pattern: 0, active: 0, phase: -1, patlen: 2, overlay: false, hover: "" };
+var view = { pattern: 0, active: 0, phase: -1, patlen: 2, signum: 4, sigden: 4, overlay: false, hover: "" };
 var drag = null;
 var undoStack = [];
 var redoStack = [];
@@ -544,7 +544,18 @@ function phase(v) {
 }
 
 function patlen(i) {
-    view.patlen = clamp(Math.floor(i), 0, LENGTH_BARS.length - 1);
+    view.patlen = clamp(Math.floor(i), 0, LENGTH_NAMES.length - 1);
+    redraw();
+}
+
+// Live's time signature (from the Live API); beats are quarter notes, as in Live's song time.
+function signum(n) {
+    view.signum = clamp(Math.floor(n), 1, 32);
+    redraw();
+}
+
+function sigden(d) {
+    view.sigden = clamp(Math.floor(d), 1, 32);
     redraw();
 }
 
@@ -737,19 +748,34 @@ function setswing(v) {
 // ---------------------------------------------------------------------------------------------------------------
 // Grid and snapping
 
-function gridCells() {
-    var g = GRIDS[S.grid];
-    return g.div > 0 ? Math.round(g.div * LENGTH_BARS[view.patlen]) : 0;
+// Quarter notes per bar and per pattern (the same arithmetic as gen~).
+function quartersPerBar() {
+    return (view.signum * 4) / view.sigden;
 }
 
-// Position of grid line k (0..n): odd lines are pushed later by the swing.
+function patQuarters() {
+    var qpb = quartersPerBar();
+    return [1, 2, qpb, 2 * qpb, 4 * qpb][view.patlen];
+}
+
+// Grid cells across the pattern; may be fractional (quarter notes in 7/8: the last cell is shorter).
+function gridCells() {
+    var g = GRIDS[S.grid];
+    return g.div > 0 ? (patQuarters() * g.div) / 4 : 0;
+}
+
+// Position of grid line k (0..ceil(n)): odd lines are pushed later by the swing; never past the end.
 function gridLine(k, n) {
     var step = 1 / n;
     var x = k * step;
-    if (k % 2 === 1 && k < n) {
+    if (k % 2 === 1 && x < 1) {
         x += (S.swing / 100) * step * 0.5;
     }
-    return x;
+    return Math.min(x, 1);
+}
+
+function lineCount(n) {
+    return Math.ceil(n - 1e-9);
 }
 
 function snapX(x, free) {
@@ -760,9 +786,9 @@ function snapX(x, free) {
     var best = 0;
     var bestD = 2;
     var k0 = Math.max(0, Math.floor(x * n) - 1);
-    var k1 = Math.min(n, Math.floor(x * n) + 2);
+    var k1 = Math.min(lineCount(n), Math.floor(x * n) + 2);
     for (var k = k0; k <= k1; k++) {
-        var gx = gridLine(k, n);
+        var gx = k >= lineCount(n) ? 1 : gridLine(k, n);
         if (Math.abs(gx - x) < bestD) {
             bestD = Math.abs(gx - x);
             best = gx;
@@ -789,15 +815,16 @@ function snapU(u, free) {
     return u;
 }
 
-// The draw tool's cell under x: [start, end) between swung grid lines (1/32 when the grid is off).
+// The draw tool's cell under x: [start, end) between swung grid lines (1/32 notes when the grid is off).
 function cellAt(x) {
     var n = gridCells();
     if (n <= 0) {
-        n = Math.max(1, Math.round(32 * LENGTH_BARS[view.patlen]));
+        n = patQuarters() * 8;
     }
-    for (var k = 0; k < n; k++) {
-        var b = k + 1 >= n ? 1 : gridLine(k + 1, n);
-        if (x < b || k === n - 1) {
+    var cells = lineCount(n);
+    for (var k = 0; k < cells; k++) {
+        var b = k + 1 >= cells ? 1 : gridLine(k + 1, n);
+        if (x < b || k === cells - 1) {
             return { k: k, a: gridLine(k, n), b: b };
         }
     }
@@ -1232,6 +1259,7 @@ var COL = {
     frame: [0.32, 0.32, 0.32, 1],
     gridMinor: [1, 1, 1, 0.05],
     gridBeat: [1, 1, 1, 0.13],
+    gridBar: [1, 1, 1, 0.3],
     waveIn: [0.45, 0.45, 0.45, 0.5],
     waveOut: [0.55, 0.75, 0.9, 0.35],
     env: [[0.45, 0.78, 1.0], [1.0, 0.68, 0.32]],
@@ -1261,33 +1289,43 @@ function textWidth(g, s) {
     return m[0];
 }
 
+function vline(g, L, x) {
+    var gx = Math.round(toX(L, x)) + 0.5;
+    g.move_to(gx, L.disp.y);
+    g.line_to(gx, L.disp.y + L.disp.h);
+}
+
 function drawGrid(g, L) {
     var d = L.disp;
     var n = gridCells();
-    var beats = Math.round(4 * LENGTH_BARS[view.patlen]);
+    var patQ = patQuarters();
+    var qpb = quartersPerBar();
     var k;
+    g.set_line_width(1);
     if (n > 0 && n <= 96) {
         rgba(g, COL.gridMinor);
-        g.set_line_width(1);
-        for (k = 1; k < n; k++) {
-            var gx = Math.round(toX(L, gridLine(k, n))) + 0.5;
-            g.move_to(gx, d.y);
-            g.line_to(gx, d.y + d.h);
+        for (k = 1; k < lineCount(n); k++) {
+            vline(g, L, gridLine(k, n));
         }
         g.stroke();
     }
     rgba(g, COL.gridBeat);
-    for (k = 1; k < beats; k++) {
-        var bx = Math.round(toX(L, k / beats)) + 0.5;
-        g.move_to(bx, d.y);
-        g.line_to(bx, d.y + d.h);
+    for (k = 1; k < patQ; k++) {
+        vline(g, L, k / patQ);
     }
     g.stroke();
+    if (patQ > qpb) {
+        rgba(g, COL.gridBar);
+        for (k = 1; k * qpb < patQ; k++) {
+            vline(g, L, (k * qpb) / patQ);
+        }
+        g.stroke();
+    }
     // Level guides: the grid's offsets for the time envelope, quarters for volume.
-    var levels = (S.edit === 0 && n > 0 && n <= 32) ? n : 4;
+    var step = (S.edit === 0 && n > 0 && n <= 32) ? 1 / n : 0.25;
     rgba(g, COL.gridMinor);
-    for (k = 1; k < levels; k++) {
-        var gy = Math.round(toY(L, k / levels)) + 0.5;
+    for (k = 1; k * step < 1 - 1e-9; k++) {
+        var gy = Math.round(toY(L, k * step)) + 0.5;
         g.move_to(d.x, gy);
         g.line_to(d.x + d.w, gy);
     }
